@@ -32,6 +32,15 @@ pub struct SyncReport {
     pub cursor: String,
 }
 
+pub(crate) const MISMATCH_MESSAGE: &str = "this device's vault was created separately from the synced vault; \
+reset this device's vault and join the sync server before unlocking";
+
+/// Two headers describe the same vault when the wrapped key and its KDF inputs
+/// match; anything else derives a different vault key.
+fn same_vault(a: &SyncedVaultHeader, b: &SyncedVaultHeader) -> bool {
+    a.salt == b.salt && a.argon2 == b.argon2 && a.wrapped_vault_key == b.wrapped_vault_key
+}
+
 /// Coordinates vault rows with a [`SyncBackend`].
 pub struct SyncEngine {
     vault: Arc<Vault>,
@@ -65,9 +74,29 @@ impl SyncEngine {
 
     /// Publish the local password-wrapped vault header so another device can
     /// unlock with the same master password.
+    ///
+    /// Refuses to overwrite a different vault's header: the wrapped key is what
+    /// every synced row is encrypted against, so clobbering it would strand the
+    /// other devices' items.
     pub async fn publish_header(&self) -> Result<()> {
-        let header = self.vault.export_sync_header().await?;
-        self.backend.put_header(&header).await
+        let local = self.vault.export_sync_header().await?;
+        match self.backend.get_header().await? {
+            Some(remote) if !same_vault(&remote, &local) => {
+                Err(Error::Sync(MISMATCH_MESSAGE.into()))
+            }
+            Some(_) => Ok(()),
+            None => self.backend.put_header(&local).await,
+        }
+    }
+
+    /// True when the backend holds a header for a different vault than this
+    /// device's, which means the master password cannot decrypt synced rows.
+    pub async fn header_matches_backend(&self) -> Result<bool> {
+        let Some(remote) = self.backend.get_header().await? else {
+            return Ok(true);
+        };
+        let local = self.vault.export_sync_header().await?;
+        Ok(same_vault(&remote, &local))
     }
 
     /// If the local vault does not exist but the backend has a header, import
@@ -110,7 +139,8 @@ impl SyncEngine {
     }
 
     async fn sync_now_inner(&self) -> Result<SyncReport> {
-        // Always refresh the shared header from the unlocked local vault.
+        // Seeds the shared header on a fresh backend, and refuses to run at all
+        // when this device's vault key differs from the one already published.
         self.publish_header().await?;
 
         let since = self.cursor.lock().await.clone();
@@ -268,5 +298,49 @@ mod tests {
         assert_eq!(hosts[0].id, created.id);
         assert_eq!(hosts[0].label, "lab");
         assert!(!hosts[0].has_password); // identity stayed on device A
+    }
+
+    #[tokio::test]
+    async fn separately_created_vault_refuses_to_clobber_header() {
+        let root = tempdir().unwrap();
+        let sync_dir = root.path().join("sync");
+        std::fs::create_dir_all(&sync_dir).unwrap();
+
+        let device_a = vault_at(&root.path().join("a")).await;
+        device_a
+            .create(&SecretString::new("shared-password"), false)
+            .await
+            .unwrap();
+        let engine_a = SyncEngine::new(
+            Arc::clone(&device_a),
+            Arc::new(FileBackend::new(&sync_dir)),
+            "file",
+        );
+        engine_a.sync_now().await.unwrap();
+        let published = device_a.export_sync_header().await.unwrap();
+
+        // Device B created its own vault instead of joining, so its vault key
+        // differs even though the master password is identical.
+        let device_b = vault_at(&root.path().join("b")).await;
+        device_b
+            .create(&SecretString::new("shared-password"), false)
+            .await
+            .unwrap();
+        let engine_b = SyncEngine::new(
+            Arc::clone(&device_b),
+            Arc::new(FileBackend::new(&sync_dir)),
+            "file",
+        );
+
+        assert!(!engine_b.header_matches_backend().await.unwrap());
+        let err = engine_b.sync_now().await.unwrap_err();
+        assert!(
+            matches!(&err, Error::Sync(msg) if msg.contains("created separately")),
+            "unexpected error: {err:?}"
+        );
+
+        // Device A's header must survive device B's attempt.
+        let backend = FileBackend::new(&sync_dir);
+        assert_eq!(backend.get_header().await.unwrap(), Some(published));
     }
 }

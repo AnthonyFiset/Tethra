@@ -6,6 +6,7 @@ import type { HostSummaryDto } from "./generated/HostSummaryDto";
 import type { SftpOpenResult } from "./generated/SftpOpenResult";
 import type { SshConfigHostDto } from "./generated/SshConfigHostDto";
 import type { SshConfigPreviewDto } from "./generated/SshConfigPreviewDto";
+import type { SyncJoinResultDto } from "./generated/SyncJoinResultDto";
 import type { SyncReportDto } from "./generated/SyncReportDto";
 import type { SyncStatusDto } from "./generated/SyncStatusDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
@@ -19,6 +20,7 @@ export type {
   SftpOpenResult,
   SshConfigHostDto,
   SshConfigPreviewDto,
+  SyncJoinResultDto,
   SyncReportDto,
   SyncStatusDto,
   TerminalEvent,
@@ -300,5 +302,12 @@ export function syncPickFolder(): Promise<string | null> {
 
 export function syncNow(): Promise<SyncReportDto> {
   return invoke<SyncReportDto>("sync_now");
+}
+
+export function syncJoinHttp(
+  url: string,
+  token?: string,
+): Promise<SyncJoinResultDto> {
+  return invoke<SyncJoinResultDto>("sync_join_http", { url, token });
 }
 

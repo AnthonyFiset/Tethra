@@ -59,6 +59,16 @@ pub struct SyncReportDto {
     pub cursor: String,
 }
 
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+pub struct SyncJoinResultDto {
+    /// True when this device adopted the shared vault header just now.
+    pub adopted: bool,
+    pub vault_exists: bool,
+    pub status: SyncStatusDto,
+}
+
 impl From<&CoreSyncStatus> for SyncStatusDto {
     fn from(status: &CoreSyncStatus) -> Self {
         Self {
@@ -179,6 +189,66 @@ pub async fn sync_configure_http(
         },
     };
     apply_settings(&app, &state, settings).await
+}
+
+/// Join an existing sync server before this device has a vault: adopt the
+/// shared header so the same master password unlocks the synced rows.
+#[tauri::command]
+pub async fn sync_join_http(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    token: Option<String>,
+) -> Result<SyncJoinResultDto, String> {
+    let settings = SyncSettings {
+        backend: SyncBackendConfig::Http {
+            url,
+            token: token.filter(|value| !value.is_empty()),
+        },
+    };
+    let status = apply_settings(&app, &state, settings).await?;
+
+    let engine = {
+        let guard = state.sync_engine.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| "sync is not configured".to_string())?
+    };
+
+    // Surface connection/auth failures here rather than silently continuing.
+    let adopted = engine
+        .bootstrap_from_backend_if_needed()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let vault_status = state
+        .repo
+        .vault()
+        .status()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if vault_status.exists && !adopted {
+        let compatible = engine
+            .header_matches_backend()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !compatible {
+            return Err(
+                "this device already has a different vault; reset it before joining the \
+                 synced vault"
+                    .into(),
+            );
+        }
+    }
+
+    let _ = app.emit("vault-header-adopted", ());
+
+    Ok(SyncJoinResultDto {
+        adopted,
+        vault_exists: vault_status.exists,
+        status,
+    })
 }
 
 #[tauri::command]

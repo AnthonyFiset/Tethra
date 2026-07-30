@@ -1,15 +1,17 @@
 import { useRef, useState, type FormEvent, type RefObject } from "react";
 import {
+  syncJoinHttp,
   vaultCreate,
   vaultRecover,
+  vaultStatus,
   vaultUnlock,
   type VaultStatusDto,
 } from "../lib/ipc";
 import { Logo } from "../components/Logo";
 import { Button } from "../components/ui/Button";
-import { ErrorBanner, Field } from "../components/ui/Field";
+import { ErrorBanner, Field, inputClass } from "../components/ui/Field";
 
-export type VaultMode = "create" | "unlock" | "recover";
+export type VaultMode = "create" | "unlock" | "recover" | "join";
 
 interface VaultGateProps {
   status: VaultStatusDto;
@@ -33,10 +35,41 @@ export function VaultGate({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
   const [enableRecovery, setEnableRecovery] = useState(true);
+  const [joinUrl, setJoinUrl] = useState("http://thinkpad:8787");
+  const [joinToken, setJoinToken] = useState("");
 
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLInputElement>(null);
+
+  async function join(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setError(undefined);
+    setNotice(undefined);
+    setBusy(true);
+    try {
+      const result = await syncJoinHttp(
+        joinUrl.trim(),
+        joinToken.trim() || undefined,
+      );
+      const next = await vaultStatus();
+      if (result.adopted || next.exists) {
+        setMode("unlock");
+        setNotice(
+          "Joined the synced vault. Unlock with the same master password used on your other device.",
+        );
+      } else {
+        setError(
+          "Connected, but that server has no vault yet. Sync from your first device, then join again.",
+        );
+      }
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -80,14 +113,18 @@ export function VaultGate({
       ? "Create encrypted vault"
       : mode === "recover"
         ? "Recover vault"
-        : "Unlock vault";
+        : mode === "join"
+          ? "Join a synced vault"
+          : "Unlock vault";
 
   const subtitle =
     mode === "create"
       ? "Hosts and passwords are encrypted on disk with Argon2id and XChaCha20-Poly1305."
       : mode === "recover"
         ? "Use the OS keyring recovery key to set a new master password. Existing encrypted items stay intact."
-        : "Enter your master password to decrypt hosts and identities.";
+        : mode === "join"
+          ? "Point this device at your sync server to adopt the existing vault. Create a vault instead and its key will not match the synced hosts."
+          : "Enter your master password to decrypt hosts and identities.";
 
   return (
     <div
@@ -95,7 +132,9 @@ export function VaultGate({
       className="grid size-full place-items-center bg-base p-6"
     >
       <form
-        onSubmit={(event) => void submit(event)}
+        onSubmit={(event) =>
+          void (mode === "join" ? join(event) : submit(event))
+        }
         className="flex w-full max-w-sm flex-col gap-4 rounded-panel border border-line bg-surface p-6"
       >
         <Logo variant="lockup" size={26} />
@@ -109,28 +148,67 @@ export function VaultGate({
         </div>
 
         {error && <ErrorBanner>{error}</ErrorBanner>}
+        {notice && (
+          <div className="rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-micro text-accent">
+            {notice}
+          </div>
+        )}
 
-        <Field
-          label={mode === "recover" ? "New master password" : "Master password"}
-          inputRef={passwordRef}
-          type="password"
-          name="vault-password"
-          autoComplete={mode === "unlock" ? "current-password" : "new-password"}
-          autoFocus
-          disabled={busy}
-          required
-        />
+        {mode === "join" ? (
+          <>
+            <Field
+              label="Sync server URL"
+              value={joinUrl}
+              onChange={(event) => setJoinUrl(event.target.value)}
+              placeholder="http://thinkpad:8787"
+              autoFocus
+              disabled={busy}
+              required
+              hint="Include http:// and the port."
+            />
+            <label className="flex flex-col gap-1.5">
+              <span className="text-micro font-medium text-fg-muted">
+                Token
+              </span>
+              <input
+                type="password"
+                value={joinToken}
+                onChange={(event) => setJoinToken(event.target.value)}
+                disabled={busy}
+                className={inputClass}
+                placeholder="Same token as the sync server"
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <Field
+              label={
+                mode === "recover" ? "New master password" : "Master password"
+              }
+              inputRef={passwordRef}
+              type="password"
+              name="vault-password"
+              autoComplete={
+                mode === "unlock" ? "current-password" : "new-password"
+              }
+              autoFocus
+              disabled={busy}
+              required
+            />
 
-        {(mode === "create" || mode === "recover") && (
-          <Field
-            label="Confirm password"
-            inputRef={confirmRef}
-            type="password"
-            name="vault-password-confirm"
-            autoComplete="new-password"
-            disabled={busy}
-            required
-          />
+            {(mode === "create" || mode === "recover") && (
+              <Field
+                label="Confirm password"
+                inputRef={confirmRef}
+                type="password"
+                name="vault-password-confirm"
+                autoComplete="new-password"
+                disabled={busy}
+                required
+              />
+            )}
+          </>
         )}
 
         {mode === "create" && (
@@ -166,7 +244,9 @@ export function VaultGate({
               ? "Create vault"
               : mode === "recover"
                 ? "Recover and unlock"
-                : "Unlock"}
+                : mode === "join"
+                  ? "Join synced vault"
+                  : "Unlock"}
         </Button>
 
         <div className="flex flex-wrap justify-center gap-4">
@@ -193,8 +273,25 @@ export function VaultGate({
             </ModeLink>
           )}
           {!status.exists && mode !== "create" && (
-            <ModeLink disabled={busy} onClick={() => setMode("create")}>
+            <ModeLink
+              disabled={busy}
+              onClick={() => {
+                setMode("create");
+                setError(undefined);
+              }}
+            >
               Create a new vault
+            </ModeLink>
+          )}
+          {!status.exists && mode !== "join" && (
+            <ModeLink
+              disabled={busy}
+              onClick={() => {
+                setMode("join");
+                setError(undefined);
+              }}
+            >
+              Join a synced vault
             </ModeLink>
           )}
         </div>

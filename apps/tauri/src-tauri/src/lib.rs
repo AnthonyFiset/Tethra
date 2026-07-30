@@ -618,6 +618,23 @@ pub fn run() {
             );
             let sync_engine = sync::build_engine(Arc::clone(&vault), &sync_settings);
             let repo = Arc::new(VaultRepository::new(Arc::clone(&vault)));
+
+            // A device that has sync configured but no vault yet (fresh install
+            // or a reset) adopts the shared header so the same master password
+            // unlocks the synced rows.
+            if let Some(engine) = sync_engine.clone() {
+                let boot_app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    match engine.bootstrap_from_backend_if_needed().await {
+                        Ok(true) => {
+                            tracing::info!("adopted synced vault header");
+                            let _ = boot_app.emit("vault-header-adopted", ());
+                        }
+                        Ok(false) => {}
+                        Err(err) => tracing::warn!(%err, "sync bootstrap failed"),
+                    }
+                });
+            }
             let prompts = Arc::new(PromptBroker {
                 app: app_handle.clone(),
                 pending: Mutex::new(HashMap::new()),
@@ -798,6 +815,7 @@ pub fn run() {
             sync::sync_configure_http,
             sync::sync_disable,
             sync::sync_pick_folder,
+            sync::sync_join_http,
             sync::sync_now,
         ])
         .run(tauri::generate_context!())
@@ -820,6 +838,7 @@ mod tests {
         TerminalEvent::export_all(&cfg).unwrap();
         sync::SyncStatusDto::export_all(&cfg).unwrap();
         sync::SyncReportDto::export_all(&cfg).unwrap();
+        sync::SyncJoinResultDto::export_all(&cfg).unwrap();
         sftp::export_bindings(&cfg);
     }
 
