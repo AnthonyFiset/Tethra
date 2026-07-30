@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use platform::AppPaths;
 use serde::{Deserialize, Serialize};
 use ssh_client_core::Result as CoreResult;
 use ssh_client_core::model::{KnownHostKey, PtySize, SecretString};
@@ -28,6 +29,7 @@ mod app_menu;
 mod local_fs;
 mod output_pump;
 mod sftp;
+mod sync;
 
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 
@@ -35,6 +37,7 @@ type Sessions = Arc<Mutex<HashMap<Uuid, PtyHandle>>>;
 type LocalSessions = Arc<Mutex<HashMap<Uuid, Box<dyn platform::LocalPtySession>>>>;
 
 pub(crate) struct AppState {
+    paths: Arc<dyn platform::AppPaths>,
     repo: Arc<VaultRepository>,
     manager: Arc<SessionManager>,
     sessions: Sessions,
@@ -44,6 +47,8 @@ pub(crate) struct AppState {
     sftp_sessions: sftp::SftpSessions,
     active_transfers: sftp::ActiveTransfers,
     prompts: Arc<PromptBroker>,
+    sync_settings: Arc<Mutex<sync::SyncSettings>>,
+    sync_engine: Arc<Mutex<Option<Arc<ssh_client_core::sync::SyncEngine>>>>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -593,6 +598,7 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             app.set_menu(app_menu::build(app)?)?;
@@ -600,12 +606,17 @@ pub fn run() {
                 platform_desktop::DesktopAppPaths::new()
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
             );
+            let sync_settings = sync::load_settings(&paths.data_dir());
             let secrets: Arc<dyn platform::SecretStore> =
                 Arc::new(platform_desktop::KeyringSecretStore::new());
             let vault = Arc::new(
-                Vault::open(paths, Arc::clone(&secrets))
-                    .map_err(|e| std::io::Error::other(e.to_string()))?,
+                Vault::open(
+                    Arc::clone(&paths) as Arc<dyn platform::AppPaths>,
+                    Arc::clone(&secrets),
+                )
+                .map_err(|e| std::io::Error::other(e.to_string()))?,
             );
+            let sync_engine = sync::build_engine(Arc::clone(&vault), &sync_settings);
             let repo = Arc::new(VaultRepository::new(Arc::clone(&vault)));
             let prompts = Arc::new(PromptBroker {
                 app: app_handle.clone(),
@@ -626,6 +637,7 @@ pub fn run() {
             let sftp_sessions = Arc::new(Mutex::new(HashMap::new()));
             let active_transfers = Arc::new(Mutex::new(HashMap::new()));
             app.manage(AppState {
+                paths: Arc::clone(&paths) as Arc<dyn platform::AppPaths>,
                 repo: Arc::clone(&repo),
                 manager,
                 sessions: Arc::clone(&sessions),
@@ -635,6 +647,8 @@ pub fn run() {
                 sftp_sessions: Arc::clone(&sftp_sessions),
                 active_transfers: Arc::clone(&active_transfers),
                 prompts: Arc::clone(&prompts),
+                sync_settings: Arc::new(Mutex::new(sync_settings)),
+                sync_engine: Arc::new(Mutex::new(sync_engine)),
             });
 
             // Periodic idle-lock watcher.
@@ -779,6 +793,12 @@ pub fn run() {
             sftp::sftp_remote_create_dir_entry,
             sftp::sftp_transfer,
             sftp::sftp_cancel_transfer,
+            sync::sync_status,
+            sync::sync_configure_file,
+            sync::sync_configure_http,
+            sync::sync_disable,
+            sync::sync_pick_folder,
+            sync::sync_now,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tauri application");
@@ -798,6 +818,8 @@ mod tests {
         SshConfigPreviewDto::export_all(&cfg).unwrap();
         HostKeyPrompt::export_all(&cfg).unwrap();
         TerminalEvent::export_all(&cfg).unwrap();
+        sync::SyncStatusDto::export_all(&cfg).unwrap();
+        sync::SyncReportDto::export_all(&cfg).unwrap();
         sftp::export_bindings(&cfg);
     }
 

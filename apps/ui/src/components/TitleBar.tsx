@@ -5,6 +5,7 @@ import {
   Lock,
   MoreHorizontal,
   PanelLeft,
+  RefreshCw,
   Search,
   TerminalSquare,
 } from "lucide-react";
@@ -20,6 +21,7 @@ interface TitleBarProps {
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
   onOpenLocal: () => void;
+  onSync: () => void;
   onChangePassword: () => void;
   onAbout: () => void;
   onLock: () => void;
@@ -32,6 +34,7 @@ export function TitleBar({
   onToggleSidebar,
   onOpenPalette,
   onOpenLocal,
+  onSync,
   onChangePassword,
   onAbout,
   onLock,
@@ -97,6 +100,9 @@ export function TitleBar({
               <MenuItem icon={<Search size={14} />} onSelect={onOpenPalette}>
                 Command palette
                 <span className="ml-auto text-fg-subtle">⌘K</span>
+              </MenuItem>
+              <MenuItem icon={<RefreshCw size={14} />} onSelect={onSync}>
+                Vault sync
               </MenuItem>
               <MenuItem
                 icon={<KeyRound size={14} />}

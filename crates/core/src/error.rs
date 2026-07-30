@@ -78,6 +78,9 @@ pub enum Error {
     #[error("platform error: {0}")]
     Platform(String),
 
+    #[error("sync error: {0}")]
+    Sync(String),
+
     #[error("unsupported: {0}")]
     Unsupported(String),
 

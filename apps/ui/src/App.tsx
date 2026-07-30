@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CommandPalette } from "./components/CommandPalette";
 import { Logo } from "./components/Logo";
 import { Sidebar } from "./components/Sidebar";
+import { SyncSettingsModal } from "./components/SyncSettingsModal";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { Button } from "./components/ui/Button";
@@ -168,6 +169,7 @@ function Workspace({
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<HostSummaryDto>();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -467,6 +469,7 @@ function Workspace({
         onToggleSidebar={toggleSidebar}
         onOpenPalette={() => setPaletteOpen(true)}
         onOpenLocal={() => void openLocal()}
+        onSync={() => setSyncOpen(true)}
         onChangePassword={() => setChangePasswordOpen(true)}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
@@ -571,6 +574,7 @@ function Workspace({
         onLocal={() => void openLocal()}
         onAddHost={() => setEditor("new")}
         onImport={() => setImportOpen(true)}
+        onSync={() => setSyncOpen(true)}
         onLock={() => void lockNow()}
       />
 
@@ -680,6 +684,17 @@ function Workspace({
 
       {changePasswordOpen && (
         <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />
+      )}
+
+      {syncOpen && (
+        <SyncSettingsModal
+          onClose={() => setSyncOpen(false)}
+          onHostsMayHaveChanged={() => {
+            void listHosts()
+              .then(setHosts)
+              .catch((reason: unknown) => setError(String(reason)));
+          }}
+        />
       )}
     </div>
   );

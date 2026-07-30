@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "Default desktop window capabilities",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:default"
+  ]
 }

@@ -18,6 +18,7 @@ required-features = ["cli"]
 [features]
 default = []
 cli = ["dep:clap", "dep:crossterm", "dep:rpassword", "dep:tracing-subscriber", "tokio/io-std", "tokio/signal"]
+sync-http = ["dep:reqwest"]
 
 [dependencies]
 argon2 = { workspace = true }
@@ -30,6 +31,7 @@ hex = { workspace = true }
 hkdf = { workspace = true }
 platform = { workspace = true }
 rand = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
 rusqlite = { workspace = true }
 russh = { workspace = true }
 russh-sftp = { workspace = true }

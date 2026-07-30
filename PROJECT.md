@@ -359,7 +359,8 @@ project. Parse via `russh-config`, map to `Host` records, preserve `ProxyJump`.
 
 **M5 — SFTP UI.** Dual-pane browser, drag/drop, transfer queue with resume.
 
-**M6 — sync.** `FileBackend` first. `HttpBackend` only after that works.
+**M6 — sync.** `FileBackend` + `HttpBackend` (`tethra-sync-server` for Tailscale
+hosts). Host metadata only; password identities stay local. See `docs/M6.md`.
 
 **M7 — power features.** Local/remote/dynamic port forwarding, jump hosts,
 snippets, multi-host broadcast.

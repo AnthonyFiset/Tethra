@@ -6,6 +6,8 @@ import type { HostSummaryDto } from "./generated/HostSummaryDto";
 import type { SftpOpenResult } from "./generated/SftpOpenResult";
 import type { SshConfigHostDto } from "./generated/SshConfigHostDto";
 import type { SshConfigPreviewDto } from "./generated/SshConfigPreviewDto";
+import type { SyncReportDto } from "./generated/SyncReportDto";
+import type { SyncStatusDto } from "./generated/SyncStatusDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
 import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
@@ -17,6 +19,8 @@ export type {
   SftpOpenResult,
   SshConfigHostDto,
   SshConfigPreviewDto,
+  SyncReportDto,
+  SyncStatusDto,
   TerminalEvent,
   TransferEvent,
   VaultStatusDto,
@@ -270,3 +274,31 @@ export function sftpTransfer(
 export function cancelSftpTransfer(transferId: string): Promise<void> {
   return invoke("sftp_cancel_transfer", { transferId });
 }
+
+export function syncStatus(): Promise<SyncStatusDto> {
+  return invoke<SyncStatusDto>("sync_status");
+}
+
+export function syncConfigureFile(path: string): Promise<SyncStatusDto> {
+  return invoke<SyncStatusDto>("sync_configure_file", { path });
+}
+
+export function syncConfigureHttp(
+  url: string,
+  token?: string,
+): Promise<SyncStatusDto> {
+  return invoke<SyncStatusDto>("sync_configure_http", { url, token });
+}
+
+export function syncDisable(): Promise<SyncStatusDto> {
+  return invoke<SyncStatusDto>("sync_disable");
+}
+
+export function syncPickFolder(): Promise<string | null> {
+  return invoke<string | null>("sync_pick_folder");
+}
+
+export function syncNow(): Promise<SyncReportDto> {
+  return invoke<SyncReportDto>("sync_now");
+}
+

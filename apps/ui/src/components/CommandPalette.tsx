@@ -5,6 +5,7 @@ import {
   FolderOpen,
   Lock,
   Plus,
+  RefreshCw,
   TerminalSquare,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -20,6 +21,7 @@ interface CommandPaletteProps {
   onLocal: () => void;
   onAddHost: () => void;
   onImport: () => void;
+  onSync: () => void;
   onLock: () => void;
 }
 
@@ -32,6 +34,7 @@ export function CommandPalette({
   onLocal,
   onAddHost,
   onImport,
+  onSync,
   onLock,
 }: CommandPaletteProps): React.JSX.Element {
   function run(action: () => void) {
@@ -127,6 +130,14 @@ export function CommandPalette({
                   onSelect={() => run(onImport)}
                 >
                   Import SSH config
+                </Item>
+                <Item
+                  value="vault sync folder http thinkpad"
+                  icon={<RefreshCw size={15} />}
+                  detail="Share hosts across devices"
+                  onSelect={() => run(onSync)}
+                >
+                  Vault sync
                 </Item>
                 <Item
                   value="lock vault security"

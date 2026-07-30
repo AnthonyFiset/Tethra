@@ -77,8 +77,18 @@ impl VaultRepository {
         for row in rows {
             let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
             let record: HostRecord = serde_json::from_slice(&plaintext)?;
+            let has_password = match record.identity_id {
+                Some(identity_id) => self
+                    .vault
+                    .with_db(|db| db.get_item(identity_id))
+                    .await?
+                    .is_some_and(|item| !item.deleted && item.kind == ItemKind::Identity),
+                None => false,
+            };
             let host = Host::from(record);
-            out.push(HostSummary::from(&host));
+            let mut summary = HostSummary::from(&host);
+            summary.has_password = has_password;
+            out.push(summary);
         }
         Ok(out)
     }

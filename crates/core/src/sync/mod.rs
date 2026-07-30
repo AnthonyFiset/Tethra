@@ -1,32 +1,42 @@
-//! Sync adapters. M1 ships [`LocalOnly`]; FileBackend / HttpBackend come later.
+//! Sync adapters and reconciliation.
+//!
+//! [`LocalOnly`] ships as the default. [`FileBackend`] stores opaque ciphertext
+//! rows in a user-chosen directory (Dropbox, OneDrive, Syncthing, or a folder
+//! on a Tailscale host). [`HttpBackend`] talks to the same row protocol over
+//! HTTP so a ThinkPad/Ubuntu box can host sync for Mac and Windows clients.
+//!
+//! Password identities stay `local_only` and never leave the device. The shared
+//! vault header (salt + password-wrapped vault key) is published so another
+//! device can unlock with the same master password.
+
+mod conflict;
+mod encode;
+mod engine;
+mod file;
+mod http;
+mod types;
+
+pub use conflict::wins_over;
+pub use encode::{item_row_from_sync, sync_item_from_row};
+pub use engine::{SyncEngine, SyncReport, SyncStatus};
+pub use file::FileBackend;
+pub use http::HttpBackend;
+pub use types::{SyncCursor, SyncItem, SyncedVaultHeader, TOMBSTONE_RETENTION_DAYS};
 
 use async_trait::async_trait;
 
 use crate::Result;
 
-/// Opaque sync cursor.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SyncCursor(pub String);
-
-/// Row the sync server is allowed to see — ciphertext only.
-#[derive(Debug, Clone)]
-pub struct SyncItem {
-    pub id: uuid::Uuid,
-    pub kind: String,
-    pub version: u64,
-    pub updated_at: String,
-    pub deleted: bool,
-    pub nonce: String,
-    pub ciphertext: String,
-}
-
+/// Opaque storage the sync server / folder is allowed to see.
 #[async_trait]
 pub trait SyncBackend: Send + Sync {
     async fn pull(&self, since: &SyncCursor) -> Result<(Vec<SyncItem>, SyncCursor)>;
     async fn push(&self, items: &[SyncItem]) -> Result<SyncCursor>;
+    async fn get_header(&self) -> Result<Option<SyncedVaultHeader>>;
+    async fn put_header(&self, header: &SyncedVaultHeader) -> Result<()>;
 }
 
-/// No sync at all. Ship v1 with this.
+/// No sync at all.
 #[derive(Debug, Default)]
 pub struct LocalOnly;
 
@@ -38,5 +48,13 @@ impl SyncBackend for LocalOnly {
 
     async fn push(&self, _items: &[SyncItem]) -> Result<SyncCursor> {
         Ok(SyncCursor::default())
+    }
+
+    async fn get_header(&self) -> Result<Option<SyncedVaultHeader>> {
+        Ok(None)
+    }
+
+    async fn put_header(&self, _header: &SyncedVaultHeader) -> Result<()> {
+        Ok(())
     }
 }

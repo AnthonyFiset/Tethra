@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            rust_target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - platform: macos-13
+            rust_target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - platform: windows-latest
+            rust_target: ""
+            args: ""
+          - platform: ubuntu-22.04
+            rust_target: ""
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (with optional target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/ui
+
+      - name: Build installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/tauri/src-tauri
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
+          releaseName: Tethra ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
+          releaseDraft: true
+          prerelease: ${{ github.ref_type != 'tag' }}
+          args: ${{ matrix.args }}
+          includeUpdaterJson: false
+
+  sync-server:
+    name: publish-sync-server
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build sync server
+        run: cargo build -p tethra-sync-server --release
+
+      - name: Upload sync-server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tethra-sync-server-linux-x86_64
+          path: target/release/tethra-sync-server

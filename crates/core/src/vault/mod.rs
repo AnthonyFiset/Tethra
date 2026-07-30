@@ -5,9 +5,9 @@
 
 mod crypto;
 mod kdf;
-mod records;
+pub(crate) mod records;
 mod repository;
-mod store;
+pub(crate) mod store;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,16 +19,17 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
-use crypto::{EncryptedBlob, VaultKey};
-use kdf::Argon2Params;
-use store::{ItemKind, ItemRow, RECOVERY_SECRET_KEY, VaultDb, VaultHeader};
+use crypto::VaultKey;
+use store::{RECOVERY_SECRET_KEY, VaultDb, VaultHeader};
 
 use crate::model::SecretString;
 use crate::{Error, Result};
 
+pub use crypto::EncryptedBlob;
+pub use kdf::Argon2Params;
 pub use records::{HostRecord, PasswordIdentityRecord};
 pub use repository::{CreateHostRequest, HostSummary, VaultRepository};
-pub use store::RECOVERY_SECRET_KEY as VAULT_RECOVERY_SECRET_KEY;
+pub use store::{ItemKind, ItemRow, RECOVERY_SECRET_KEY as VAULT_RECOVERY_SECRET_KEY};
 
 /// Default idle auto-lock duration.
 pub const DEFAULT_IDLE_LOCK: Duration = Duration::from_secs(15 * 60);

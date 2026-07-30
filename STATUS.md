@@ -1,6 +1,6 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after M5.6._
+_Snapshot for handoff / reassessment. Last updated after M6._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
 end-to-end encrypted vault of saved hosts. Desktop-first (macOS/Windows/Linux),
@@ -8,7 +8,7 @@ architected so iOS/Android are a port, not a rewrite. See [`PROJECT.md`](PROJECT
 for the authoritative architecture and hard rules.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main` with M5.6 changes in the current working tree
+- **Branch:** `main` with M6 changes in the current working tree
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 20+ required (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes
 
@@ -25,7 +25,7 @@ for the authoritative architecture and hard rules.
 | **M5** | Dual-pane SFTP browser, file management, drag/drop, transfer queue with pause/resume | Done |
 | **M5.5** | Stable identity, local terminal, host colors, branding, sidebar rail, command palette, native polish | Done |
 | **M5.6** | UI overhaul: Tailwind v4 design tokens, Radix primitives, icon rail, native menu, window drag fix | Done |
-| **M6** | Sync — `FileBackend` first (iCloud/Dropbox/git folder), then `HttpBackend` | Not started |
+| **M6** | Sync — `FileBackend`, `HttpBackend`, ThinkPad sync server, release installers | Done |
 | **M7** | Power features: port forwarding, live jump hosts, snippets, multi-host broadcast | Not started |
 | **M8** | Mobile: `platform-ios` shim, layout fixes; core should need zero changes | Not started |
 
@@ -41,25 +41,28 @@ crates/
       vault/            kdf, crypto, store, repository, records
       ssh/              session manager, handler, pty, exec, sftp, approval, fingerprint
       ssh_config.rs     ~/.ssh/config parsing
-      sync/             SyncBackend trait + LocalOnly (FileBackend/HttpBackend TODO)
+      sync/             SyncBackend, FileBackend, HttpBackend, SyncEngine, conflict
       error.rs
+  sync-server/          tethra-sync-server (HTTP over FileBackend) for Tailscale hosts
   platform/             trait definitions only (including LocalPty)
   platform-desktop/     keyring, paths, power monitor, portable-pty local terminal
   platform-ios/         stub
 apps/
   tauri/src-tauri/      command glue only
-    src/lib.rs          vault + host + terminal + SFTP commands, session lifecycle
+    src/lib.rs          vault + host + terminal + SFTP + sync commands
+    src/sync.rs         sync settings, folder picker, HTTP configure, sync-now
     src/output_pump.rs  shared SSH/local terminal batching and backpressure
     src/local_fs.rs     local filesystem commands for SFTP left pane
     src/sftp.rs         SFTP browser sessions + transfer tasks
   ui/                   React app
     src/lib/ipc.ts      the ONLY file that calls invoke()
     src/terminal/       xterm registry + shared SSH/local terminal view
-    src/components/     logo and command palette
+    src/components/     logo, command palette, SyncSettingsModal
     src/sftp/           SftpBrowser, FilePane, TransferQueuePanel, queue runner, path helpers
     src/vault/          VaultGate, ChangePasswordModal
     src/hosts/          HostFormModal, SshConfigImportModal
-docs/                   M1.md .. M5.5.md
+docs/                   M1.md .. M6.md
+.github/workflows/      ci.yml + release.yml (dmg / exe / deb on tag)
 ```
 
 ### Hard rules being enforced
@@ -71,10 +74,35 @@ docs/                   M1.md .. M5.5.md
 - Layout collapses to single column under 768px.
 - Key material zeroizes on drop; `#![forbid(unsafe_code)]` in `core`.
 - `ipc.ts` is the sole `invoke()` surface; TS types generated via `ts-rs`.
+- Sync moves host ciphertext only; password identities stay `local_only`.
 
 ---
 
-## What M5 added (most recent work)
+## What M6 added (most recent work)
+
+### Core — [`crates/core/src/sync/`](crates/core/src/sync/)
+- `FileBackend` layout: `manifest.json`, `vault-header.json`, `items/<uuid>.json`
+- `HttpBackend` (feature `sync-http`) for self-hosted sync
+- `SyncEngine` vault-header bootstrap + LWW conflict resolution
+- Hosts sync; password identities stay device-local
+
+### Sync server — [`crates/sync-server`](crates/sync-server)
+- `tethra-sync-server` for Ubuntu/ThinkPad over Tailscale
+- Optional `--token` / `TETHRA_SYNC_TOKEN`
+
+### Desktop + UI
+- Configure shared folder or HTTP URL+token; Sync now / Disable
+- **Vault sync** in the ⋯ menu and command palette
+
+### Releases
+- Tag `v*` (or run **Release** manually) → macOS `.dmg`, Windows NSIS `.exe`,
+  Linux packages, plus a Linux `tethra-sync-server` artifact
+
+See [`docs/M6.md`](docs/M6.md).
+
+---
+
+## What M5 added
 
 ### Core — [`crates/core/src/ssh/sftp.rs`](crates/core/src/ssh/sftp.rs)
 - Directory entries now include modification time; added `stat`, `mkdir`,
@@ -123,7 +151,8 @@ docs/                   M1.md .. M5.5.md
 - **SFTP:** folder (recursive) transfers not supported; the transfer queue is not
   persisted across app restarts; resume only applies to partial files retained in
   the current session.
-- **Sync (M6):** only `LocalOnly` exists; `FileBackend` and `HttpBackend` are TODO.
+- **Sync:** manual Sync now only (no background interval yet); password identities
+  never sync — re-enter per device after bootstrap.
 - **Jump hosts:** `ProxyJump` is stored as metadata; live routing is M7.
 - **Private keys:** host metadata is the sync target; private-key identities stay
   device-local (key sync is a deferred opt-in).
@@ -191,11 +220,9 @@ mkdir/rename/remove and progress/cancel/resume).
 
 ## Suggested next step
 
-**M6 — Sync, starting with `FileBackend`.** The seam already exists
-(`SyncBackend` trait + `LocalOnly` in [`crates/core/src/sync/mod.rs`](crates/core/src/sync/mod.rs)),
-and item-level encryption from M3 was designed for per-item conflict resolution.
-`FileBackend` (a user-pointed directory: iCloud Drive, Dropbox, or a git repo)
-needs zero infrastructure and is genuinely free before any hosted server.
+**M7 — Power features** (port forwarding, live jump hosts, snippets, multi-host
+broadcast), or polish M6 with periodic background sync and a systemd unit
+example for the ThinkPad server.
 
-Optional quick wins: add a README + LICENSE and flip the repo public, since
-`PROJECT.md` frames Tethra as open source.
+Optional: add a README + LICENSE and flip the repo public; configure Apple /
+Windows code signing when you want Gatekeeper / SmartScreen-clean installers.

@@ -1,0 +1,23 @@
+[package]
+name = "tethra-sync-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Self-hosted Tethra sync server for Tailscale / LAN hosts"
+publish = false
+
+[[bin]]
+name = "tethra-sync-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+base64 = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ssh-client-core = { package = "core", path = "../core" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "signal"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

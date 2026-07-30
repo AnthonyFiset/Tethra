@@ -5,6 +5,7 @@ members = [
     "crates/platform",
     "crates/platform-desktop",
     "crates/platform-ios",
+    "crates/sync-server",
     "apps/tauri/src-tauri",
 ]
 default-members = ["crates/core"]
