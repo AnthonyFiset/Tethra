@@ -5,6 +5,7 @@ import {
   vaultRecover,
   vaultStatus,
   vaultUnlock,
+  VAULT_MISMATCH_NEEDS_RESET,
   type VaultStatusDto,
 } from "../lib/ipc";
 import { Logo } from "../components/Logo";
@@ -39,12 +40,12 @@ export function VaultGate({
   const [enableRecovery, setEnableRecovery] = useState(true);
   const [joinUrl, setJoinUrl] = useState("http://thinkpad:8787");
   const [joinToken, setJoinToken] = useState("");
+  const [needsReset, setNeedsReset] = useState(false);
 
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLInputElement>(null);
 
-  async function join(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  async function join(reset: boolean): Promise<void> {
     setError(undefined);
     setNotice(undefined);
     setBusy(true);
@@ -52,9 +53,11 @@ export function VaultGate({
       const result = await syncJoinHttp(
         joinUrl.trim(),
         joinToken.trim() || undefined,
+        reset,
       );
       const next = await vaultStatus();
       if (result.adopted || next.exists) {
+        setNeedsReset(false);
         setMode("unlock");
         setNotice(
           "Joined the synced vault. Unlock with the same master password used on your other device.",
@@ -65,7 +68,11 @@ export function VaultGate({
         );
       }
     } catch (reason) {
-      setError(String(reason));
+      if (String(reason).includes(VAULT_MISMATCH_NEEDS_RESET)) {
+        setNeedsReset(true);
+      } else {
+        setError(String(reason));
+      }
     } finally {
       setBusy(false);
     }
@@ -132,9 +139,14 @@ export function VaultGate({
       className="grid size-full place-items-center bg-base p-6"
     >
       <form
-        onSubmit={(event) =>
-          void (mode === "join" ? join(event) : submit(event))
-        }
+        onSubmit={(event) => {
+          if (mode !== "join") {
+            void submit(event);
+            return;
+          }
+          event.preventDefault();
+          void join(false);
+        }}
         className="flex w-full max-w-sm flex-col gap-4 rounded-panel border border-line bg-surface p-6"
       >
         <Logo variant="lockup" size={26} />
@@ -179,6 +191,25 @@ export function VaultGate({
                 placeholder="Same token as the sync server"
               />
             </label>
+
+            {needsReset && (
+              <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2">
+                <p className="m-0 text-micro text-warning">
+                  This device already has its own vault, and its key cannot
+                  decrypt the synced hosts. Joining replaces it with the synced
+                  vault. Passwords saved only on this device will be lost; hosts
+                  come back from the server.
+                </p>
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={busy}
+                  onClick={() => void join(true)}
+                >
+                  Replace this device&rsquo;s vault and join
+                </Button>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -283,7 +314,7 @@ export function VaultGate({
               Create a new vault
             </ModeLink>
           )}
-          {!status.exists && mode !== "join" && (
+          {mode !== "join" && (
             <ModeLink
               disabled={busy}
               onClick={() => {

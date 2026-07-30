@@ -10,6 +10,7 @@ import type { SyncJoinResultDto } from "./generated/SyncJoinResultDto";
 import type { SyncReportDto } from "./generated/SyncReportDto";
 import type { SyncStatusDto } from "./generated/SyncStatusDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
+import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
 
@@ -24,6 +25,7 @@ export type {
   SyncReportDto,
   SyncStatusDto,
   TerminalEvent,
+  UpdateInfoDto,
   TransferEvent,
   VaultStatusDto,
 };
@@ -304,10 +306,28 @@ export function syncNow(): Promise<SyncReportDto> {
   return invoke<SyncReportDto>("sync_now");
 }
 
+/// Marker returned by `sync_join_http` when joining would abandon a different
+/// local vault; retry with `resetExisting` once the user confirms.
+export const VAULT_MISMATCH_NEEDS_RESET = "VAULT_MISMATCH_NEEDS_RESET";
+
+export function updateCheck(): Promise<UpdateInfoDto> {
+  return invoke<UpdateInfoDto>("update_check");
+}
+
+/// Resolves only on failure — a successful install restarts the app.
+export function updateInstall(): Promise<void> {
+  return invoke<void>("update_install");
+}
+
 export function syncJoinHttp(
   url: string,
   token?: string,
+  resetExisting = false,
 ): Promise<SyncJoinResultDto> {
-  return invoke<SyncJoinResultDto>("sync_join_http", { url, token });
+  return invoke<SyncJoinResultDto>("sync_join_http", {
+    url,
+    token,
+    resetExisting,
+  });
 }
 

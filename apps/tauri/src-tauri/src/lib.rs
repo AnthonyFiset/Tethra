@@ -30,6 +30,7 @@ mod local_fs;
 mod output_pump;
 mod sftp;
 mod sync;
+mod updater;
 
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 
@@ -599,6 +600,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             app.set_menu(app_menu::build(app)?)?;
@@ -817,6 +820,8 @@ pub fn run() {
             sync::sync_pick_folder,
             sync::sync_join_http,
             sync::sync_now,
+            updater::update_check,
+            updater::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tauri application");
@@ -839,6 +844,7 @@ mod tests {
         sync::SyncStatusDto::export_all(&cfg).unwrap();
         sync::SyncReportDto::export_all(&cfg).unwrap();
         sync::SyncJoinResultDto::export_all(&cfg).unwrap();
+        updater::UpdateInfoDto::export_all(&cfg).unwrap();
         sftp::export_bindings(&cfg);
     }
 

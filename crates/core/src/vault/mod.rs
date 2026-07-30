@@ -152,6 +152,23 @@ impl Vault {
         self.status().await
     }
 
+    /// Destroy this device's vault: every item, the header, and the keyring
+    /// recovery secret. Irreversible — callers must confirm with the user.
+    ///
+    /// Synced hosts come back from the backend; anything `local_only` (saved
+    /// passwords) is gone.
+    pub async fn reset(&self) -> Result<VaultStatus> {
+        *self.state.lock().await = LockState::Locked;
+        {
+            let mut db = self.db.lock().await;
+            db.wipe()?;
+        }
+        // Best-effort: a stale recovery secret is harmless once the header it
+        // unwraps no longer exists.
+        let _ = self.secrets.delete(RECOVERY_SECRET_KEY).await;
+        self.status().await
+    }
+
     pub async fn unlock(&self, password: &SecretString) -> Result<VaultStatus> {
         let header = {
             let db = self.db.lock().await;

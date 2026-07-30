@@ -1,11 +1,11 @@
 //! HTTP sync server (axum) with request metrics.
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -19,6 +19,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
+use crate::updates;
 
 #[derive(Debug, Default)]
 pub struct Metrics {
@@ -85,6 +86,9 @@ struct AppState {
     backend: Arc<FileBackend>,
     token: Option<String>,
     metrics: Arc<Metrics>,
+    data_dir: PathBuf,
+    /// Base URL clients use to reach this server, for rewriting asset links.
+    client_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -119,17 +123,27 @@ pub fn build_router(config: &Config, metrics: Arc<Metrics>) -> Result<Router, St
         backend,
         token,
         metrics,
+        data_dir: config.data_dir.clone(),
+        client_url: config.client_url.clone(),
     };
     Ok(Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/items", get(pull_items).post(push_items))
         .route("/v1/header", get(get_header).put(put_header))
+        // Unauthenticated: payloads are minisign-verified by the client, and
+        // requiring the sync token here would block updates whenever a device
+        // is misconfigured — exactly when it most needs to update.
+        .route(
+            "/updates/{target}/{arch}/{current_version}",
+            get(check_update),
+        )
+        .route("/updates/download/{file}", get(download_update))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state))
 }
 
-pub async fn prepare_data_dir(data_dir: &Path) -> Result<(), String> {
+pub async fn prepare_data_dir(data_dir: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(data_dir)
         .map_err(|e| format!("create data dir {}: {e}", data_dir.display()))?;
     let backend = FileBackend::new(data_dir);
@@ -274,6 +288,54 @@ async fn put_header(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Tauri updater endpoint: 204 means "no update", 200 returns the manifest.
+async fn check_update(
+    State(state): State<AppState>,
+    Path((target, arch, current_version)): Path<(String, String, String)>,
+) -> Result<axum::response::Response, StatusCode> {
+    use axum::response::IntoResponse;
+
+    let Some(mut manifest) = updates::load_manifest(&state.data_dir) else {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+    if !updates::is_newer(&manifest.version, &current_version) {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
+    let key = updates::platform_key(&target, &arch);
+    if !manifest.platforms.contains_key(&key) {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+    manifest.platforms.retain(|k, _| k == &key);
+
+    if let Some(base) = state.client_url.as_deref() {
+        updates::localize_urls(&mut manifest, base);
+    }
+    Ok(Json(manifest).into_response())
+}
+
+async fn download_update(
+    State(state): State<AppState>,
+    Path(file): Path<String>,
+) -> Result<axum::response::Response, StatusCode> {
+    use axum::response::IntoResponse;
+
+    // Path traversal guard: only a bare file name from the updates dir.
+    if file.contains('/') || file.contains('\\') || file.contains("..") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let path = updates::updates_dir(&state.data_dir).join(&file);
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+        bytes,
+    )
+        .into_response())
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@ import {
   syncConfigureFile,
   syncConfigureHttp,
   syncDisable,
+  syncJoinHttp,
   syncNow,
   syncPickFolder,
   syncStatus,
@@ -16,11 +17,15 @@ import { cn } from "../lib/cn";
 interface SyncSettingsModalProps {
   onClose: () => void;
   onHostsMayHaveChanged: () => void;
+  /// This device abandoned its vault for the synced one; it must lock and
+  /// re-unlock with the shared master password.
+  onVaultReplaced: () => void;
 }
 
 export function SyncSettingsModal({
   onClose,
   onHostsMayHaveChanged,
+  onVaultReplaced,
 }: SyncSettingsModalProps): React.JSX.Element {
   const [status, setStatus] = useState<SyncStatusDto>();
   const [mode, setMode] = useState<"file" | "http">("http");
@@ -29,6 +34,7 @@ export function SyncSettingsModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
+  const [mismatched, setMismatched] = useState(false);
 
   useEffect(() => {
     void syncStatus()
@@ -93,8 +99,25 @@ export function SyncSettingsModal({
         `Synced — pulled ${report.pulled}, applied ${report.applied}, pushed ${report.pushed}`,
       );
     } catch (reason) {
-      setError(String(reason));
+      const text = String(reason);
+      setError(text);
+      setMismatched(text.includes("created separately"));
       await refresh().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function replaceAndJoin(): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      await syncJoinHttp(httpUrl.trim(), httpToken.trim() || undefined, true);
+      setMismatched(false);
+      onVaultReplaced();
+    } catch (reason) {
+      setError(String(reason));
     } finally {
       setBusy(false);
     }
@@ -126,6 +149,23 @@ export function SyncSettingsModal({
     >
       <div className="flex flex-col gap-4">
         {error && <ErrorBanner>{error}</ErrorBanner>}
+        {mismatched && (
+          <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2">
+            <p className="m-0 text-micro text-warning">
+              This device&rsquo;s vault was created on its own, so its key
+              cannot decrypt the synced hosts. Replace it with the synced vault
+              to fix this. Passwords saved only on this device will be lost;
+              hosts come back from the server.
+            </p>
+            <Button
+              variant="danger"
+              disabled={busy || !httpUrl.trim()}
+              onClick={() => void replaceAndJoin()}
+            >
+              Replace this device&rsquo;s vault and join
+            </Button>
+          </div>
+        )}
         {message && (
           <div className="rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-micro text-accent">
             {message}

@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { SyncSettingsModal } from "./components/SyncSettingsModal";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { Button } from "./components/ui/Button";
 import { Dialog } from "./components/ui/Dialog";
 import { ErrorBanner } from "./components/ui/Field";
@@ -475,6 +476,8 @@ function Workspace({
         onLock={() => void lockNow()}
       />
 
+      <UpdateBanner />
+
       <div
         className="relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-150 max-md:block"
         style={{
@@ -692,6 +695,15 @@ function Workspace({
           onHostsMayHaveChanged={() => {
             void listHosts()
               .then(setHosts)
+              .catch((reason: unknown) => setError(String(reason)));
+          }}
+          onVaultReplaced={() => {
+            // The old key is gone, so drop back to the gate for the shared
+            // master password.
+            setSyncOpen(false);
+            setHosts([]);
+            void vaultStatus()
+              .then(onStatus)
               .catch((reason: unknown) => setError(String(reason)));
           }}
         />

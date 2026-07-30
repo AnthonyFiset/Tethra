@@ -58,10 +58,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix apps/ui
 
+      # The tag is the single source of truth for the shipped version.
+      - name: Stamp version from tag
+        if: github.ref_type == 'tag'
+        run: node scripts/set-version.mjs ${{ github.ref_name }}
+
       - name: Build installer
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/tauri/src-tauri
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
@@ -69,7 +76,7 @@ jobs:
           releaseDraft: true
           prerelease: ${{ github.ref_type != 'tag' }}
           args: ${{ matrix.args }}
-          includeUpdaterJson: false
+          includeUpdaterJson: true
 
   sync-server:
     name: publish-sync-server
@@ -80,6 +87,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Stamp version from tag
+        if: github.ref_type == 'tag'
+        run: node scripts/set-version.mjs ${{ github.ref_name }}
 
       - name: Build sync server
         run: cargo build -p tethra-sync-server --release

@@ -199,6 +199,7 @@ pub async fn sync_join_http(
     state: State<'_, AppState>,
     url: String,
     token: Option<String>,
+    reset_existing: Option<bool>,
 ) -> Result<SyncJoinResultDto, String> {
     let settings = SyncSettings {
         backend: SyncBackendConfig::Http {
@@ -214,34 +215,34 @@ pub async fn sync_join_http(
             .clone()
             .ok_or_else(|| "sync is not configured".to_string())?
     };
+    let vault = state.repo.vault();
 
     // Surface connection/auth failures here rather than silently continuing.
-    let adopted = engine
+    let mut adopted = engine
         .bootstrap_from_backend_if_needed()
         .await
         .map_err(|e| e.to_string())?;
 
-    let vault_status = state
-        .repo
-        .vault()
-        .status()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if vault_status.exists && !adopted {
-        let compatible = engine
+    // A vault that survived an uninstall holds a different key, so joining
+    // means abandoning it. Only ever destructive when the caller confirmed.
+    if !adopted
+        && vault.status().await.map_err(|e| e.to_string())?.exists
+        && !engine
             .header_matches_backend()
             .await
-            .map_err(|e| e.to_string())?;
-        if !compatible {
-            return Err(
-                "this device already has a different vault; reset it before joining the \
-                 synced vault"
-                    .into(),
-            );
+            .map_err(|e| e.to_string())?
+    {
+        if reset_existing != Some(true) {
+            return Err(MISMATCH_NEEDS_RESET.into());
         }
+        vault.reset().await.map_err(|e| e.to_string())?;
+        adopted = engine
+            .bootstrap_from_backend_if_needed()
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
+    let vault_status = vault.status().await.map_err(|e| e.to_string())?;
     let _ = app.emit("vault-header-adopted", ());
 
     Ok(SyncJoinResultDto {
@@ -250,6 +251,9 @@ pub async fn sync_join_http(
         status,
     })
 }
+
+/// Sentinel the UI matches to offer the reset-and-join confirmation.
+pub const MISMATCH_NEEDS_RESET: &str = "VAULT_MISMATCH_NEEDS_RESET";
 
 #[tauri::command]
 pub async fn sync_disable(

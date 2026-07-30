@@ -100,6 +100,14 @@ impl VaultDb {
         Ok(Self { conn })
     }
 
+    /// Drop every row so the vault looks freshly initialized. Used when a
+    /// device abandons its own vault to join a synced one.
+    pub fn wipe(&mut self) -> Result<()> {
+        self.conn
+            .execute_batch("DELETE FROM items; DELETE FROM vault_meta;")?;
+        Ok(())
+    }
+
     pub fn has_header(&self) -> Result<bool> {
         let count: i64 =
             self.conn

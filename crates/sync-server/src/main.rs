@@ -7,10 +7,12 @@
 //! ```
 
 mod config;
+mod mirror;
 mod server;
 mod service;
 mod setup;
 mod tui;
+mod updates;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -59,6 +61,15 @@ enum Commands {
     InstallService,
     /// Disable and remove the systemd user unit.
     UninstallService,
+    /// Mirror desktop release assets so clients can self-update from this host.
+    FetchUpdates {
+        /// Release tag to mirror. Defaults to the latest published release.
+        #[arg(long)]
+        tag: Option<String>,
+        /// GitHub repo holding the releases.
+        #[arg(long, default_value = mirror::DEFAULT_REPO)]
+        repo: String,
+    },
 }
 
 #[tokio::main]
@@ -89,6 +100,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             init_tracing_interactive();
             service::uninstall()?;
             println!("Removed user service `tethra-sync`.");
+        }
+        Some(Commands::FetchUpdates { ref tag, ref repo }) => {
+            init_tracing_interactive();
+            let config = resolve_config(&cli, false)?;
+            let version = mirror::sync_release(&config.data_dir, repo, tag.as_deref())?;
+            println!("Published Tethra {version} for clients on this server.");
+            println!("Clients pick it up from Tethra → Check for updates.");
         }
         None => {
             init_tracing_interactive();
