@@ -1,0 +1,28 @@
+[package]
+name = "tethra-tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tethra desktop SSH client"
+publish = false
+
+[lib]
+name = "tethra_tauri"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+ssh-client-core = { package = "core", path = "../../../crates/core" }
+platform = { workspace = true }
+platform-desktop = { path = "../../../crates/platform-desktop" }
+tauri = { version = "2.11", features = [] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
+ts-rs = "12"
+uuid = { workspace = true }

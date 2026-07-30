@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  check:
+    name: lint-test-boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/ui
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features cli -- -D warnings
+
+      - name: Generate and verify IPC types
+        run: |
+          cargo test -p tethra-tauri export_bindings
+          git diff --exit-code -- apps/ui/src/lib/generated
+
+      - name: Frontend Tauri imports stay in ipc.ts
+        run: |
+          set -euo pipefail
+          matches="$(grep -RIn --include='*.ts' --include='*.tsx' '@tauri-apps/' apps/ui/src \
+            | grep -v 'apps/ui/src/lib/ipc.ts' || true)"
+          if [ -n "$matches" ]; then
+            echo "FAIL: Tauri imports must live only in apps/ui/src/lib/ipc.ts"
+            echo "$matches"
+            exit 1
+          fi
+          echo "OK: no Tauri imports outside ipc.ts"
+
+      - name: Build frontend
+        run: npm run build --prefix apps/ui
+
+      - name: Test desktop shell
+        run: cargo test -p tethra-tauri
+
+      - name: Unit tests
+        run: cargo test -p core --lib --bins
+
+      - name: Integration tests (non-ignored)
+        run: cargo test -p core --test ssh_integration
+
+      - name: Core must not depend on Tauri stack
+        run: |
+          set -euo pipefail
+          if cargo tree -p core --edges normal --prefix none | grep -qE '^(tauri|wry|tao)($| )'; then
+            echo "FAIL: core depends on the Tauri stack"
+            cargo tree -p core --edges normal | grep -E 'tauri|wry|tao' || true
+            exit 1
+          fi
+          echo "OK: no tauri/wry/tao in core dependency tree"
+
+      - name: Core compiles for iOS target
+        run: cargo check -p core --target aarch64-apple-ios
+
+  ssh-integration:
+    name: openssh-container
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Start OpenSSH server
+        run: docker compose -f crates/core/tests/docker-compose.yml up -d
+
+      - name: Wait for SSH
+        run: |
+          for i in $(seq 1 60); do
+            if nc -z 127.0.0.1 2222; then
+              sleep 3
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose -f crates/core/tests/docker-compose.yml logs
+          exit 1
+
+      - name: Run ignored SSH integration tests
+        run: cargo test -p core --test ssh_integration -- --ignored --test-threads=1 --nocapture
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f crates/core/tests/docker-compose.yml down -v

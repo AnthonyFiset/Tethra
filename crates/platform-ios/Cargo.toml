@@ -1,0 +1,10 @@
+[package]
+name = "platform-ios"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "iOS platform trait stubs. Shape only until M8."
+
+[dependencies]
+async-trait = { workspace = true }
+platform = { workspace = true }

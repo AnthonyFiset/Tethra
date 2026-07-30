@@ -1,0 +1,106 @@
+//! Host records and PTY sizing.
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// Saved SSH host. Credentials live in [`super::Identity`], referenced by ID.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Host {
+    pub id: Uuid,
+    pub label: String,
+    pub hostname: String,
+    pub port: u16,
+    pub username: String,
+    pub identity_id: Option<Uuid>,
+    pub jump_host_id: Option<Uuid>,
+    pub folder_id: Option<Uuid>,
+    pub known_host_key: Option<KnownHostKey>,
+    pub tags: Vec<String>,
+    pub color: Option<String>,
+}
+
+impl Host {
+    pub fn new(
+        label: impl Into<String>,
+        hostname: impl Into<String>,
+        username: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            label: label.into(),
+            hostname: hostname.into(),
+            port: 22,
+            username: username.into(),
+            identity_id: None,
+            jump_host_id: None,
+            folder_id: None,
+            known_host_key: None,
+            tags: Vec::new(),
+            color: None,
+        }
+    }
+
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    pub fn address(&self) -> (&str, u16) {
+        (&self.hostname, self.port)
+    }
+}
+
+/// Trusted host key recorded after TOFU acceptance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnownHostKey {
+    pub algorithm: String,
+    /// Base64 (unpadded) SHA-256 fingerprint of the public key blob.
+    pub fingerprint_sha256: String,
+    /// OpenSSH-format public key string (`ssh-ed25519 AAAA...`).
+    pub openssh: String,
+}
+
+/// Pseudo-terminal dimensions requested from the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PtySize {
+    pub cols: u32,
+    pub rows: u32,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+}
+
+impl PtySize {
+    pub fn new(cols: u32, rows: u32) -> Self {
+        Self {
+            cols: cols.max(1),
+            rows: rows.max(1),
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+}
+
+impl Default for PtySize {
+    fn default() -> Self {
+        Self::new(80, 24)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_defaults_port_22() {
+        let h = Host::new("lab", "example.com", "alice");
+        assert_eq!(h.port, 22);
+        assert!(h.known_host_key.is_none());
+    }
+
+    #[test]
+    fn pty_size_clamps_zero() {
+        let s = PtySize::new(0, 0);
+        assert_eq!(s.cols, 1);
+        assert_eq!(s.rows, 1);
+    }
+}

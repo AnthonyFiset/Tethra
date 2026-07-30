@@ -1,0 +1,15 @@
+services:
+  openssh:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: ssh-client-openssh
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+      - PASSWORD_ACCESS=true
+      - SUDO_ACCESS=false
+    ports:
+      - "2222:2222"
+    restart: "no"
