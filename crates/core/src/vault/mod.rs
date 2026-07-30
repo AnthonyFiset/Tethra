@@ -386,6 +386,11 @@ pub(crate) async fn get_encrypted_json<T: serde::de::DeserializeOwned>(
 mod tests {
     use super::*;
     use platform_desktop::{FixedAppPaths, MemorySecretStore};
+
+    #[test]
+    fn recovery_secret_account_is_stable() {
+        assert_eq!(RECOVERY_SECRET_KEY, "ssh-client.vault.recovery-key");
+    }
     use tempfile::tempdir;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {

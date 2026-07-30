@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use ssh_client_core::Result as CoreResult;
 use ssh_client_core::model::{KnownHostKey, PtySize, SecretString};
 use ssh_client_core::ssh::{
-    AlwaysApprove, HostKeyDecision, HostKeyPolicy, PresentedHostKey, PtyHandle, SessionManager,
+    Action, AlwaysApprove, ApprovalGate, HostKeyDecision, HostKeyPolicy, PresentedHostKey,
+    PtyHandle, SessionManager,
 };
 use ssh_client_core::ssh_config::{
     SshConfigHost as CoreSshConfigHost, SshConfigPreview as CoreSshConfigPreview, parse_ssh_config,
@@ -23,21 +24,23 @@ use tokio::sync::{Mutex, oneshot};
 use ts_rs::TS;
 use uuid::Uuid;
 
+mod app_menu;
 mod local_fs;
+mod output_pump;
 mod sftp;
 
-const FLUSH_INTERVAL: Duration = Duration::from_millis(10);
-const MAX_CHUNK: usize = 64 * 1024;
-const MAX_PENDING: usize = 256 * 1024;
-const DROPPED_MARKER: &[u8] = b"\r\n\x1b[33m[output dropped: terminal fell behind]\x1b[0m\r\n";
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 
 type Sessions = Arc<Mutex<HashMap<Uuid, PtyHandle>>>;
+type LocalSessions = Arc<Mutex<HashMap<Uuid, Box<dyn platform::LocalPtySession>>>>;
 
 pub(crate) struct AppState {
     repo: Arc<VaultRepository>,
     manager: Arc<SessionManager>,
     sessions: Sessions,
+    local_pty: Arc<dyn platform::LocalPty>,
+    local_sessions: LocalSessions,
+    approval_gate: Arc<dyn ApprovalGate>,
     sftp_sessions: sftp::SftpSessions,
     active_transfers: sftp::ActiveTransfers,
     prompts: Arc<PromptBroker>,
@@ -53,6 +56,7 @@ struct HostSummaryDto {
     port: u16,
     username: String,
     has_password: bool,
+    color: Option<String>,
 }
 
 impl From<&CoreHostSummary> for HostSummaryDto {
@@ -64,6 +68,7 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             port: host.port,
             username: host.username.clone(),
             has_password: host.has_password,
+            color: host.color.clone(),
         }
     }
 }
@@ -142,7 +147,7 @@ struct HostKeyPrompt {
 #[derive(Clone, Serialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export, export_to = "../../../ui/src/lib/generated/")]
-enum TerminalEvent {
+pub(crate) enum TerminalEvent {
     Data { data: Vec<u8>, dropped: bool },
     Closed,
 }
@@ -155,6 +160,7 @@ struct HostMutation {
     port: u16,
     username: String,
     password: Option<String>,
+    color: Option<String>,
 }
 
 struct PromptBroker {
@@ -344,6 +350,7 @@ async fn create_host(
             port: host.port,
             username: host.username,
             password: host.password.map(SecretString::new),
+            color: host.color,
         })
         .await
         .map_err(redacted_error)?;
@@ -367,6 +374,7 @@ async fn update_host(
                 port: host.port,
                 username: host.username,
                 password: host.password.map(SecretString::new),
+                color: host.color,
             },
         )
         .await
@@ -430,7 +438,36 @@ async fn open_terminal(
         .map_err(redacted_error)?;
 
     state.sessions.lock().await.insert(session_id, handle);
-    tauri::async_runtime::spawn(forward_output(receiver, output));
+    tauri::async_runtime::spawn(output_pump::forward_output(receiver, output));
+    Ok(session_id.to_string())
+}
+
+#[tauri::command]
+async fn open_local_terminal(
+    state: State<'_, AppState>,
+    cols: u32,
+    rows: u32,
+    output: Channel<TerminalEvent>,
+) -> Result<String, String> {
+    let spec = state
+        .local_pty
+        .default_shell()
+        .ok_or_else(|| "no local shell is available".to_string())?;
+    state
+        .approval_gate
+        .approve(&Action::OpenLocalPty {
+            program: spec.program.to_string_lossy().into_owned(),
+        })
+        .await
+        .map_err(redacted_error)?;
+
+    let (handle, receiver) = state
+        .local_pty
+        .spawn(spec, platform::PtySize::new(cols, rows))
+        .map_err(|error| error.to_string())?;
+    let session_id = Uuid::now_v7();
+    state.local_sessions.lock().await.insert(session_id, handle);
+    tauri::async_runtime::spawn(output_pump::forward_output(receiver, output));
     Ok(session_id.to_string())
 }
 
@@ -441,11 +478,17 @@ async fn terminal_input(
     data: Vec<u8>,
 ) -> Result<(), String> {
     let session_id = parse_uuid(&session_id, "session")?;
-    let mut sessions = state.sessions.lock().await;
+    {
+        let mut sessions = state.sessions.lock().await;
+        if let Some(handle) = sessions.get_mut(&session_id) {
+            return handle.write(&data).await.map_err(redacted_error);
+        }
+    }
+    let mut sessions = state.local_sessions.lock().await;
     let handle = sessions
         .get_mut(&session_id)
         .ok_or_else(|| "terminal session not found".to_string())?;
-    handle.write(&data).await.map_err(redacted_error)
+    handle.write(&data).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -456,26 +499,40 @@ async fn resize_terminal(
     rows: u32,
 ) -> Result<(), String> {
     let session_id = parse_uuid(&session_id, "session")?;
-    let mut sessions = state.sessions.lock().await;
+    {
+        let mut sessions = state.sessions.lock().await;
+        if let Some(handle) = sessions.get_mut(&session_id) {
+            return handle
+                .resize(PtySize::new(cols, rows))
+                .await
+                .map_err(redacted_error);
+        }
+    }
+    let mut sessions = state.local_sessions.lock().await;
     let handle = sessions
         .get_mut(&session_id)
         .ok_or_else(|| "terminal session not found".to_string())?;
     handle
-        .resize(PtySize::new(cols, rows))
-        .await
-        .map_err(redacted_error)
+        .resize(platform::PtySize::new(cols, rows))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn close_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let session_id = parse_uuid(&session_id, "session")?;
+    if let Some(handle) = state.sessions.lock().await.remove(&session_id) {
+        return handle.close().await.map_err(redacted_error);
+    }
     let handle = state
-        .sessions
+        .local_sessions
         .lock()
         .await
         .remove(&session_id)
         .ok_or_else(|| "terminal session not found".to_string())?;
-    handle.close().await.map_err(redacted_error)
+    tokio::task::spawn_blocking(move || handle.close())
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -507,65 +564,6 @@ async fn lock_vault(app: &AppHandle, state: &AppState) -> Result<VaultStatusDto,
     Ok(dto)
 }
 
-async fn forward_output(
-    mut receiver: tokio::sync::mpsc::Receiver<bytes::Bytes>,
-    output: Channel<TerminalEvent>,
-) {
-    let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut pending = Vec::with_capacity(MAX_CHUNK);
-    let mut dropped = false;
-
-    loop {
-        tokio::select! {
-            message = receiver.recv() => {
-                match message {
-                    Some(data) => {
-                        pending.extend_from_slice(&data);
-                        if pending.len() > MAX_PENDING {
-                            drop_middle(&mut pending);
-                            dropped = true;
-                        }
-                        if pending.len() >= MAX_CHUNK {
-                            flush_one(&mut pending, &output, &mut dropped);
-                        }
-                    }
-                    None => {
-                        while !pending.is_empty() {
-                            flush_one(&mut pending, &output, &mut dropped);
-                        }
-                        let _ = output.send(TerminalEvent::Closed);
-                        break;
-                    }
-                }
-            }
-            _ = ticker.tick(), if !pending.is_empty() => {
-                flush_one(&mut pending, &output, &mut dropped);
-            }
-        }
-    }
-}
-
-fn flush_one(pending: &mut Vec<u8>, output: &Channel<TerminalEvent>, dropped: &mut bool) {
-    let split = pending.len().min(MAX_CHUNK);
-    let remainder = pending.split_off(split);
-    let data = std::mem::replace(pending, remainder);
-    let event = TerminalEvent::Data {
-        data,
-        dropped: std::mem::take(dropped),
-    };
-    let _ = output.send(event);
-}
-
-fn drop_middle(pending: &mut Vec<u8>) {
-    let edge = (MAX_PENDING.saturating_sub(DROPPED_MARKER.len())) / 2;
-    let tail_start = pending.len().saturating_sub(edge);
-    let tail = pending[tail_start..].to_vec();
-    pending.truncate(edge);
-    pending.extend_from_slice(DROPPED_MARKER);
-    pending.extend_from_slice(&tail);
-}
-
 pub(crate) fn parse_uuid(value: &str, kind: &str) -> Result<Uuid, String> {
     Uuid::parse_str(value).map_err(|_| format!("invalid {kind} id"))
 }
@@ -587,6 +585,7 @@ pub(crate) fn redacted_error(error: ssh_client_core::Error) -> String {
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -596,6 +595,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let app_handle = app.handle().clone();
+            app.set_menu(app_menu::build(app)?)?;
             let paths = Arc::new(
                 platform_desktop::DesktopAppPaths::new()
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
@@ -611,20 +611,27 @@ pub fn run() {
                 app: app_handle.clone(),
                 pending: Mutex::new(HashMap::new()),
             });
+            let approval_gate: Arc<dyn ApprovalGate> = Arc::new(AlwaysApprove);
             let manager = Arc::new(SessionManager::new(
                 Arc::clone(&repo) as Arc<dyn ssh_client_core::ssh::HostStore>,
                 Arc::clone(&repo) as Arc<dyn ssh_client_core::ssh::AuthProvider>,
                 Arc::clone(&prompts) as Arc<dyn HostKeyPolicy>,
-                Arc::new(AlwaysApprove),
+                Arc::clone(&approval_gate),
             ));
 
             let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+            let local_pty: Arc<dyn platform::LocalPty> =
+                Arc::new(platform_desktop::DesktopLocalPty);
+            let local_sessions: LocalSessions = Arc::new(Mutex::new(HashMap::new()));
             let sftp_sessions = Arc::new(Mutex::new(HashMap::new()));
             let active_transfers = Arc::new(Mutex::new(HashMap::new()));
             app.manage(AppState {
                 repo: Arc::clone(&repo),
                 manager,
                 sessions: Arc::clone(&sessions),
+                local_pty,
+                local_sessions,
+                approval_gate,
                 sftp_sessions: Arc::clone(&sftp_sessions),
                 active_transfers: Arc::clone(&active_transfers),
                 prompts: Arc::clone(&prompts),
@@ -752,6 +759,7 @@ pub fn run() {
             update_host,
             delete_host,
             open_terminal,
+            open_local_terminal,
             terminal_input,
             resize_terminal,
             close_terminal,
@@ -780,18 +788,6 @@ pub fn run() {
 mod tests {
     use super::*;
     use ssh_client_core::model::SecretString;
-
-    #[test]
-    fn middle_drop_is_bounded_and_marked() {
-        let mut bytes = vec![b'a'; MAX_PENDING + 1024];
-        drop_middle(&mut bytes);
-        assert!(bytes.len() <= MAX_PENDING);
-        assert!(
-            bytes
-                .windows(DROPPED_MARKER.len())
-                .any(|window| window == DROPPED_MARKER)
-        );
-    }
 
     #[test]
     fn export_bindings() {
@@ -844,6 +840,7 @@ mod tests {
             port: 22,
             username: "user".into(),
             has_password: true,
+            color: Some("#70A5F5".into()),
         };
         assert!(dto.has_password);
         let debug = format!("{dto:?}");

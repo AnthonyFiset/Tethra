@@ -1,4 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { CommandPalette } from "./components/CommandPalette";
+import { Logo } from "./components/Logo";
+import { Sidebar } from "./components/Sidebar";
+import { TabBar } from "./components/TabBar";
+import { TitleBar } from "./components/TitleBar";
+import { Button } from "./components/ui/Button";
+import { Dialog } from "./components/ui/Dialog";
+import { ErrorBanner } from "./components/ui/Field";
+import { TooltipProvider } from "./components/ui/Tooltip";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
 import {
@@ -10,6 +19,7 @@ import {
   onHostKeyPrompt,
   onVaultLocked,
   onVaultStatus,
+  openLocalTerminal,
   openSftp,
   openTerminal,
   resizeTerminal,
@@ -25,7 +35,6 @@ import {
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
   createTerminal,
-  disposeAllTerminals,
   disposeTerminal,
   focusTerminal,
   writeTerminal,
@@ -39,8 +48,9 @@ interface Tab {
   sessionId: string;
   hostId: string;
   title: string;
-  kind: "terminal" | "sftp";
+  kind: "terminal" | "local" | "sftp";
   connected: boolean;
+  color?: string | null;
   remotePath?: string;
   localPath?: string;
 }
@@ -48,6 +58,7 @@ interface Tab {
 export default function App(): React.JSX.Element {
   const [status, setStatus] = useState<VaultStatusDto>();
   const [bootError, setBootError] = useState<string>();
+  const [workspaceOpened, setWorkspaceOpened] = useState(false);
 
   useEffect(() => {
     vaultStatus()
@@ -60,7 +71,6 @@ export default function App(): React.JSX.Element {
       unlistenStatus = fn;
     });
     onVaultLocked(() => {
-      disposeAllTerminals();
       setStatus((current) =>
         current
           ? { ...current, unlocked: false }
@@ -76,45 +86,65 @@ export default function App(): React.JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    if (status?.unlocked) {
+      setWorkspaceOpened(true);
+    }
+  }, [status?.unlocked]);
+
   if (bootError) {
     return (
-      <div className="vault-gate">
-        <div className="vault-card">
-          <span className="modal-kicker">Error</span>
-          <h1>Unable to open vault</h1>
-          <div className="error-banner">{bootError}</div>
-        </div>
-      </div>
+      <Splash title="Unable to open vault" kicker="Error">
+        <ErrorBanner>{bootError}</ErrorBanner>
+      </Splash>
     );
   }
 
   if (!status) {
-    return (
-      <div className="vault-gate">
-        <div className="vault-card">
-          <span className="modal-kicker">Encrypted vault</span>
-          <h1>Loading…</h1>
-        </div>
-      </div>
-    );
+    return <Splash title="Loading…" kicker="Encrypted vault" />;
   }
 
-  if (!status.unlocked) {
-    return (
-      <VaultGate
-        status={status}
-        onUnlocked={(next) => {
-          setStatus(next);
-        }}
-      />
-    );
+  if (!status.unlocked && !workspaceOpened) {
+    return <VaultGate status={status} onUnlocked={setStatus} />;
   }
 
   return (
-    <Workspace
-      status={status}
-      onStatus={setStatus}
-    />
+    <TooltipProvider>
+      <div className="relative size-full">
+        <Workspace status={status} onStatus={setStatus} />
+        {!status.unlocked && (
+          <div className="absolute inset-0 z-50">
+            <VaultGate status={status} onUnlocked={setStatus} />
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function Splash({
+  title,
+  kicker,
+  children,
+}: {
+  title: string;
+  kicker: string;
+  children?: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      data-tauri-drag-region="deep"
+      className="grid size-full place-items-center bg-base p-6"
+    >
+      <div className="w-full max-w-sm rounded-panel border border-line bg-surface p-6">
+        <Logo variant="lockup" size={26} className="mb-5" />
+        <span className="mb-1.5 block text-micro font-semibold tracking-[0.1em] text-fg-subtle uppercase">
+          {kicker}
+        </span>
+        <h1 className="m-0 mb-3 text-lg font-semibold">{title}</h1>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -130,6 +160,7 @@ function Workspace({
   const [activeId, setActiveId] = useState<string>();
   const [connectingHostId, setConnectingHostId] = useState<string>();
   const [openingFilesHostId, setOpeningFilesHostId] = useState<string>();
+  const [openingLocal, setOpeningLocal] = useState(false);
   const [error, setError] = useState<string>();
   const [prompt, setPrompt] = useState<HostKeyPrompt>();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -137,6 +168,11 @@ function Workspace({
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<HostSummaryDto>();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => window.localStorage.getItem("tethra.sidebar") === "rail",
+  );
 
   useEffect(() => {
     listHosts()
@@ -151,14 +187,49 @@ function Workspace({
 
   useEffect(() => {
     if (!status.unlocked) {
-      setTabs([]);
-      setActiveId(undefined);
+      setTabs((current) => {
+        for (const tab of current) {
+          if (tab.kind === "terminal") {
+            disposeTerminal(tab.sessionId);
+          }
+        }
+        const local = current.filter((tab) => tab.kind === "local");
+        setActiveId((active) =>
+          local.some((tab) => tab.sessionId === active)
+            ? active
+            : local[0]?.sessionId,
+        );
+        return local;
+      });
       setPrompt(undefined);
       setEditor(undefined);
       setImportOpen(false);
       setPendingDelete(undefined);
-      disposeAllTerminals();
+      setPaletteOpen(false);
     }
+  }, [status.unlocked]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "tethra.sidebar",
+      sidebarCollapsed ? "rail" : "expanded",
+    );
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        toggleSidebar();
+      }
+      if (event.key.toLowerCase() === "k" && status.unlocked) {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [status.unlocked]);
 
   const activeTab = useMemo(
@@ -166,52 +237,72 @@ function Workspace({
     [activeId, tabs],
   );
 
+  function toggleSidebar(): void {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setDrawerOpen((open) => !open);
+    } else {
+      setSidebarCollapsed((value) => !value);
+    }
+  }
+
+  /** Buffers output arriving before the xterm instance exists. */
+  function makeOutputSink(closedMessage: string) {
+    const queued: TerminalEvent[] = [];
+    let sink: ((event: TerminalEvent) => void) | undefined;
+
+    return {
+      onOutput: (event: TerminalEvent) => {
+        if (sink) sink(event);
+        else queued.push(event);
+      },
+      attach: (sessionId: string) => {
+        sink = (event) => {
+          if (event.kind === "data") {
+            writeTerminal(sessionId, event.data);
+            if (event.dropped) {
+              writeTerminalMessage(
+                sessionId,
+                "\x1b[33mSome output was dropped because rendering fell behind.\x1b[0m",
+              );
+            }
+          } else {
+            setTabs((current) =>
+              current.map((tab) =>
+                tab.sessionId === sessionId
+                  ? { ...tab, connected: false }
+                  : tab,
+              ),
+            );
+            writeTerminalMessage(sessionId, `\x1b[90m${closedMessage}\x1b[0m`);
+          }
+        };
+        queued.splice(0).forEach(sink);
+      },
+    };
+  }
+
+  function wireTerminal(sessionId: string): void {
+    createTerminal(sessionId, {
+      onInput: (data) => {
+        void sendTerminalInput(sessionId, data).catch((reason: unknown) => {
+          writeTerminalMessage(sessionId, `Input error: ${String(reason)}`);
+        });
+      },
+      onResize: (cols, rows) => {
+        void resizeTerminal(sessionId, cols, rows);
+      },
+    });
+  }
+
   async function connect(host: HostSummaryDto): Promise<void> {
     setError(undefined);
     setConnectingHostId(host.id);
     setDrawerOpen(false);
 
-    const queued: TerminalEvent[] = [];
-    let sink: ((event: TerminalEvent) => void) | undefined;
-    const onOutput = (event: TerminalEvent) => {
-      if (sink) sink(event);
-      else queued.push(event);
-    };
-
+    const pump = makeOutputSink("Connection closed.");
     try {
-      const sessionId = await openTerminal(host.id, 80, 24, onOutput);
-      sink = (event) => {
-        if (event.kind === "data") {
-          writeTerminal(sessionId, event.data);
-          if (event.dropped) {
-            writeTerminalMessage(
-              sessionId,
-              "\x1b[33mSome output was dropped because rendering fell behind.\x1b[0m",
-            );
-          }
-        } else {
-          setTabs((current) =>
-            current.map((tab) =>
-              tab.sessionId === sessionId
-                ? { ...tab, connected: false }
-                : tab,
-            ),
-          );
-          writeTerminalMessage(sessionId, "\x1b[90mConnection closed.\x1b[0m");
-        }
-      };
-
-      createTerminal(sessionId, {
-        onInput: (data) => {
-          void sendTerminalInput(sessionId, data).catch((reason: unknown) => {
-            writeTerminalMessage(sessionId, `Input error: ${String(reason)}`);
-          });
-        },
-        onResize: (cols, rows) => {
-          void resizeTerminal(sessionId, cols, rows);
-        },
-      });
-
+      const sessionId = await openTerminal(host.id, 80, 24, pump.onOutput);
+      wireTerminal(sessionId);
       setTabs((current) => [
         ...current,
         {
@@ -220,14 +311,44 @@ function Workspace({
           title: host.label,
           kind: "terminal",
           connected: true,
+          color: host.color,
         },
       ]);
       setActiveId(sessionId);
-      queued.splice(0).forEach(sink);
+      pump.attach(sessionId);
     } catch (reason) {
       setError(String(reason));
     } finally {
       setConnectingHostId(undefined);
+    }
+  }
+
+  async function openLocal(): Promise<void> {
+    setError(undefined);
+    setOpeningLocal(true);
+    setDrawerOpen(false);
+
+    const pump = makeOutputSink("Local shell closed.");
+    try {
+      const sessionId = await openLocalTerminal(80, 24, pump.onOutput);
+      wireTerminal(sessionId);
+      setTabs((current) => [
+        ...current,
+        {
+          sessionId,
+          hostId: "local",
+          title: "Local",
+          kind: "local",
+          connected: true,
+          color: "#8B8B8B",
+        },
+      ]);
+      setActiveId(sessionId);
+      pump.attach(sessionId);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setOpeningLocal(false);
     }
   }
 
@@ -248,6 +369,7 @@ function Workspace({
           title: `${host.label} files`,
           kind: "sftp",
           connected: true,
+          color: host.color,
           remotePath: opened.remotePath,
           localPath: home,
         },
@@ -270,7 +392,7 @@ function Workspace({
       }
       return next;
     });
-    if (tab?.kind === "terminal") {
+    if (tab?.kind === "terminal" || tab?.kind === "local") {
       disposeTerminal(sessionId);
       await closeTerminal(sessionId).catch(() => undefined);
     } else {
@@ -294,12 +416,13 @@ function Workspace({
         if (tab.kind === "terminal") {
           disposeTerminal(tab.sessionId);
           await closeTerminal(tab.sessionId).catch(() => undefined);
-        } else {
+        } else if (tab.kind === "sftp") {
           await closeSftp(tab.sessionId).catch(() => undefined);
         }
       }
-      setTabs([]);
-      setActiveId(undefined);
+      const localTabs = tabs.filter((tab) => tab.kind === "local");
+      setTabs(localTabs);
+      setActiveId(localTabs[0]?.sessionId);
       const next = await vaultLock();
       onStatus(next);
     } catch (reason) {
@@ -329,206 +452,91 @@ function Workspace({
     }
   }
 
-  return (
-    <div className="app-shell">
-      <header className="titlebar">
-        <button
-          className="icon-button menu-button"
-          onClick={() => setDrawerOpen((open) => !open)}
-          aria-label="Toggle hosts"
-        >
-          ☰
-        </button>
-        <div className="brand">
-          <span className="brand-mark">&gt;_</span>
-          <span>Tethra</span>
-        </div>
-        <div className="titlebar-actions">
-          <button
-            className="ghost-button"
-            onClick={() => setChangePasswordOpen(true)}
-          >
-            Password
-          </button>
-          <button className="ghost-button" onClick={() => void lockNow()}>
-            Lock
-          </button>
-          <div className="connection-state">
-            {activeTab?.connected ? (
-              <>
-                <span className="status-dot status-dot--online" />
-                {activeTab.kind === "sftp" ? "Files" : "Connected"}
-              </>
-            ) : (
-              "Vault unlocked"
-            )}
-          </div>
-        </div>
-      </header>
+  const connectionLabel = activeTab?.connected
+    ? activeTab.kind === "sftp"
+      ? "Files"
+      : "Connected"
+    : "Vault unlocked";
 
-      <div className="workspace">
-        <aside className={`sidebar ${drawerOpen ? "sidebar--open" : ""}`}>
-          <div className="sidebar-heading">
-            <span>Hosts</span>
-            <div className="sidebar-heading-actions">
-              <span className="host-count">{hosts.length}</span>
-              <button
-                className="import-button"
-                onClick={() => setImportOpen(true)}
-              >
-                Import
-              </button>
-              <button
-                className="icon-button add-host-button"
-                aria-label="Add host"
-                onClick={() => setEditor("new")}
-              >
-                +
-              </button>
-            </div>
-          </div>
-          <nav className="host-list" aria-label="Saved hosts">
-            {hosts.map((host) => (
-              <div className="host-card" key={host.id}>
-                <button
-                  className="host-row"
-                  onClick={() => void connect(host)}
-                  disabled={connectingHostId === host.id}
-                >
-                  <span className="host-icon">⌘</span>
-                  <span className="host-copy">
-                    <strong>{host.label}</strong>
-                    <small>
-                      {host.username}@{host.hostname}:{host.port}
-                    </small>
-                  </span>
-                  <span className="connect-arrow">
-                    {connectingHostId === host.id ? "…" : "›"}
-                  </span>
-                </button>
-                <div className="host-actions">
-                  <button
-                    className="link-button"
-                    onClick={() => void openFiles(host)}
-                    disabled={openingFilesHostId === host.id}
-                  >
-                    {openingFilesHostId === host.id ? "Opening…" : "Files"}
-                  </button>
-                  <button
-                    className="link-button"
-                    onClick={() => setEditor(host)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="link-button link-button--danger"
-                    onClick={() => setPendingDelete(host)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </nav>
-          <div className="sidebar-note">
-            Credentials stay in the encrypted vault.{" "}
-            {status.recoveryAvailable
-              ? "Keyring recovery is available."
-              : "Recovery is not configured."}
-          </div>
-        </aside>
+  return (
+    <div className="flex size-full flex-col bg-base">
+      <TitleBar
+        connectionLabel={connectionLabel}
+        connected={Boolean(activeTab?.connected)}
+        openingLocal={openingLocal}
+        onToggleSidebar={toggleSidebar}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onOpenLocal={() => void openLocal()}
+        onChangePassword={() => setChangePasswordOpen(true)}
+        onAbout={() => setAboutOpen(true)}
+        onLock={() => void lockNow()}
+      />
+
+      <div
+        className="relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-150 max-md:block"
+        style={{
+          gridTemplateColumns: `${sidebarCollapsed ? 52 : 248}px minmax(0, 1fr)`,
+        }}
+      >
+        <Sidebar
+          hosts={hosts}
+          collapsed={sidebarCollapsed}
+          drawerOpen={drawerOpen}
+          recoveryAvailable={status.recoveryAvailable}
+          connectingHostId={connectingHostId}
+          openingFilesHostId={openingFilesHostId}
+          onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+          onConnect={(host) => void connect(host)}
+          onFiles={(host) => void openFiles(host)}
+          onEdit={setEditor}
+          onDelete={setPendingDelete}
+          onAddHost={() => setEditor("new")}
+          onImport={() => setImportOpen(true)}
+          onLock={() => void lockNow()}
+        />
+
         {drawerOpen && (
           <button
-            className="drawer-scrim"
             aria-label="Close hosts"
             onClick={() => setDrawerOpen(false)}
+            className="absolute inset-0 z-20 bg-black/50 md:hidden"
           />
         )}
 
-        <main className="main-panel">
+        <main className="relative flex min-h-0 min-w-0 flex-col">
           {tabs.length > 0 && (
-            <div className="tabbar" role="tablist">
-              {tabs.map((tab) => (
-                <button
-                  role="tab"
-                  aria-selected={activeId === tab.sessionId}
-                  className={`tab ${activeId === tab.sessionId ? "tab--active" : ""}`}
-                  key={tab.sessionId}
-                  onClick={() => {
-                    setActiveId(tab.sessionId);
-                    if (tab.kind === "terminal") {
-                      focusTerminal(tab.sessionId);
-                    }
-                  }}
-                >
-                  <span
-                    className={`status-dot ${tab.connected ? "status-dot--online" : ""}`}
-                  />
-                  <span className="tab-title">
-                    {tab.kind === "sftp" ? "📁 " : ""}
-                    {tab.title}
-                  </span>
-                  <span
-                    className="tab-close"
-                    role="button"
-                    aria-label={`Close ${tab.title}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void closeTab(tab.sessionId);
-                    }}
-                  >
-                    ×
-                  </span>
-                </button>
-              ))}
-            </div>
+            <TabBar
+              tabs={tabs}
+              activeId={activeId}
+              onSelect={(sessionId) => {
+                setActiveId(sessionId);
+                const tab = tabs.find((item) => item.sessionId === sessionId);
+                if (tab && tab.kind !== "sftp") focusTerminal(sessionId);
+              }}
+              onClose={(sessionId) => void closeTab(sessionId)}
+            />
           )}
 
-          <section className="terminal-stack">
+          <section className="relative min-h-0 flex-1">
             {tabs.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-glyph">&gt;_</div>
-                <h1>Open a secure shell</h1>
-                <p>Add a host, open a terminal, or browse files over SFTP.</p>
-                {error && <div className="error-banner">{error}</div>}
-                <div className="empty-actions">
-                  <button
-                    className="primary-button"
-                    onClick={() => setEditor("new")}
-                  >
-                    Add host
-                  </button>
-                  {hosts[0] && (
-                    <>
-                      <button
-                        className="ghost-button"
-                        onClick={() => void connect(hosts[0])}
-                        disabled={Boolean(connectingHostId)}
-                      >
-                        {connectingHostId
-                          ? "Connecting…"
-                          : `Connect to ${hosts[0].label}`}
-                      </button>
-                      <button
-                        className="ghost-button"
-                        onClick={() => void openFiles(hosts[0])}
-                        disabled={Boolean(openingFilesHostId)}
-                      >
-                        {openingFilesHostId
-                          ? "Opening…"
-                          : `Browse ${hosts[0].label}`}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
+              <EmptyState
+                hosts={hosts}
+                error={error}
+                connecting={Boolean(connectingHostId)}
+                openingFiles={Boolean(openingFilesHostId)}
+                onAddHost={() => setEditor("new")}
+                onConnect={(host) => void connect(host)}
+                onFiles={(host) => void openFiles(host)}
+                onLocal={() => void openLocal()}
+              />
             ) : (
               tabs.map((tab) =>
-                tab.kind === "terminal" ? (
+                tab.kind !== "sftp" ? (
                   <TerminalView
                     key={tab.sessionId}
                     sessionId={tab.sessionId}
                     active={tab.sessionId === activeId}
+                    color={tab.color ?? "#4C8DF6"}
                   />
                 ) : (
                   <SftpBrowser
@@ -542,41 +550,104 @@ function Workspace({
               )
             )}
           </section>
+
           {error && tabs.length > 0 && (
-            <button className="error-toast" onClick={() => setError(undefined)}>
+            <button
+              onClick={() => setError(undefined)}
+              className="absolute right-4 bottom-4 z-20 max-w-96 cursor-pointer rounded-md border border-danger/40 bg-elevated px-3 py-2 text-left text-micro text-danger shadow-lg shadow-black/50"
+            >
               {error}
             </button>
           )}
         </main>
       </div>
 
-      {prompt && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="alertdialog" aria-modal="true">
-            <span className="modal-kicker">Unknown host key</span>
-            <h2>Verify this server</h2>
-            <p>
-              This host has not been seen before. Confirm the fingerprint using a
-              trusted channel before continuing.
-            </p>
-            <dl className="fingerprint">
-              <dt>Algorithm</dt>
-              <dd>{prompt.algorithm}</dd>
-              <dt>Fingerprint</dt>
-              <dd>{prompt.fingerprint}</dd>
-            </dl>
-            <div className="modal-actions">
-              <button onClick={() => void answerPrompt(false)}>Cancel</button>
-              <button
-                className="primary-button"
-                onClick={() => void answerPrompt(true)}
-              >
-                Trust and connect
-              </button>
-            </div>
-          </div>
+      <CommandPalette
+        open={paletteOpen}
+        hosts={hosts}
+        onOpenChange={setPaletteOpen}
+        onConnect={(host) => void connect(host)}
+        onFiles={(host) => void openFiles(host)}
+        onLocal={() => void openLocal()}
+        onAddHost={() => setEditor("new")}
+        onImport={() => setImportOpen(true)}
+        onLock={() => void lockNow()}
+      />
+
+      <Dialog
+        open={aboutOpen}
+        onOpenChange={setAboutOpen}
+        title="Tethra"
+        width="sm"
+        description="Private, cross-platform SSH and SFTP workspace with an end-to-end encrypted vault."
+        footer={
+          <Button variant="subtle" onClick={() => setAboutOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
+          <Logo size={28} />
+          <span className="flex flex-col">
+            <span className="text-ui text-fg">Version 0.1.0</span>
+            <span className="text-micro text-fg-subtle">
+              Vault encrypted with Argon2id and XChaCha20-Poly1305
+            </span>
+          </span>
         </div>
-      )}
+      </Dialog>
+
+      <Dialog
+        open={Boolean(prompt)}
+        onOpenChange={(next) => {
+          if (!next) void answerPrompt(false);
+        }}
+        dismissible={false}
+        kicker="Unknown host key"
+        title="Verify this server"
+        description="This host has not been seen before. Confirm the fingerprint using a trusted channel before continuing."
+        footer={
+          <>
+            <Button variant="subtle" onClick={() => void answerPrompt(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void answerPrompt(true)}>
+              Trust and connect
+            </Button>
+          </>
+        }
+      >
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 rounded-md border border-line bg-base px-3 py-2.5 text-micro">
+          <dt className="text-fg-subtle">Algorithm</dt>
+          <dd className="m-0 font-mono text-fg" data-selectable>
+            {prompt?.algorithm}
+          </dd>
+          <dt className="text-fg-subtle">Fingerprint</dt>
+          <dd className="m-0 break-all font-mono text-fg" data-selectable>
+            {prompt?.fingerprint}
+          </dd>
+        </dl>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(undefined);
+        }}
+        kicker="Delete host"
+        title={`Remove ${pendingDelete?.label ?? ""}?`}
+        description="The host record and its local password identity will be tombstoned in the vault. Active sessions for this host will close."
+        footer={
+          <>
+            <Button variant="subtle" onClick={() => setPendingDelete(undefined)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => void confirmDelete()}>
+              Delete
+            </Button>
+          </>
+        }
+      />
 
       {editor && (
         <HostFormModal
@@ -607,31 +678,76 @@ function Workspace({
         />
       )}
 
-      {pendingDelete && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="alertdialog" aria-modal="true">
-            <span className="modal-kicker">Delete host</span>
-            <h2>Remove {pendingDelete.label}?</h2>
-            <p>
-              The host record and its local password identity will be tombstoned
-              in the vault. Active sessions for this host will close.
-            </p>
-            <div className="modal-actions">
-              <button onClick={() => setPendingDelete(undefined)}>Cancel</button>
-              <button
-                className="primary-button danger-button"
-                onClick={() => void confirmDelete()}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {changePasswordOpen && (
         <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />
       )}
+    </div>
+  );
+}
+
+function EmptyState({
+  hosts,
+  error,
+  connecting,
+  openingFiles,
+  onAddHost,
+  onConnect,
+  onFiles,
+  onLocal,
+}: {
+  hosts: HostSummaryDto[];
+  error?: string;
+  connecting: boolean;
+  openingFiles: boolean;
+  onAddHost: () => void;
+  onConnect: (host: HostSummaryDto) => void;
+  onFiles: (host: HostSummaryDto) => void;
+  onLocal: () => void;
+}): React.JSX.Element {
+  const first = hosts[0];
+
+  return (
+    <div className="grid size-full place-items-center p-8">
+      <div className="flex max-w-md flex-col items-center text-center">
+        <Logo size={40} className="mb-4 opacity-70" />
+        <h1 className="m-0 text-lg font-semibold text-fg">
+          Open a secure shell
+        </h1>
+        <p className="mt-1.5 mb-5 text-ui text-fg-muted">
+          Add a host, open a terminal, or browse files over SFTP.
+        </p>
+        {error && (
+          <div className="mb-4 w-full">
+            <ErrorBanner>{error}</ErrorBanner>
+          </div>
+        )}
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="primary" onClick={onAddHost}>
+            Add host
+          </Button>
+          <Button variant="subtle" onClick={onLocal}>
+            Local terminal
+          </Button>
+          {first && (
+            <>
+              <Button
+                variant="subtle"
+                onClick={() => onConnect(first)}
+                disabled={connecting}
+              >
+                {connecting ? "Connecting…" : `Connect to ${first.label}`}
+              </Button>
+              <Button
+                variant="subtle"
+                onClick={() => onFiles(first)}
+                disabled={openingFiles}
+              >
+                {openingFiles ? "Opening…" : `Browse ${first.label}`}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

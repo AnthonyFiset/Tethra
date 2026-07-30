@@ -140,6 +140,22 @@ pub trait HardwareKey: Send + Sync {
     async fn generate(&self, key_id: &str) -> Result<PublicKey>;
     async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>>;
 }
+
+pub struct ShellSpec {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub cwd: Option<PathBuf>,
+    pub env: Vec<(String, String)>,
+}
+
+/// Local process spawning is a platform capability. Desktop uses
+/// `portable-pty`; iOS/Android report Unsupported.
+pub trait LocalPty: Send + Sync {
+    fn is_available(&self) -> bool;
+    fn default_shell(&self) -> Option<ShellSpec>;
+    fn spawn(&self, spec: ShellSpec, size: PtySize)
+        -> Result<(Box<dyn LocalPtySession>, mpsc::Receiver<Bytes>)>;
+}
 ```
 
 Secure Enclave only does ECDSA P-256, so `HardwareKey` keys are

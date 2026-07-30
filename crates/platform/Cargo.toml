@@ -7,4 +7,6 @@ description = "OS-facing trait definitions for Tethra. No implementations."
 
 [dependencies]
 async-trait = { workspace = true }
+bytes = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }

@@ -11,7 +11,11 @@ use platform::{
     SecretStore,
 };
 
-const SERVICE: &str = "app.tethra.desktop";
+mod local_pty;
+pub use local_pty::DesktopLocalPty;
+
+pub const KEYRING_SERVICE: &str = "app.tethra.desktop";
+pub const APP_DIR_NAME: &str = "tethra";
 const LEGACY_SERVICE: &str = "dev.sshclient.desktop";
 
 /// In-memory secret store for tests and CI.
@@ -57,7 +61,7 @@ pub struct KeyringSecretStore {
 impl KeyringSecretStore {
     pub fn new() -> Self {
         Self {
-            service: SERVICE.to_string(),
+            service: KEYRING_SERVICE.to_string(),
         }
     }
 
@@ -151,7 +155,7 @@ impl DesktopAppPaths {
 }
 
 fn migrate_app_directory(root: PathBuf) -> PathBuf {
-    let current = root.join("tethra");
+    let current = root.join(APP_DIR_NAME);
     let legacy = root.join("ssh-client");
     if !current.exists() && legacy.exists() && std::fs::rename(&legacy, &current).is_err() {
         return legacy;
@@ -270,5 +274,16 @@ mod macos_power {
             .map_err(|e| PlatformError::Power(e.to_string()))?;
 
         Ok(rx)
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn persistent_identity_values_are_stable() {
+        assert_eq!(KEYRING_SERVICE, "app.tethra.desktop");
+        assert_eq!(APP_DIR_NAME, "tethra");
     }
 }

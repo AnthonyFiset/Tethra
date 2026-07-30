@@ -11,14 +11,17 @@ pub enum Action {
     OpenPty { host_id: Uuid },
     Exec { host_id: Uuid, command: String },
     Sftp { host_id: Uuid },
+    OpenLocalPty { program: String },
+    LocalExec { command: String },
 }
 
 impl Action {
-    pub fn host_id(&self) -> Uuid {
+    pub fn host_id(&self) -> Option<Uuid> {
         match self {
             Self::OpenPty { host_id } | Self::Exec { host_id, .. } | Self::Sftp { host_id } => {
-                *host_id
+                Some(*host_id)
             }
+            Self::OpenLocalPty { .. } | Self::LocalExec { .. } => None,
         }
     }
 }

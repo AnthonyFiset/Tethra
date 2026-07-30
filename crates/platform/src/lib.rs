@@ -10,6 +10,9 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use thiserror::Error;
 
+mod local_pty;
+pub use local_pty::{LocalPty, LocalPtySession, PtySize, ShellSpec};
+
 /// Errors originating from platform adapters.
 #[derive(Debug, Error)]
 pub enum PlatformError {
@@ -23,6 +26,8 @@ pub enum PlatformError {
     HardwareKey(String),
     #[error("power monitor error: {0}")]
     Power(String),
+    #[error("local PTY error: {0}")]
+    LocalPty(String),
     #[error("unsupported on this platform")]
     Unsupported,
 }

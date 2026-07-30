@@ -5,6 +5,9 @@ import {
   vaultUnlock,
   type VaultStatusDto,
 } from "../lib/ipc";
+import { Logo } from "../components/Logo";
+import { Button } from "../components/ui/Button";
+import { ErrorBanner, Field } from "../components/ui/Field";
 
 export type VaultMode = "create" | "unlock" | "recover";
 
@@ -87,69 +90,76 @@ export function VaultGate({
         : "Enter your master password to decrypt hosts and identities.";
 
   return (
-    <div className="vault-gate">
-      <form className="vault-card" onSubmit={(event) => void submit(event)}>
-        <span className="modal-kicker">Encrypted vault</span>
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
+    <div
+      data-tauri-drag-region="deep"
+      className="grid size-full place-items-center bg-base p-6"
+    >
+      <form
+        onSubmit={(event) => void submit(event)}
+        className="flex w-full max-w-sm flex-col gap-4 rounded-panel border border-line bg-surface p-6"
+      >
+        <Logo variant="lockup" size={26} />
 
-        {error && <div className="error-banner">{error}</div>}
-
-        <label className="field">
-          <span>
-            {mode === "recover" ? "New master password" : "Master password"}
+        <div>
+          <span className="mb-1.5 block text-micro font-semibold tracking-[0.1em] text-fg-subtle uppercase">
+            Encrypted vault
           </span>
-          <input
-            ref={passwordRef}
+          <h1 className="m-0 text-lg font-semibold text-fg">{title}</h1>
+          <p className="mt-1.5 mb-0 text-ui text-fg-muted">{subtitle}</p>
+        </div>
+
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+
+        <Field
+          label={mode === "recover" ? "New master password" : "Master password"}
+          inputRef={passwordRef}
+          type="password"
+          name="vault-password"
+          autoComplete={mode === "unlock" ? "current-password" : "new-password"}
+          autoFocus
+          disabled={busy}
+          required
+        />
+
+        {(mode === "create" || mode === "recover") && (
+          <Field
+            label="Confirm password"
+            inputRef={confirmRef}
             type="password"
-            name="vault-password"
-            autoComplete={mode === "unlock" ? "current-password" : "new-password"}
-            autoFocus
+            name="vault-password-confirm"
+            autoComplete="new-password"
             disabled={busy}
             required
           />
-        </label>
-
-        {(mode === "create" || mode === "recover") && (
-          <label className="field">
-            <span>Confirm password</span>
-            <input
-              ref={confirmRef}
-              type="password"
-              name="vault-password-confirm"
-              autoComplete="new-password"
-              disabled={busy}
-              required
-            />
-          </label>
         )}
 
         {mode === "create" && (
-          <>
-            <label className="check-field">
+          <div className="flex flex-col gap-2">
+            <label className="flex cursor-pointer items-center gap-2 text-ui text-fg">
               <input
                 type="checkbox"
                 checked={enableRecovery}
                 disabled={busy}
                 onChange={(event) => setEnableRecovery(event.target.checked)}
+                className="size-3.5 accent-accent"
               />
-              <span>Enable OS keyring recovery</span>
+              Enable OS keyring recovery
             </label>
-            <p className="field-hint">
+            <p className="m-0 text-micro text-fg-subtle">
               Stores a recovery key in the system keyring so you can reset the
               master password. If the keyring is unavailable, creation continues
               without recovery after you acknowledge that risk.
             </p>
             {!enableRecovery && (
-              <div className="warn-banner">
-                Password-only vault: losing the master password permanently loses
-                access to encrypted hosts and identities.
+              <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-micro text-warning">
+                Password-only vault: losing the master password permanently
+                loses access to encrypted hosts and identities.
               </div>
             )}
-          </>
+          </div>
         )}
 
-        <button className="primary-button vault-submit" disabled={busy}>
+        <Button variant="primary" disabled={busy} className="w-full">
           {busy
             ? "Working…"
             : mode === "create"
@@ -157,13 +167,11 @@ export function VaultGate({
               : mode === "recover"
                 ? "Recover and unlock"
                 : "Unlock"}
-        </button>
+        </Button>
 
-        <div className="vault-links">
+        <div className="flex flex-wrap justify-center gap-4">
           {status.exists && mode !== "unlock" && (
-            <button
-              type="button"
-              className="link-button"
+            <ModeLink
               disabled={busy}
               onClick={() => {
                 setMode("unlock");
@@ -171,12 +179,10 @@ export function VaultGate({
               }}
             >
               Unlock with password
-            </button>
+            </ModeLink>
           )}
           {status.exists && status.recoveryAvailable && mode !== "recover" && (
-            <button
-              type="button"
-              className="link-button"
+            <ModeLink
               disabled={busy}
               onClick={() => {
                 setMode("recover");
@@ -184,20 +190,36 @@ export function VaultGate({
               }}
             >
               Recover with keyring
-            </button>
+            </ModeLink>
           )}
           {!status.exists && mode !== "create" && (
-            <button
-              type="button"
-              className="link-button"
-              disabled={busy}
-              onClick={() => setMode("create")}
-            >
+            <ModeLink disabled={busy} onClick={() => setMode("create")}>
               Create a new vault
-            </button>
+            </ModeLink>
           )}
         </div>
       </form>
     </div>
+  );
+}
+
+function ModeLink({
+  disabled,
+  onClick,
+  children,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="cursor-pointer bg-transparent text-micro text-fg-muted transition-colors hover:text-accent disabled:opacity-45"
+    >
+      {children}
+    </button>
   );
 }

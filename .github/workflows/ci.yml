@@ -34,7 +34,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: apps/ui/package-lock.json
 
@@ -49,7 +49,7 @@ jobs:
 
       - name: Generate and verify IPC types
         run: |
-          cargo test -p tethra-tauri export_bindings
+          cargo test -p tethra export_bindings
           git diff --exit-code -- apps/ui/src/lib/generated
 
       - name: Frontend Tauri imports stay in ipc.ts
@@ -67,8 +67,20 @@ jobs:
       - name: Build frontend
         run: npm run build --prefix apps/ui
 
+      # A missing @tailwindcss/oxide binary, or a stale compiled vite.config.js
+      # shadowing vite.config.ts, both yield a stylesheet with zero utility
+      # classes and no build error. Fail loudly instead.
+      - name: Stylesheet contains generated utilities
+        run: |
+          set -euo pipefail
+          if ! grep -qE '\.(flex|bg-surface)[{,]' apps/ui/dist/assets/*.css; then
+            echo "FAIL: built CSS has no Tailwind utilities; check the Tailwind plugin"
+            exit 1
+          fi
+          echo "OK: Tailwind utilities present"
+
       - name: Test desktop shell
-        run: cargo test -p tethra-tauri
+        run: cargo test -p tethra
 
       - name: Unit tests
         run: cargo test -p core --lib --bins

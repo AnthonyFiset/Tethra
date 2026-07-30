@@ -9,10 +9,12 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use platform::{
-    AppPaths, Biometrics, HardwareKey, PlatformError, PowerEvent, PowerMonitor, PublicKey, Result,
-    SecretStore,
+    AppPaths, Biometrics, HardwareKey, LocalPty, LocalPtySession, PlatformError, PowerEvent,
+    PowerMonitor, PtySize, PublicKey, Result, SecretStore, ShellSpec,
 };
+use tokio::sync::mpsc as tokio_mpsc;
 
 pub struct IosSecretStoreStub;
 
@@ -81,6 +83,26 @@ impl PowerMonitor for IosPowerMonitorStub {
     }
 
     fn subscribe(&self) -> Result<mpsc::Receiver<PowerEvent>> {
+        Err(PlatformError::Unsupported)
+    }
+}
+
+pub struct IosLocalPtyStub;
+
+impl LocalPty for IosLocalPtyStub {
+    fn is_available(&self) -> bool {
+        false
+    }
+
+    fn default_shell(&self) -> Option<ShellSpec> {
+        None
+    }
+
+    fn spawn(
+        &self,
+        _spec: ShellSpec,
+        _size: PtySize,
+    ) -> Result<(Box<dyn LocalPtySession>, tokio_mpsc::Receiver<Bytes>)> {
         Err(PlatformError::Unsupported)
     }
 }

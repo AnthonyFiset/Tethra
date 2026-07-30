@@ -28,6 +28,7 @@ export interface HostMutation {
   port: number;
   username: string;
   password?: string;
+  color?: string;
 }
 
 export function vaultStatus(): Promise<VaultStatusDto> {
@@ -105,6 +106,20 @@ export function openTerminal(
   output.onmessage = onOutput;
   return invoke<string>("open_terminal", {
     hostId,
+    cols,
+    rows,
+    output,
+  });
+}
+
+export function openLocalTerminal(
+  cols: number,
+  rows: number,
+  onOutput: (event: TerminalEvent) => void,
+): Promise<string> {
+  const output = new Channel<TerminalEvent>();
+  output.onmessage = onOutput;
+  return invoke<string>("open_local_terminal", {
     cols,
     rows,
     output,

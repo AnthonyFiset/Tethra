@@ -1,4 +1,7 @@
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button } from "../components/ui/Button";
+import { cn } from "../lib/cn";
 import type { FileEntryDto } from "../lib/generated/FileEntryDto";
 import {
   localList,
@@ -192,16 +195,33 @@ export function SftpBrowser({
   }
 
   return (
-    <div className={`sftp-browser ${active ? "sftp-browser--active" : ""}`}>
-      <div className="sftp-browser__toolbar">
-        <button className="ghost-button" onClick={() => void uploadSelected()}>
+    <div
+      className={cn(
+        "absolute inset-0 flex flex-col bg-base",
+        active ? "z-10 flex" : "hidden",
+      )}
+    >
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<ArrowRight size={13} />}
+          onClick={() => void uploadSelected()}
+          disabled={!selectedLocal || selectedLocal.fileType === "dir"}
+        >
           Upload selected
-        </button>
-        <button className="ghost-button" onClick={() => void downloadSelected()}>
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<ArrowLeft size={13} />}
+          onClick={() => void downloadSelected()}
+          disabled={!selectedRemote || selectedRemote.fileType === "dir"}
+        >
           Download selected
-        </button>
+        </Button>
       </div>
-      <div className="sftp-browser__panes">
+      <div className="grid min-h-0 flex-1 grid-cols-2 divide-x divide-line max-md:grid-cols-1 max-md:grid-rows-2 max-md:divide-x-0 max-md:divide-y">
         <FilePane
           title="Local"
           side="local"

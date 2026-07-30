@@ -1,3 +1,3 @@
 fn main() {
-    tethra_tauri::run();
+    tethra_lib::run();
 }

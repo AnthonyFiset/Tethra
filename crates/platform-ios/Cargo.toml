@@ -7,4 +7,6 @@ description = "iOS platform trait stubs. Shape only until M8."
 
 [dependencies]
 async-trait = { workspace = true }
+bytes = { workspace = true }
 platform = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }

@@ -1,5 +1,8 @@
 import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { vaultChangePassword } from "../lib/ipc";
+import { Button } from "../components/ui/Button";
+import { Dialog } from "../components/ui/Dialog";
+import { ErrorBanner, Field } from "../components/ui/Field";
 
 interface ChangePasswordModalProps {
   onClose: () => void;
@@ -48,60 +51,59 @@ export function ChangePasswordModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      kicker="Vault"
+      title="Change master password"
+      description="Rewraps the vault key under a new password. Encrypted host rows are not re-encrypted."
+    >
       <form
-        className="modal"
-        role="dialog"
-        aria-modal="true"
         onSubmit={(event) => void submit(event)}
+        className="flex flex-col gap-3"
       >
-        <span className="modal-kicker">Vault</span>
-        <h2>Change master password</h2>
-        <p>
-          Rewraps the vault key under a new password. Encrypted host rows are
-          not re-encrypted.
-        </p>
-        {error && <div className="error-banner">{error}</div>}
-        <label className="field">
-          <span>Current password</span>
-          <input
-            ref={currentRef}
-            type="password"
-            autoComplete="current-password"
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        <Field
+          label="Current password"
+          inputRef={currentRef}
+          type="password"
+          autoComplete="current-password"
+          disabled={busy}
+          required
+          autoFocus
+        />
+        <Field
+          label="New password"
+          inputRef={nextRef}
+          type="password"
+          autoComplete="new-password"
+          disabled={busy}
+          required
+        />
+        <Field
+          label="Confirm new password"
+          inputRef={confirmRef}
+          type="password"
+          autoComplete="new-password"
+          disabled={busy}
+          required
+        />
+        <div className="mt-2 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="subtle"
             disabled={busy}
-            required
-            autoFocus
-          />
-        </label>
-        <label className="field">
-          <span>New password</span>
-          <input
-            ref={nextRef}
-            type="password"
-            autoComplete="new-password"
-            disabled={busy}
-            required
-          />
-        </label>
-        <label className="field">
-          <span>Confirm new password</span>
-          <input
-            ref={confirmRef}
-            type="password"
-            autoComplete="new-password"
-            disabled={busy}
-            required
-          />
-        </label>
-        <div className="modal-actions">
-          <button type="button" disabled={busy} onClick={onClose}>
+            onClick={onClose}
+          >
             Cancel
-          </button>
-          <button className="primary-button" disabled={busy}>
+          </Button>
+          <Button variant="primary" disabled={busy}>
             {busy ? "Saving…" : "Change password"}
-          </button>
+          </Button>
         </div>
       </form>
-    </div>
+    </Dialog>
   );
 }

@@ -5,6 +5,9 @@ import {
   type HostSummaryDto,
   type SshConfigPreviewDto,
 } from "../lib/ipc";
+import { Button } from "../components/ui/Button";
+import { Dialog } from "../components/ui/Dialog";
+import { ErrorBanner } from "../components/ui/Field";
 
 interface SshConfigImportModalProps {
   onClose: () => void;
@@ -66,49 +69,67 @@ export function SshConfigImportModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <div
-        className="modal ssh-import-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ssh-import-title"
-      >
-        <span className="modal-kicker">OpenSSH</span>
-        <h2 id="ssh-import-title">Import ~/.ssh/config</h2>
-        <p>
-          Select concrete host aliases to save in the encrypted vault.
-          Referenced jump hosts are included automatically.
-        </p>
-
-        {error && <div className="error-banner">{error}</div>}
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      width="lg"
+      kicker="OpenSSH"
+      title="Import ~/.ssh/config"
+      description="Select concrete host aliases to save in the encrypted vault. Referenced jump hosts are included automatically."
+      footer={
+        <>
+          <Button variant="subtle" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy || selectedCount === 0}
+            onClick={() => void importSelected()}
+          >
+            {busy ? "Importing…" : `Import ${selectedCount || ""}`.trim()}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2">
+        {error && <ErrorBanner>{error}</ErrorBanner>}
         {preview?.warnings.map((warning) => (
-          <div className="warn-banner" key={warning}>
+          <Notice key={warning} tone="warning">
             {warning}
-          </div>
+          </Notice>
         ))}
         {hasIdentityFiles && (
-          <div className="info-banner">
-            IdentityFile references were detected. M4 imports host metadata
+          <Notice tone="info">
+            IdentityFile references were detected. Import covers host metadata
             only; add a password by editing the host. Private-key identities
             remain deferred.
-          </div>
+          </Notice>
         )}
 
-        {!preview && !error && <div className="import-loading">Reading config…</div>}
+        {!preview && !error && (
+          <p className="py-6 text-center text-ui text-fg-subtle">
+            Reading config…
+          </p>
+        )}
+
         {preview && preview.hosts.length === 0 && (
-          <div className="import-empty">
+          <p className="py-6 text-center text-ui text-fg-subtle">
             No concrete Host aliases were found. Wildcard patterns are defaults
             and are not imported as hosts.
-          </div>
+          </p>
         )}
+
         {preview && preview.hosts.length > 0 && (
           <>
-            <div className="import-toolbar">
+            <div className="flex items-center justify-between text-micro text-fg-subtle">
               <span>
                 {selectedCount} of {preview.hosts.length} selected
               </span>
               <button
-                className="link-button"
+                type="button"
+                disabled={busy}
                 onClick={() =>
                   setSelected(
                     selectedCount === preview.hosts.length
@@ -116,55 +137,67 @@ export function SshConfigImportModal({
                       : new Set(preview.hosts.map((host) => host.alias)),
                   )
                 }
-                disabled={busy}
+                className="cursor-pointer text-fg-muted transition-colors hover:text-accent disabled:opacity-45"
               >
                 {selectedCount === preview.hosts.length
                   ? "Select none"
                   : "Select all"}
               </button>
             </div>
-            <div className="import-host-list">
+
+            <div className="max-h-72 overflow-y-auto rounded-md border border-line bg-base p-1">
               {preview.hosts.map((host) => (
-                <label className="import-host" key={host.alias}>
+                <label
+                  key={host.alias}
+                  className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 transition-colors hover:bg-hover"
+                >
                   <input
                     type="checkbox"
                     checked={selected.has(host.alias)}
                     disabled={busy}
                     onChange={() => toggle(host.alias)}
+                    className="size-3.5 shrink-0 accent-accent"
                   />
-                  <span className="import-host-copy">
-                    <strong>{host.alias}</strong>
-                    <small>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-ui font-medium text-fg">
+                      {host.alias}
+                    </span>
+                    <span className="truncate text-micro text-fg-subtle">
                       {host.username}@{host.hostname}:{host.port}
-                    </small>
-                    {host.proxyJump && (
-                      <small className="import-jump">
-                        via {host.proxyJump}
-                      </small>
-                    )}
+                      {host.proxyJump && ` · via ${host.proxyJump}`}
+                    </span>
                   </span>
                   {host.hasIdentityFile && (
-                    <span className="import-badge">key ref</span>
+                    <span className="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-subtle">
+                      key ref
+                    </span>
                   )}
                 </label>
               ))}
             </div>
           </>
         )}
-
-        <div className="modal-actions">
-          <button disabled={busy} onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="primary-button"
-            disabled={busy || selectedCount === 0}
-            onClick={() => void importSelected()}
-          >
-            {busy ? "Importing…" : `Import ${selectedCount || ""}`.trim()}
-          </button>
-        </div>
       </div>
+    </Dialog>
+  );
+}
+
+function Notice({
+  tone,
+  children,
+}: {
+  tone: "warning" | "info";
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      className={
+        tone === "warning"
+          ? "rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-micro text-warning"
+          : "rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-micro text-accent"
+      }
+    >
+      {children}
     </div>
   );
 }

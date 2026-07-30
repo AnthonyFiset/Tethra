@@ -8,6 +8,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Compiled config artifacts: a stale vite.config.js shadows vite.config.ts,
+# because Vite resolves the .js variant first.
+apps/ui/vite.config.js
+apps/ui/vite.config.d.ts
+
 # IDE / OS
 .DS_Store
 .idea/

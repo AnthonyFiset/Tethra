@@ -25,6 +25,7 @@ pub struct HostSummary {
     pub port: u16,
     pub username: String,
     pub has_password: bool,
+    pub color: Option<String>,
 }
 
 impl From<&Host> for HostSummary {
@@ -36,6 +37,7 @@ impl From<&Host> for HostSummary {
             port: host.port,
             username: host.username.clone(),
             has_password: host.identity_id.is_some(),
+            color: host.color.clone(),
         }
     }
 }
@@ -48,6 +50,7 @@ pub struct CreateHostRequest {
     pub port: u16,
     pub username: String,
     pub password: Option<SecretString>,
+    pub color: Option<String>,
 }
 
 /// High-level vault operations for hosts and SSH wiring.
@@ -83,6 +86,7 @@ impl VaultRepository {
     pub async fn create_host(&self, request: CreateHostRequest) -> Result<HostSummary> {
         let mut host =
             Host::new(request.label, request.hostname, request.username).with_port(request.port);
+        host.color = validate_host_color(request.color)?;
 
         if let Some(password) = request.password {
             let identity_id = Uuid::now_v7();
@@ -226,6 +230,7 @@ impl VaultRepository {
         record.hostname = request.hostname;
         record.port = request.port;
         record.username = request.username;
+        record.color = validate_host_color(request.color)?;
 
         if let Some(password) = request.password {
             let identity_id = record.identity_id.unwrap_or_else(Uuid::now_v7);
@@ -301,6 +306,21 @@ impl VaultRepository {
             .map(|row| row.version + 1)
             .unwrap_or(1))
     }
+}
+
+fn validate_host_color(color: Option<String>) -> Result<Option<String>> {
+    let Some(color) = color else {
+        return Ok(None);
+    };
+    let valid = color.len() == 7
+        && color.starts_with('#')
+        && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid {
+        return Err(Error::InvalidArgument(
+            "host color must be a #RRGGBB value".into(),
+        ));
+    }
+    Ok(Some(color.to_ascii_uppercase()))
 }
 
 fn import_order(
@@ -412,6 +432,7 @@ mod tests {
                 port: 2222,
                 username: "testuser".into(),
                 password: Some(SecretString::new("testpass")),
+                color: Some("#70A5F5".into()),
             })
             .await
             .unwrap();
@@ -441,6 +462,7 @@ mod tests {
                 port: 2222,
                 username: "testuser".into(),
                 password: Some(SecretString::new("testpass")),
+                color: None,
             })
             .await
             .unwrap();
@@ -476,6 +498,7 @@ mod tests {
                 port: 22,
                 username: "alice".into(),
                 password: Some(SecretString::new("one")),
+                color: None,
             })
             .await
             .unwrap();
@@ -489,6 +512,7 @@ mod tests {
                     port: 2222,
                     username: "bob".into(),
                     password: Some(SecretString::new("two")),
+                    color: Some("#CF718B".into()),
                 },
             )
             .await
@@ -496,6 +520,7 @@ mod tests {
         assert_eq!(updated.label, "new");
         assert_eq!(updated.port, 2222);
         assert!(updated.has_password);
+        assert_eq!(updated.color.as_deref(), Some("#CF718B"));
 
         let host = repo.get_host(created.id).await.unwrap();
         match &repo.credentials_for(&host).await.unwrap() {
@@ -514,6 +539,7 @@ mod tests {
                 port: 22,
                 username: "old-user".into(),
                 password: Some(SecretString::new("keep-me")),
+                color: None,
             })
             .await
             .unwrap();

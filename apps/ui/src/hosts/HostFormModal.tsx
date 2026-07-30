@@ -5,6 +5,22 @@ import {
   type HostMutation,
   type HostSummaryDto,
 } from "../lib/ipc";
+import { HostAvatar } from "../components/HostAvatar";
+import { Button } from "../components/ui/Button";
+import { Dialog } from "../components/ui/Dialog";
+import { ErrorBanner, Field } from "../components/ui/Field";
+import { cn } from "../lib/cn";
+
+const SWATCHES = [
+  "#4C8DF6",
+  "#5AC8A8",
+  "#E5C07B",
+  "#E5544B",
+  "#C678DD",
+  "#56B6C2",
+  "#98C379",
+  "#8B8B8B",
+];
 
 interface HostFormModalProps {
   initial?: HostSummaryDto;
@@ -31,6 +47,7 @@ export function HostFormModal({
   const [hostname, setHostname] = useState(initial?.hostname ?? "127.0.0.1");
   const [port, setPort] = useState(String(initial?.port ?? 22));
   const [username, setUsername] = useState(initial?.username ?? "");
+  const [color, setColor] = useState(initial?.color ?? SWATCHES[0]);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -45,7 +62,11 @@ export function HostFormModal({
       if (!label.trim() || !hostname.trim() || !username.trim()) {
         throw new Error("Label, hostname, and username are required.");
       }
-      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+      if (
+        !Number.isInteger(parsedPort) ||
+        parsedPort < 1 ||
+        parsedPort > 65535
+      ) {
         throw new Error("Port must be between 1 and 65535.");
       }
 
@@ -54,6 +75,7 @@ export function HostFormModal({
         hostname: hostname.trim(),
         port: parsedPort,
         username: username.trim(),
+        color,
       };
       if (password) {
         mutation.password = password;
@@ -74,85 +96,128 @@ export function HostFormModal({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      kicker="Host"
+      title={initial ? "Edit host" : "Add host"}
+      description="Metadata and the optional password identity are encrypted in the vault. Passwords never linger in React state."
+    >
       <form
-        className="modal host-form"
-        role="dialog"
-        aria-modal="true"
         onSubmit={(event) => void submit(event)}
+        className="flex flex-col gap-3"
       >
-        <span className="modal-kicker">Host</span>
-        <h2>{initial ? "Edit host" : "Add host"}</h2>
-        <p>
-          Metadata and optional password identity are encrypted in the vault.
-          Passwords never linger in React state.
-        </p>
-        {error && <div className="error-banner">{error}</div>}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
 
-        <label className="field">
-          <span>Label</span>
-          <input
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            disabled={busy}
-            required
-            autoFocus
-          />
-        </label>
-        <div className="field-row">
-          <label className="field">
-            <span>Hostname</span>
-            <input
-              value={hostname}
-              onChange={(event) => setHostname(event.target.value)}
-              disabled={busy}
-              required
-            />
-          </label>
-          <label className="field field--port">
-            <span>Port</span>
-            <input
-              value={port}
-              onChange={(event) => setPort(event.target.value)}
-              inputMode="numeric"
-              disabled={busy}
-              required
-            />
-          </label>
-        </div>
-        <label className="field">
-          <span>Username</span>
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            disabled={busy}
-            required
-          />
-        </label>
-        <label className="field">
-          <span>
-            {initial?.hasPassword
-              ? "Password (leave blank to keep)"
-              : "Password"}
+        <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
+          <HostAvatar label={label || "?"} color={color} />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-ui font-medium text-fg">
+              {label || "Untitled host"}
+            </span>
+            <span className="truncate text-micro text-fg-subtle">
+              {username || "user"}@{hostname || "hostname"}:{port || "22"}
+            </span>
           </span>
-          <input
-            ref={passwordRef}
-            type="password"
-            autoComplete="new-password"
-            disabled={busy}
-            required={!initial}
-          />
-        </label>
+        </div>
 
-        <div className="modal-actions">
-          <button type="button" disabled={busy} onClick={onClose}>
+        <Field
+          label="Label"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          disabled={busy}
+          required
+          autoFocus
+        />
+
+        <div className="flex gap-3">
+          <Field
+            label="Hostname"
+            containerClassName="flex-1"
+            value={hostname}
+            onChange={(event) => setHostname(event.target.value)}
+            disabled={busy}
+            required
+          />
+          <Field
+            label="Port"
+            containerClassName="w-20"
+            value={port}
+            onChange={(event) => setPort(event.target.value)}
+            inputMode="numeric"
+            disabled={busy}
+            required
+          />
+        </div>
+
+        <Field
+          label="Username"
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          disabled={busy}
+          required
+        />
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-micro font-medium text-fg-muted">
+            Host color
+          </span>
+          <div className="flex items-center gap-1.5">
+            {SWATCHES.map((swatch) => (
+              <button
+                key={swatch}
+                type="button"
+                aria-label={`Use color ${swatch}`}
+                aria-pressed={color.toUpperCase() === swatch}
+                disabled={busy}
+                onClick={() => setColor(swatch)}
+                style={{ backgroundColor: swatch }}
+                className={cn(
+                  "size-6 cursor-pointer rounded-md border-2 transition-transform",
+                  color.toUpperCase() === swatch
+                    ? "border-fg"
+                    : "border-transparent hover:scale-110",
+                )}
+              />
+            ))}
+            <input
+              type="color"
+              aria-label="Custom host color"
+              value={color}
+              disabled={busy}
+              onChange={(event) => setColor(event.target.value.toUpperCase())}
+              className="ml-1 size-6 cursor-pointer rounded-md border border-line bg-transparent p-0.5"
+            />
+          </div>
+        </div>
+
+        <Field
+          label={
+            initial?.hasPassword ? "Password (leave blank to keep)" : "Password"
+          }
+          inputRef={passwordRef}
+          type="password"
+          autoComplete="new-password"
+          disabled={busy}
+          required={!initial}
+        />
+
+        <div className="mt-2 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="subtle"
+            disabled={busy}
+            onClick={onClose}
+          >
             Cancel
-          </button>
-          <button className="primary-button" disabled={busy}>
+          </Button>
+          <Button variant="primary" disabled={busy}>
             {busy ? "Saving…" : initial ? "Save host" : "Create host"}
-          </button>
+          </Button>
         </div>
       </form>
-    </div>
+    </Dialog>
   );
 }
