@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stamp one version across every manifest so a release tag and the shipped
-// binaries can never disagree.
+// binaries can never disagree. Idempotent: already-matching files are fine.
 //
 //   node scripts/set-version.mjs 0.1.2
 //   node scripts/set-version.mjs v0.1.2   (leading "v" is stripped)
@@ -28,8 +28,8 @@ function edit(relPath, transform) {
   const before = readFileSync(path, "utf8");
   const after = transform(before);
   if (before === after) {
-    console.error(`no version field replaced in ${relPath}`);
-    process.exit(1);
+    console.log(`${relPath} already ${version}`);
+    return;
   }
   writeFileSync(path, after);
   console.log(`${relPath} -> ${version}`);

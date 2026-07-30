@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,12 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Apple Silicon only — no Intel Mac target.
           - platform: macos-latest
             rust_target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
-          - platform: macos-13
-            rust_target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
           - platform: windows-latest
             rust_target: ""
             args: ""
@@ -58,9 +55,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix apps/ui
 
-      # The tag is the single source of truth for the shipped version.
+      # Tag is the single source of truth for the shipped version.
       - name: Stamp version from tag
-        if: github.ref_type == 'tag'
         run: node scripts/set-version.mjs ${{ github.ref_name }}
 
       - name: Build installer
@@ -71,10 +67,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/tauri/src-tauri
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: Tethra ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Tethra ${{ github.ref_name }}
           releaseDraft: true
-          prerelease: ${{ github.ref_type != 'tag' }}
           args: ${{ matrix.args }}
           includeUpdaterJson: true
 
@@ -88,8 +83,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Stamp version from tag
-        if: github.ref_type == 'tag'
         run: node scripts/set-version.mjs ${{ github.ref_name }}
 
       - name: Build sync server

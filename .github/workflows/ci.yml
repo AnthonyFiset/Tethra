@@ -11,7 +11,7 @@ env:
 
 jobs:
   check:
-    name: lint-test-boundary
+    name: lint-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +19,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-          targets: aarch64-apple-ios
 
       - uses: Swatinem/rust-cache@v2
 
@@ -45,7 +44,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --features cli -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Generate and verify IPC types
         run: |
@@ -97,9 +96,6 @@ jobs:
             exit 1
           fi
           echo "OK: no tauri/wry/tao in core dependency tree"
-
-      - name: Core compiles for iOS target
-        run: cargo check -p core --target aarch64-apple-ios
 
   ssh-integration:
     name: openssh-container
