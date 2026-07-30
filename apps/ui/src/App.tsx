@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
 import {
+  closeSftp,
   closeTerminal,
   deleteHost,
   listHosts,
+  localHome,
   onHostKeyPrompt,
   onVaultLocked,
   onVaultStatus,
+  openSftp,
   openTerminal,
   resizeTerminal,
   respondHostKey,
@@ -19,6 +22,7 @@ import {
   type TerminalEvent,
   type VaultStatusDto,
 } from "./lib/ipc";
+import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
   createTerminal,
   disposeAllTerminals,
@@ -35,7 +39,10 @@ interface Tab {
   sessionId: string;
   hostId: string;
   title: string;
+  kind: "terminal" | "sftp";
   connected: boolean;
+  remotePath?: string;
+  localPath?: string;
 }
 
 export default function App(): React.JSX.Element {
@@ -122,6 +129,7 @@ function Workspace({
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [connectingHostId, setConnectingHostId] = useState<string>();
+  const [openingFilesHostId, setOpeningFilesHostId] = useState<string>();
   const [error, setError] = useState<string>();
   const [prompt, setPrompt] = useState<HostKeyPrompt>();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -210,6 +218,7 @@ function Workspace({
           sessionId,
           hostId: host.id,
           title: host.label,
+          kind: "terminal",
           connected: true,
         },
       ]);
@@ -222,17 +231,51 @@ function Workspace({
     }
   }
 
+  async function openFiles(host: HostSummaryDto): Promise<void> {
+    setError(undefined);
+    setOpeningFilesHostId(host.id);
+    setDrawerOpen(false);
+    try {
+      const [opened, home] = await Promise.all([
+        openSftp(host.id),
+        localHome(),
+      ]);
+      setTabs((current) => [
+        ...current,
+        {
+          sessionId: opened.sessionId,
+          hostId: host.id,
+          title: `${host.label} files`,
+          kind: "sftp",
+          connected: true,
+          remotePath: opened.remotePath,
+          localPath: home,
+        },
+      ]);
+      setActiveId(opened.sessionId);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setOpeningFilesHostId(undefined);
+    }
+  }
+
   async function closeTab(sessionId: string): Promise<void> {
+    const tab = tabs.find((entry) => entry.sessionId === sessionId);
     setTabs((current) => {
-      const index = current.findIndex((tab) => tab.sessionId === sessionId);
-      const next = current.filter((tab) => tab.sessionId !== sessionId);
+      const index = current.findIndex((entry) => entry.sessionId === sessionId);
+      const next = current.filter((entry) => entry.sessionId !== sessionId);
       if (activeId === sessionId) {
         setActiveId(next[Math.max(0, index - 1)]?.sessionId);
       }
       return next;
     });
-    disposeTerminal(sessionId);
-    await closeTerminal(sessionId).catch(() => undefined);
+    if (tab?.kind === "terminal") {
+      disposeTerminal(sessionId);
+      await closeTerminal(sessionId).catch(() => undefined);
+    } else {
+      await closeSftp(sessionId).catch(() => undefined);
+    }
   }
 
   async function answerPrompt(accepted: boolean): Promise<void> {
@@ -248,8 +291,12 @@ function Workspace({
     setError(undefined);
     try {
       for (const tab of tabs) {
-        disposeTerminal(tab.sessionId);
-        await closeTerminal(tab.sessionId).catch(() => undefined);
+        if (tab.kind === "terminal") {
+          disposeTerminal(tab.sessionId);
+          await closeTerminal(tab.sessionId).catch(() => undefined);
+        } else {
+          await closeSftp(tab.sessionId).catch(() => undefined);
+        }
       }
       setTabs([]);
       setActiveId(undefined);
@@ -269,8 +316,12 @@ function Workspace({
       setHosts((current) => current.filter((item) => item.id !== host.id));
       const related = tabs.filter((tab) => tab.hostId === host.id);
       for (const tab of related) {
-        disposeTerminal(tab.sessionId);
-        await closeTerminal(tab.sessionId).catch(() => undefined);
+        if (tab.kind === "terminal") {
+          disposeTerminal(tab.sessionId);
+          await closeTerminal(tab.sessionId).catch(() => undefined);
+        } else {
+          await closeSftp(tab.sessionId).catch(() => undefined);
+        }
       }
       setTabs((current) => current.filter((tab) => tab.hostId !== host.id));
     } catch (reason) {
@@ -306,7 +357,7 @@ function Workspace({
             {activeTab?.connected ? (
               <>
                 <span className="status-dot status-dot--online" />
-                Connected
+                {activeTab.kind === "sftp" ? "Files" : "Connected"}
               </>
             ) : (
               "Vault unlocked"
@@ -358,6 +409,13 @@ function Workspace({
                 <div className="host-actions">
                   <button
                     className="link-button"
+                    onClick={() => void openFiles(host)}
+                    disabled={openingFilesHostId === host.id}
+                  >
+                    {openingFilesHostId === host.id ? "Opening…" : "Files"}
+                  </button>
+                  <button
+                    className="link-button"
                     onClick={() => setEditor(host)}
                   >
                     Edit
@@ -398,13 +456,18 @@ function Workspace({
                   key={tab.sessionId}
                   onClick={() => {
                     setActiveId(tab.sessionId);
-                    focusTerminal(tab.sessionId);
+                    if (tab.kind === "terminal") {
+                      focusTerminal(tab.sessionId);
+                    }
                   }}
                 >
                   <span
                     className={`status-dot ${tab.connected ? "status-dot--online" : ""}`}
                   />
-                  <span className="tab-title">{tab.title}</span>
+                  <span className="tab-title">
+                    {tab.kind === "sftp" ? "📁 " : ""}
+                    {tab.title}
+                  </span>
                   <span
                     className="tab-close"
                     role="button"
@@ -426,7 +489,7 @@ function Workspace({
               <div className="empty-state">
                 <div className="empty-glyph">&gt;_</div>
                 <h1>Open a secure shell</h1>
-                <p>Add a host or select one to start an SSH session.</p>
+                <p>Add a host, open a terminal, or browse files over SFTP.</p>
                 {error && <div className="error-banner">{error}</div>}
                 <div className="empty-actions">
                   <button
@@ -436,26 +499,47 @@ function Workspace({
                     Add host
                   </button>
                   {hosts[0] && (
-                    <button
-                      className="ghost-button"
-                      onClick={() => void connect(hosts[0])}
-                      disabled={Boolean(connectingHostId)}
-                    >
-                      {connectingHostId
-                        ? "Connecting…"
-                        : `Connect to ${hosts[0].label}`}
-                    </button>
+                    <>
+                      <button
+                        className="ghost-button"
+                        onClick={() => void connect(hosts[0])}
+                        disabled={Boolean(connectingHostId)}
+                      >
+                        {connectingHostId
+                          ? "Connecting…"
+                          : `Connect to ${hosts[0].label}`}
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() => void openFiles(hosts[0])}
+                        disabled={Boolean(openingFilesHostId)}
+                      >
+                        {openingFilesHostId
+                          ? "Opening…"
+                          : `Browse ${hosts[0].label}`}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
             ) : (
-              tabs.map((tab) => (
-                <TerminalView
-                  key={tab.sessionId}
-                  sessionId={tab.sessionId}
-                  active={tab.sessionId === activeId}
-                />
-              ))
+              tabs.map((tab) =>
+                tab.kind === "terminal" ? (
+                  <TerminalView
+                    key={tab.sessionId}
+                    sessionId={tab.sessionId}
+                    active={tab.sessionId === activeId}
+                  />
+                ) : (
+                  <SftpBrowser
+                    key={tab.sessionId}
+                    sessionId={tab.sessionId}
+                    initialRemotePath={tab.remotePath ?? "."}
+                    initialLocalPath={tab.localPath ?? "/"}
+                    active={tab.sessionId === activeId}
+                  />
+                ),
+              )
             )}
           </section>
           {error && tabs.length > 0 && (

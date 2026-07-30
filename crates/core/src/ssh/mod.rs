@@ -12,4 +12,6 @@ pub use session::{
     AuthProvider, ExecResult, HostKeyDecision, HostKeyPolicy, HostStore, InMemoryHostStore,
     PtyHandle, SessionManager, StaticAuthProvider, TofuHostKeyPolicy,
 };
-pub use sftp::{RemoteDirEntry, RemoteFileType, SftpSession};
+pub use sftp::{
+    RemoteDirEntry, RemoteFileStat, RemoteFileType, SftpSession, TransferControl, TransferProgress,
+};

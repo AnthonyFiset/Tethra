@@ -201,6 +201,113 @@ async fn sftp_list_get_put() {
 
 #[tokio::test]
 #[ignore = "requires Docker openssh-server"]
+async fn sftp_mkdir_rename_remove() {
+    use ssh_client_core::ssh::{RemoteFileType, TransferControl};
+
+    let env = TestEnv::setup().await;
+    let mgr = env.manager_password();
+    let sftp = mgr.sftp(env.host_id).await.expect("sftp");
+
+    sftp.mkdir("m5-dir").await.expect("mkdir");
+    let entries = sftp.list(".").await.expect("list");
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.name == "m5-dir" && e.file_type == RemoteFileType::Dir)
+    );
+
+    sftp.rename("m5-dir", "m5-renamed").await.expect("rename");
+    let stat = sftp.stat("m5-renamed").await.expect("stat");
+    assert_eq!(stat.file_type, RemoteFileType::Dir);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local = dir.path().join("note.txt");
+    std::fs::write(&local, b"hello").expect("write");
+    sftp.put(&local, "m5-renamed/note.txt").await.expect("put");
+
+    sftp.remove_file("m5-renamed/note.txt")
+        .await
+        .expect("remove file");
+    sftp.remove_dir("m5-renamed").await.expect("remove dir");
+    assert!(
+        !sftp
+            .list(".")
+            .await
+            .expect("list")
+            .iter()
+            .any(|e| e.name == "m5-renamed")
+    );
+
+    sftp.close().await.expect("close");
+    let _ = TransferControl::new();
+}
+
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn sftp_transfer_progress_cancel_and_resume() {
+    use ssh_client_core::ssh::{TransferControl, TransferProgress};
+
+    let env = TestEnv::setup().await;
+    let mgr = env.manager_password();
+    let sftp = mgr.sftp(env.host_id).await.expect("sftp");
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local_src = dir.path().join("big.bin");
+    let local_dst = dir.path().join("big.out");
+    let payload = vec![0xABu8; 1024 * 1024];
+    std::fs::write(&local_src, &payload).expect("write");
+
+    let mut last_progress = TransferProgress::default();
+    sftp.put_with(
+        &local_src,
+        "big.bin",
+        0,
+        &TransferControl::new(),
+        |progress| {
+            last_progress = progress;
+            Ok(())
+        },
+    )
+    .await
+    .expect("put");
+    assert_eq!(last_progress.bytes_transferred, payload.len() as u64);
+
+    let control = TransferControl::new();
+    let cancel = control.clone();
+    let download_path = local_dst.clone();
+    let host_id = env.host_id;
+    let mgr_cancel = env.manager_password();
+    let task = tokio::spawn(async move {
+        let sftp = mgr_cancel.sftp(host_id).await.expect("sftp");
+        sftp.get_with("big.bin", &download_path, 0, &cancel, |_| Ok(()))
+            .await
+    });
+    control.cancel();
+    let err = task.await.expect("join").expect_err("cancelled");
+    assert!(matches!(err, Error::TransferCancelled));
+
+    let partial = std::fs::metadata(&local_dst).map(|m| m.len()).unwrap_or(0);
+    assert!(partial < payload.len() as u64);
+
+    let sftp2 = mgr.sftp(env.host_id).await.expect("sftp resume");
+    sftp2
+        .get_with(
+            "big.bin",
+            &local_dst,
+            partial,
+            &TransferControl::new(),
+            |_| Ok(()),
+        )
+        .await
+        .expect("resume");
+    let got = std::fs::read(&local_dst).expect("read");
+    assert_eq!(got, payload);
+    sftp2.close().await.expect("close");
+    sftp.close().await.expect("close");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
 async fn host_key_mismatch_refused() {
     let env = TestEnv::setup().await;
 

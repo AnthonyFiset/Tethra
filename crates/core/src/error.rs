@@ -51,6 +51,9 @@ pub enum Error {
     #[error("channel closed")]
     ChannelClosed,
 
+    #[error("transfer cancelled")]
+    TransferCancelled,
+
     #[error("vault is locked")]
     VaultLocked,
 

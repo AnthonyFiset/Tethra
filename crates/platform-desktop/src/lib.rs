@@ -169,6 +169,11 @@ impl AppPaths for DesktopAppPaths {
     }
 }
 
+/// Returns the current user's home directory for local file browsing.
+pub fn home_dir() -> Result<PathBuf> {
+    dirs::home_dir().ok_or_else(|| PlatformError::Paths("home dir unavailable".into()))
+}
+
 /// Read the current user's default OpenSSH client configuration.
 ///
 /// The path and file contents remain on the Rust side of the desktop boundary.

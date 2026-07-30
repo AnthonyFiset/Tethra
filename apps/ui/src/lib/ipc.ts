@@ -1,18 +1,24 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { FileEntryDto } from "./generated/FileEntryDto";
 import type { HostKeyPrompt } from "./generated/HostKeyPrompt";
 import type { HostSummaryDto } from "./generated/HostSummaryDto";
+import type { SftpOpenResult } from "./generated/SftpOpenResult";
 import type { SshConfigHostDto } from "./generated/SshConfigHostDto";
 import type { SshConfigPreviewDto } from "./generated/SshConfigPreviewDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
+import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
 
 export type {
+  FileEntryDto,
   HostKeyPrompt,
   HostSummaryDto,
+  SftpOpenResult,
   SshConfigHostDto,
   SshConfigPreviewDto,
   TerminalEvent,
+  TransferEvent,
   VaultStatusDto,
 };
 
@@ -152,4 +158,100 @@ export function onVaultStatus(
 
 export function onVaultLocked(handler: () => void): Promise<UnlistenFn> {
   return listen("vault-locked", () => handler());
+}
+
+export function localHome(): Promise<string> {
+  return invoke<string>("local_home");
+}
+
+export function localList(path: string): Promise<FileEntryDto[]> {
+  return invoke<FileEntryDto[]>("local_list", { path });
+}
+
+export function localMkdir(path: string): Promise<void> {
+  return invoke("local_mkdir", { path });
+}
+
+export function localRename(from: string, to: string): Promise<void> {
+  return invoke("local_rename", { from, to });
+}
+
+export function localRemove(path: string, recursive: boolean): Promise<void> {
+  return invoke("local_remove", { path, recursive });
+}
+
+export function openSftp(hostId: string): Promise<SftpOpenResult> {
+  return invoke<SftpOpenResult>("sftp_open", { hostId });
+}
+
+export function closeSftp(sessionId: string): Promise<void> {
+  return invoke("sftp_close", { sessionId });
+}
+
+export function sftpRemoteList(
+  sessionId: string,
+  path: string,
+): Promise<FileEntryDto[]> {
+  return invoke<FileEntryDto[]>("sftp_remote_list", { sessionId, path });
+}
+
+export function sftpRemoteCanonicalize(
+  sessionId: string,
+  path: string,
+): Promise<string> {
+  return invoke<string>("sftp_remote_canonicalize", { sessionId, path });
+}
+
+export function sftpRemoteCreateDirEntry(
+  sessionId: string,
+  parent: string,
+  name: string,
+): Promise<FileEntryDto> {
+  return invoke<FileEntryDto>("sftp_remote_create_dir_entry", {
+    sessionId,
+    parent,
+    name,
+  });
+}
+
+export function sftpRemoteRename(
+  sessionId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke("sftp_remote_rename", { sessionId, from, to });
+}
+
+export function sftpRemoteRemove(
+  sessionId: string,
+  path: string,
+  fileType: string,
+): Promise<void> {
+  return invoke("sftp_remote_remove", { sessionId, path, fileType });
+}
+
+export function sftpTransfer(
+  sessionId: string,
+  transferId: string,
+  direction: "upload" | "download",
+  localPath: string,
+  remotePath: string,
+  offset: number,
+  onProgress: (event: TransferEvent) => void,
+): Promise<number> {
+  const progress = new Channel<TransferEvent>();
+  progress.onmessage = onProgress;
+  return invoke<number>("sftp_transfer", {
+    sessionId,
+    transferId,
+    direction,
+    localPath,
+    remotePath,
+    offset,
+    progress,
+  });
+}
+
+export function cancelSftpTransfer(transferId: string): Promise<void> {
+  return invoke("sftp_cancel_transfer", { transferId });
 }

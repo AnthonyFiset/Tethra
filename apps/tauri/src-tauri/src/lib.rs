@@ -23,6 +23,9 @@ use tokio::sync::{Mutex, oneshot};
 use ts_rs::TS;
 use uuid::Uuid;
 
+mod local_fs;
+mod sftp;
+
 const FLUSH_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CHUNK: usize = 64 * 1024;
 const MAX_PENDING: usize = 256 * 1024;
@@ -31,10 +34,12 @@ const IDLE_CHECK: Duration = Duration::from_secs(30);
 
 type Sessions = Arc<Mutex<HashMap<Uuid, PtyHandle>>>;
 
-struct AppState {
+pub(crate) struct AppState {
     repo: Arc<VaultRepository>,
     manager: Arc<SessionManager>,
     sessions: Sessions,
+    sftp_sessions: sftp::SftpSessions,
+    active_transfers: sftp::ActiveTransfers,
     prompts: Arc<PromptBroker>,
 }
 
@@ -379,7 +384,7 @@ async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), Strin
         .map_err(redacted_error)
 }
 
-async fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
+pub(crate) async fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
     if state
         .repo
         .vault()
@@ -492,6 +497,7 @@ async fn lock_vault(app: &AppHandle, state: &AppState) -> Result<VaultStatusDto,
     for (_id, handle) in sessions {
         let _ = handle.close().await;
     }
+    sftp::close_all_sftp(state).await;
     state.prompts.clear().await;
     state.repo.vault().lock().await.map_err(redacted_error)?;
     let status = state.repo.vault().status().await.map_err(redacted_error)?;
@@ -560,11 +566,11 @@ fn drop_middle(pending: &mut Vec<u8>) {
     pending.extend_from_slice(&tail);
 }
 
-fn parse_uuid(value: &str, kind: &str) -> Result<Uuid, String> {
+pub(crate) fn parse_uuid(value: &str, kind: &str) -> Result<Uuid, String> {
     Uuid::parse_str(value).map_err(|_| format!("invalid {kind} id"))
 }
 
-fn redacted_error(error: ssh_client_core::Error) -> String {
+pub(crate) fn redacted_error(error: ssh_client_core::Error) -> String {
     match error {
         ssh_client_core::Error::AuthenticationFailed => "authentication failed".to_string(),
         ssh_client_core::Error::IncorrectPassword => "incorrect master password".to_string(),
@@ -572,6 +578,7 @@ fn redacted_error(error: ssh_client_core::Error) -> String {
         ssh_client_core::Error::VaultAlreadyExists => "vault already exists".to_string(),
         ssh_client_core::Error::VaultNotFound => "vault does not exist".to_string(),
         ssh_client_core::Error::RecoveryUnavailable => "vault recovery is unavailable".to_string(),
+        ssh_client_core::Error::TransferCancelled => "transfer cancelled".to_string(),
         ssh_client_core::Error::HostKeyMismatch { .. } => {
             "host key changed; connection refused".to_string()
         }
@@ -612,10 +619,14 @@ pub fn run() {
             ));
 
             let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+            let sftp_sessions = Arc::new(Mutex::new(HashMap::new()));
+            let active_transfers = Arc::new(Mutex::new(HashMap::new()));
             app.manage(AppState {
                 repo: Arc::clone(&repo),
                 manager,
                 sessions: Arc::clone(&sessions),
+                sftp_sessions: Arc::clone(&sftp_sessions),
+                active_transfers: Arc::clone(&active_transfers),
                 prompts: Arc::clone(&prompts),
             });
 
@@ -623,6 +634,8 @@ pub fn run() {
             let idle_app = app_handle.clone();
             let idle_vault = Arc::clone(&vault);
             let idle_sessions = Arc::clone(&sessions);
+            let idle_sftp_sessions = Arc::clone(&sftp_sessions);
+            let idle_active_transfers = Arc::clone(&active_transfers);
             let idle_prompts = Arc::clone(&prompts);
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(IDLE_CHECK);
@@ -636,10 +649,26 @@ pub fn run() {
                         let mut guard = idle_sessions.lock().await;
                         std::mem::take(&mut *guard)
                     };
+                    let had_sessions = !sessions.is_empty();
                     if !sessions.is_empty() {
                         for (_id, handle) in sessions {
                             let _ = handle.close().await;
                         }
+                    }
+                    for transfer in idle_active_transfers.lock().await.values() {
+                        transfer.cancel();
+                    }
+                    idle_active_transfers.lock().await.clear();
+                    let sftp_taken = {
+                        let mut guard = idle_sftp_sessions.lock().await;
+                        std::mem::take(&mut *guard)
+                    };
+                    let had_sftp = !sftp_taken.is_empty();
+                    for (_id, browser) in sftp_taken {
+                        let sftp = browser.session.into_inner();
+                        let _ = sftp.close().await;
+                    }
+                    if had_sessions || had_sftp {
                         idle_prompts.clear().await;
                         let status = idle_vault.status().await.unwrap_or(VaultStatus {
                             exists: true,
@@ -660,6 +689,8 @@ pub fn run() {
                 let power_app = app_handle.clone();
                 let power_vault = Arc::clone(&vault);
                 let power_sessions = Arc::clone(&sessions);
+                let power_sftp_sessions = Arc::clone(&sftp_sessions);
+                let power_active_transfers = Arc::clone(&active_transfers);
                 let power_prompts = Arc::clone(&prompts);
                 std::thread::spawn(move || {
                     while let Ok(event) = rx.recv() {
@@ -670,6 +701,8 @@ pub fn run() {
                             let app = power_app.clone();
                             let vault = Arc::clone(&power_vault);
                             let sessions = Arc::clone(&power_sessions);
+                            let sftp_sessions = Arc::clone(&power_sftp_sessions);
+                            let active_transfers = Arc::clone(&power_active_transfers);
                             let prompts = Arc::clone(&power_prompts);
                             tauri::async_runtime::block_on(async move {
                                 let taken = {
@@ -678,6 +711,18 @@ pub fn run() {
                                 };
                                 for (_id, handle) in taken {
                                     let _ = handle.close().await;
+                                }
+                                for transfer in active_transfers.lock().await.values() {
+                                    transfer.cancel();
+                                }
+                                active_transfers.lock().await.clear();
+                                let sftp_taken = {
+                                    let mut guard = sftp_sessions.lock().await;
+                                    std::mem::take(&mut *guard)
+                                };
+                                for (_id, browser) in sftp_taken {
+                                    let sftp = browser.session.into_inner();
+                                    let _ = sftp.close().await;
                                 }
                                 prompts.clear().await;
                                 let _ = vault.lock().await;
@@ -710,7 +755,22 @@ pub fn run() {
             terminal_input,
             resize_terminal,
             close_terminal,
-            respond_host_key
+            respond_host_key,
+            sftp::local_home,
+            sftp::local_list,
+            sftp::local_mkdir,
+            sftp::local_rename,
+            sftp::local_remove,
+            sftp::sftp_open,
+            sftp::sftp_close,
+            sftp::sftp_remote_list,
+            sftp::sftp_remote_canonicalize,
+            sftp::sftp_remote_mkdir,
+            sftp::sftp_remote_rename,
+            sftp::sftp_remote_remove,
+            sftp::sftp_remote_create_dir_entry,
+            sftp::sftp_transfer,
+            sftp::sftp_cancel_transfer,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Tauri application");
@@ -731,6 +791,18 @@ mod tests {
                 .windows(DROPPED_MARKER.len())
                 .any(|window| window == DROPPED_MARKER)
         );
+    }
+
+    #[test]
+    fn export_bindings() {
+        let cfg = ts_rs::Config::default();
+        HostSummaryDto::export_all(&cfg).unwrap();
+        VaultStatusDto::export_all(&cfg).unwrap();
+        SshConfigHostDto::export_all(&cfg).unwrap();
+        SshConfigPreviewDto::export_all(&cfg).unwrap();
+        HostKeyPrompt::export_all(&cfg).unwrap();
+        TerminalEvent::export_all(&cfg).unwrap();
+        sftp::export_bindings(&cfg);
     }
 
     #[test]
