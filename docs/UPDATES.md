@@ -59,6 +59,18 @@ systemctl --user daemon-reload
 systemctl --user enable --now tethra-updates.timer
 ```
 
+## Why `dangerousInsecureTransportProtocol` is on
+
+The sync host serves plain HTTP on a tailnet, and the updater plugin refuses
+non-`https` endpoints in release builds — it fails to initialize, which takes
+the whole app down at startup. Debug builds only print a warning, so this only
+ever shows up in a shipped binary.
+
+Enabling the flag is safe here because the update payload is minisign-signed by
+CI and verified on the client before install: a tampered or swapped payload is
+rejected regardless of transport. Turn it off if the update host ever gets a
+TLS certificate.
+
 ## Signing keys
 
 CI signs with `TAURI_SIGNING_PRIVATE_KEY` (repo secret); the app verifies with
