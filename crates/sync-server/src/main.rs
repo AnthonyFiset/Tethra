@@ -1,182 +1,165 @@
 //! Self-hosted sync server for a Tailscale / LAN host.
 //!
-//! Example on an Ubuntu ThinkPad:
 //! ```bash
-//! tethra-sync-server --data-dir ~/tethra-sync --listen 0.0.0.0:8787 --token 'pick-a-secret'
+//! tethra-sync-server          # wizard (first run) + live status TUI
+//! tethra-sync-server setup    # reconfigure
+//! tethra-sync-server serve    # headless (systemd)
 //! ```
-//! Then point Mac/Windows clients at `http://<tailscale-name>:8787`.
 
-use std::net::SocketAddr;
+mod config;
+mod server;
+mod service;
+mod setup;
+mod tui;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::routing::get;
-use axum::{Json, Router};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
-use clap::Parser;
-use serde::{Deserialize, Serialize};
-use ssh_client_core::sync::{FileBackend, SyncBackend, SyncCursor, SyncItem, SyncedVaultHeader};
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
+use clap::{Parser, Subcommand};
+
+use config::Config;
+use server::Metrics;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "tethra-sync-server",
-    about = "Host Tethra vault sync over HTTP"
+    about = "Host Tethra vault sync over HTTP (Tailscale-friendly)",
+    long_about = "First run opens a setup wizard, saves ~/.config/tethra-sync/config.toml, \
+optionally installs a systemd user unit, then shows a live status screen.\n\n\
+Use `serve` under systemd (no TUI). Flags override the config file when set."
 )]
-struct Args {
-    /// Directory that stores opaque sync rows (same layout as FileBackend).
-    #[arg(long, env = "TETHRA_SYNC_DATA", default_value = "./tethra-sync")]
-    data_dir: PathBuf,
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
 
-    /// Bind address. Prefer Tailscale IP or 0.0.0.0 behind Tailscale ACLs.
-    #[arg(long, env = "TETHRA_SYNC_LISTEN", default_value = "0.0.0.0:8787")]
-    listen: SocketAddr,
+    /// Directory that stores opaque sync rows.
+    #[arg(long, env = "TETHRA_SYNC_DATA", global = true)]
+    data_dir: Option<PathBuf>,
 
-    /// Optional shared bearer token. When set, clients must send
-    /// `Authorization: Bearer <base64(token)>`.
-    #[arg(long, env = "TETHRA_SYNC_TOKEN")]
+    /// Bind address (e.g. 0.0.0.0:8787).
+    #[arg(long, env = "TETHRA_SYNC_LISTEN", global = true)]
+    listen: Option<String>,
+
+    /// Shared bearer token (clients send Authorization: Bearer base64(token)).
+    #[arg(long, env = "TETHRA_SYNC_TOKEN", global = true)]
     token: Option<String>,
+
+    /// Client URL hint for the TUI / paste block.
+    #[arg(long, env = "TETHRA_SYNC_CLIENT_URL", global = true)]
+    client_url: Option<String>,
 }
 
-#[derive(Clone)]
-struct AppState {
-    backend: Arc<FileBackend>,
-    token: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct PullQuery {
-    since: Option<String>,
-}
-
-#[derive(Serialize)]
-struct PullResponse {
-    items: Vec<SyncItem>,
-    cursor: SyncCursor,
-}
-
-#[derive(Deserialize)]
-struct PushRequest {
-    items: Vec<SyncItem>,
-}
-
-#[derive(Serialize)]
-struct PushResponse {
-    cursor: SyncCursor,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Interactive setup wizard (writes config, optional systemd install).
+    Setup,
+    /// Run the HTTP server headlessly (for systemd / scripts).
+    Serve,
+    /// Write and enable the systemd user unit.
+    InstallService,
+    /// Disable and remove the systemd user unit.
+    UninstallService,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::Setup) => {
+            init_tracing_interactive();
+            let config = setup::run_wizard()?;
+            tui::run(apply_cli(config, &cli)).await?;
+        }
+        Some(Commands::Serve) => {
+            init_tracing_headless();
+            let config = resolve_config(&cli, true)?;
+            let metrics = Arc::new(Metrics::default());
+            server::serve_until_ctrl_c(config, metrics).await?;
+        }
+        Some(Commands::InstallService) => {
+            init_tracing_interactive();
+            let config = resolve_config(&cli, true)?;
+            service::install_with_options(true)?;
+            println!("Installed and started user service `tethra-sync`.");
+            println!("Tip: `loginctl enable-linger $USER` so it survives logout.");
+            setup::print_client_block(&config);
+        }
+        Some(Commands::UninstallService) => {
+            init_tracing_interactive();
+            service::uninstall()?;
+            println!("Removed user service `tethra-sync`.");
+        }
+        None => {
+            init_tracing_interactive();
+            let config = match config::load_if_present()? {
+                Some(cfg) => apply_cli(cfg, &cli),
+                None => {
+                    if !atty_stdout() {
+                        return Err(
+                            "no config found; run interactively once or pass --data-dir/--token \
+                             or create ~/.config/tethra-sync/config.toml"
+                                .into(),
+                        );
+                    }
+                    apply_cli(setup::run_wizard()?, &cli)
+                }
+            };
+            if config.token.is_empty() {
+                return Err("token is empty; run `tethra-sync-server setup`".into());
+            }
+            tui::run(config).await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_config(cli: &Cli, require_token: bool) -> Result<Config, String> {
+    let base = config::load_if_present()?.unwrap_or_default();
+    let config = apply_cli(base, cli);
+    if require_token && config.token.is_empty() && cli.token.is_none() {
+        // Allow empty only if explicitly overridden? Prefer fail for serve.
+        if config.token.is_empty() {
+            return Err(
+                "no token configured; run `tethra-sync-server setup` or set TETHRA_SYNC_TOKEN"
+                    .into(),
+            );
+        }
+    }
+    Ok(config)
+}
+
+fn apply_cli(base: Config, cli: &Cli) -> Config {
+    config::apply_overrides(
+        base,
+        cli.data_dir.clone(),
+        cli.listen.clone(),
+        cli.token.clone(),
+        cli.client_url.clone(),
+    )
+}
+
+fn init_tracing_headless() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "tethra_sync_server=info,tower_http=info".into()),
         )
         .init();
-
-    let args = Args::parse();
-    std::fs::create_dir_all(&args.data_dir)?;
-    let backend = Arc::new(FileBackend::new(&args.data_dir));
-    // Touch layout so the directory is ready before the first client.
-    let _ = backend.pull(&SyncCursor::default()).await?;
-
-    let state = AppState {
-        backend,
-        token: args.token,
-    };
-
-    let app = Router::new()
-        .route("/healthz", get(|| async { StatusCode::OK }))
-        .route("/v1/items", get(pull_items).post(push_items))
-        .route("/v1/header", get(get_header).put(put_header))
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-    tracing::info!(listen = %args.listen, data = %args.data_dir.display(), "tethra sync server listening");
-    let listener = tokio::net::TcpListener::bind(args.listen).await?;
-    axum::serve(listener, app).await?;
-    Ok(())
 }
 
-fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
-    let Some(expected) = state.token.as_ref() else {
-        return Ok(());
-    };
-    let Some(header) = headers.get(axum::http::header::AUTHORIZATION) else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    let Ok(value) = header.to_str() else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    let Some(token) = value.strip_prefix("Bearer ") else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    let Ok(decoded) = B64.decode(token.as_bytes()) else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    if decoded.as_slice() != expected.as_bytes() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    Ok(())
+fn init_tracing_interactive() {
+    // Keep logs quiet so the TUI / wizard stays readable; still honour RUST_LOG.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "tethra_sync_server=warn,tower_http=warn".into());
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
-async fn pull_items(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<PullQuery>,
-) -> Result<Json<PullResponse>, StatusCode> {
-    authorize(&state, &headers)?;
-    let since = SyncCursor(query.since.unwrap_or_default());
-    let (items, cursor) = state
-        .backend
-        .pull(&since)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(PullResponse { items, cursor }))
-}
-
-async fn push_items(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<PushRequest>,
-) -> Result<Json<PushResponse>, StatusCode> {
-    authorize(&state, &headers)?;
-    let cursor = state
-        .backend
-        .push(&body.items)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(PushResponse { cursor }))
-}
-
-async fn get_header(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Option<SyncedVaultHeader>>, StatusCode> {
-    authorize(&state, &headers)?;
-    let header = state
-        .backend
-        .get_header()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(header))
-}
-
-async fn put_header(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(header): Json<SyncedVaultHeader>,
-) -> Result<StatusCode, StatusCode> {
-    authorize(&state, &headers)?;
-    state
-        .backend
-        .put_header(&header)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(StatusCode::NO_CONTENT)
+fn atty_stdout() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
 }
