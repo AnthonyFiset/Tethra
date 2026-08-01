@@ -69,6 +69,7 @@ export function TabBar({
             </button>
             <button
               aria-label={`Close ${tab.title}`}
+              title="Close tab (session keeps running if in tmux)"
               onClick={() => onClose(tab.sessionId)}
               className={cn(
                 "mr-1.5 grid size-5 shrink-0 cursor-pointer place-items-center rounded text-fg-subtle transition-colors",

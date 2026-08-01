@@ -23,20 +23,38 @@ export function muxSessionName(projectId: string): string {
 
 /**
  * Build the lines to send into a PTY after connect.
- * Remote + persistent agents prefer `tmux new-session -A`, then zellij, else
- * a plain launch with a stderr warning.
+ * Persistent agents prefer `tmux new-session -A`, then zellij, else a plain
+ * launch with a stderr warning. Windows local skips POSIX mux (in-app detach
+ * + spawn cwd handle resume / working directory).
  */
 export function projectLaunchScript(options: {
   projectId: string;
   path: string;
   agent: AgentSpecDto | undefined;
   remote: boolean;
+  /** Client OS from `ensure_local_mux`. */
+  platform?: string;
+  /** When false, skip mux wrap (still cd + agent on Unix). */
+  muxAvailable?: boolean;
+  /** When true, PTY already started in `path` — skip cd. */
+  cwdAlreadySet?: boolean;
 }): string {
   const pathQ = shellSingleQuote(options.path);
   const argv = agentArgv(options.agent);
-  const wantMux = options.remote && Boolean(options.agent?.persistent);
+  const localWindows = !options.remote && options.platform === "windows";
+  const wantMux =
+    Boolean(options.agent?.persistent) &&
+    !localWindows &&
+    options.muxAvailable !== false;
 
   if (!wantMux) {
+    if (localWindows) {
+      // cwd set at spawn; only launch agent if any.
+      return argv ? `${argv}\r\n` : "";
+    }
+    if (options.cwdAlreadySet) {
+      return argv ? `${argv}\n` : "";
+    }
     if (argv) return `cd ${pathQ} && ${argv}\n`;
     return `cd ${pathQ}\n`;
   }
@@ -44,7 +62,30 @@ export function projectLaunchScript(options: {
   const sessionQ = shellSingleQuote(muxSessionName(options.projectId));
   const inner = argv ?? "$SHELL";
 
+  // Prefer a login-like PATH before probing / installing (Homebrew on macOS).
+  const pathBootstrap = [
+    `for _p in /opt/homebrew/bin /opt/homebrew/sbin /usr/local/bin /usr/local/sbin "$HOME/.local/bin"; do`,
+    `  [ -d "$_p" ] || continue`,
+    `  case ":$PATH:" in *":$_p:"*) ;; *) PATH="$_p:$PATH" ;; esac`,
+    `done`,
+    `export PATH`,
+  ];
+
+  // On remote hosts, try user-level installers before falling back (no sudo prompts).
+  const ensureRemote = options.remote
+    ? [
+        `if ! command -v tmux >/dev/null 2>&1 && ! command -v zellij >/dev/null 2>&1; then`,
+        `  if command -v brew >/dev/null 2>&1; then`,
+        `    echo "tethra: installing tmux via Homebrew on this host…" >&2`,
+        `    brew install tmux || true`,
+        `  fi`,
+        `fi`,
+      ]
+    : [];
+
   return [
+    ...pathBootstrap,
+    ...ensureRemote,
     `if command -v tmux >/dev/null 2>&1; then`,
     `  tmux new-session -A -s ${sessionQ} -c ${pathQ} -- ${inner}`,
     `elif command -v zellij >/dev/null 2>&1; then`,

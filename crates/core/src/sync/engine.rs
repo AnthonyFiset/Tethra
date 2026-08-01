@@ -325,6 +325,7 @@ impl Vault {
                 ItemKind::Identity,
                 ItemKind::Project,
                 ItemKind::RunningSession,
+                ItemKind::ApiKey,
             ] {
                 for row in db.list_items(kind, true)? {
                     if !row.local_only {

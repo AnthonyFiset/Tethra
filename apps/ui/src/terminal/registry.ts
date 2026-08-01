@@ -19,6 +19,12 @@ interface TerminalRecord {
 
 const terminals = new Map<string, TerminalRecord>();
 const encoder = new TextEncoder();
+/** Drop xterm onData until this timestamp (ms) — blocks dialog click-through junk. */
+const inputSuppressedUntil = new Map<string, number>();
+/** Global gate — covers every session, including stale onData closures. */
+let globalInputSuppressedUntil = 0;
+/** Latest callbacks per session so HMR / re-wire updates reach existing terminals. */
+const inputHandlers = new Map<string, TerminalCallbacks>();
 
 export interface TerminalCallbacks {
   onInput: (data: Uint8Array) => void;
@@ -27,10 +33,64 @@ export interface TerminalCallbacks {
   onCwd?: (cwd: string) => void;
 }
 
+function inputIsSuppressed(sessionId: string): boolean {
+  const now = Date.now();
+  if (now < globalInputSuppressedUntil) return true;
+  return now < (inputSuppressedUntil.get(sessionId) ?? 0);
+}
+
+/**
+ * Ignore keyboard/mouse data from xterm for a short window.
+ * Used when closing modals so the same click cannot inject CSI/OSC into the PTY.
+ */
+export function suppressTerminalUserInput(
+  sessionId: string,
+  durationMs = 400,
+): void {
+  const until = Date.now() + durationMs;
+  const prev = inputSuppressedUntil.get(sessionId) ?? 0;
+  inputSuppressedUntil.set(sessionId, Math.max(prev, until));
+  globalInputSuppressedUntil = Math.max(globalInputSuppressedUntil, until);
+}
+
+/** Suppress every live terminal (and arm the global gate). */
+export function suppressAllTerminalUserInput(durationMs = 800): void {
+  const until = Date.now() + durationMs;
+  globalInputSuppressedUntil = Math.max(globalInputSuppressedUntil, until);
+  for (const id of terminals.keys()) {
+    const prev = inputSuppressedUntil.get(id) ?? 0;
+    inputSuppressedUntil.set(id, Math.max(prev, until));
+  }
+}
+
+/**
+ * Full-screen pointer shield so dialog close click-through cannot hit xterm.
+ */
+export function armClickShield(durationMs = 400): void {
+  const existing = document.querySelector("[data-tethra-click-shield]");
+  existing?.remove();
+  const el = document.createElement("div");
+  el.setAttribute("data-tethra-click-shield", "");
+  el.style.cssText =
+    "position:fixed;inset:0;z-index:2147483647;cursor:default;";
+  const stop = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  el.addEventListener("pointerdown", stop, true);
+  el.addEventListener("pointerup", stop, true);
+  el.addEventListener("click", stop, true);
+  el.addEventListener("mousedown", stop, true);
+  el.addEventListener("mouseup", stop, true);
+  document.body.appendChild(el);
+  window.setTimeout(() => el.remove(), durationMs);
+}
+
 export function createTerminal(
   sessionId: string,
   callbacks: TerminalCallbacks,
 ): TerminalRecord {
+  inputHandlers.set(sessionId, callbacks);
   const existing = terminals.get(sessionId);
   if (existing) return existing;
 
@@ -80,20 +140,22 @@ export function createTerminal(
       if (!cwd) return false;
       const record = terminals.get(sessionId);
       if (record) record.cwd = cwd;
-      callbacks.onCwd?.(cwd);
+      inputHandlers.get(sessionId)?.onCwd?.(cwd);
       return false; // let xterm keep its own handling if any
     }),
   );
 
-  terminal.onData((data) => callbacks.onInput(encoder.encode(data)));
+  terminal.onData((data) => {
+    if (inputIsSuppressed(sessionId)) return;
+    inputHandlers.get(sessionId)?.onInput(encoder.encode(data));
+  });
   terminal.onResize(({ cols, rows }) => {
     const record = terminals.get(sessionId);
     if (!record) return;
     window.clearTimeout(record.resizeTimer);
-    record.resizeTimer = window.setTimeout(
-      () => callbacks.onResize(cols, rows),
-      100,
-    );
+    record.resizeTimer = window.setTimeout(() => {
+      inputHandlers.get(sessionId)?.onResize(cols, rows);
+    }, 100);
   });
 
   const record: TerminalRecord = {
@@ -115,8 +177,16 @@ export function attachTerminal(
   if (!record) return;
 
   if (record.terminal.element) {
-    container.replaceChildren(record.terminal.element);
+    // Move the existing xterm host into this pane; drop any leftover siblings
+    // from a previous session that shared the container without a remount.
+    if (
+      record.terminal.element.parentElement !== container ||
+      container.childElementCount !== 1
+    ) {
+      container.replaceChildren(record.terminal.element);
+    }
   } else {
+    container.replaceChildren();
     record.terminal.open(container);
     try {
       record.webgl = new WebglAddon();
@@ -169,6 +239,8 @@ export function disposeTerminal(sessionId: string): void {
   const record = terminals.get(sessionId);
   if (!record) return;
   window.clearTimeout(record.resizeTimer);
+  inputSuppressedUntil.delete(sessionId);
+  inputHandlers.delete(sessionId);
   for (const disposable of record.disposables) {
     disposable.dispose();
   }

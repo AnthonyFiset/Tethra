@@ -17,6 +17,7 @@ export type WorkspaceTab = {
   remotePath?: string;
   localPath?: string;
   cwd?: string;
+  projectId?: string;
 };
 
 export type WorkspaceTransfer = {

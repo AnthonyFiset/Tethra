@@ -404,6 +404,7 @@ connect → `cd` → launch agent; persistent remote agents via `tmux`/`zellij`
 **M9 — Assist.** `Cmd/Ctrl+I` → NL to command in the input (never auto-exec);
 pluggable providers; API keys as vault items with `sync_secret`; explain-failure
 via block context. Stay small — do not compete with the agents you host.
+See `docs/M9.md`.
 
 **M10 — fleet power features.** Port forwarding, live `ProxyJump`, snippets,
 multi-host broadcast via a structured `FleetExec` API. (Was M7; demoted —

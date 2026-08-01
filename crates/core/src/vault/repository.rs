@@ -8,12 +8,14 @@ use chrono::Utc;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use super::records::{HostRecord, PasswordIdentityRecord, ProjectRecord, RunningSessionRecord};
+use super::records::{
+    ApiKeyRecord, HostRecord, PasswordIdentityRecord, ProjectRecord, RunningSessionRecord,
+};
 use super::store::{ItemKind, ItemRow};
 use super::{Vault, get_encrypted_json, put_encrypted_json};
 use crate::model::{
-    AuthMaterial, Host, KnownHostKey, Project, ProjectLocation, RunningSession, SecretString,
-    ShellIntegration,
+    ApiKey, AssistProviderKind, AuthMaterial, Host, KnownHostKey, Project, ProjectLocation,
+    RunningSession, SecretString, ShellIntegration,
 };
 use crate::ssh::{AuthProvider, HostStore};
 use crate::ssh_config::{SshConfigHost, parse_ssh_config, proxy_jump_alias};
@@ -107,6 +109,30 @@ pub struct RunningSessionSummary {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub last_attached_at: chrono::DateTime<chrono::Utc>,
     pub started_on_device: String,
+}
+
+/// Non-secret API key metadata for UI / IPC (never includes the raw key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiKeySummary {
+    pub id: Uuid,
+    pub label: String,
+    pub provider: AssistProviderKind,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub sync_secret: bool,
+    pub has_key: bool,
+}
+
+/// Create/update payload for Assist API keys.
+#[derive(Debug)]
+pub struct CreateApiKeyRequest {
+    pub label: String,
+    pub provider: AssistProviderKind,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    /// Required on create; optional on update (leave unchanged when None).
+    pub api_key: Option<SecretString>,
+    pub sync_secret: bool,
 }
 
 /// High-level vault operations for hosts and SSH wiring.
@@ -634,6 +660,127 @@ impl VaultRepository {
         Ok(None)
     }
 
+    pub async fn list_api_keys(&self) -> Result<Vec<ApiKeySummary>> {
+        let key = self.vault.require_key().await?;
+        let rows = self
+            .vault
+            .with_db(|db| db.list_items(ItemKind::ApiKey, false))
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
+            let record: ApiKeyRecord = serde_json::from_slice(&plaintext)?;
+            out.push(ApiKeySummary {
+                id: record.id,
+                label: record.label,
+                provider: record.provider,
+                base_url: record.base_url,
+                model: record.model,
+                sync_secret: record.sync_secret,
+                has_key: !record.api_key.is_empty(),
+            });
+        }
+        out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        Ok(out)
+    }
+
+    pub async fn create_api_key(&self, request: CreateApiKeyRequest) -> Result<ApiKeySummary> {
+        validate_api_key_request(&request, true)?;
+        let api_key = request
+            .api_key
+            .ok_or_else(|| Error::InvalidArgument("api key is required".into()))?;
+        let mut key = ApiKey::new(request.label, request.provider, api_key);
+        key.base_url = request.base_url;
+        key.model = request.model;
+        key.sync_secret = request.sync_secret;
+        let record = ApiKeyRecord::from(&key);
+        put_encrypted_json(
+            &self.vault,
+            key.id,
+            ItemKind::ApiKey,
+            1,
+            !request.sync_secret,
+            false,
+            &record,
+        )
+        .await?;
+        Ok(ApiKeySummary {
+            id: key.id,
+            label: key.label,
+            provider: key.provider,
+            base_url: key.base_url,
+            model: key.model,
+            sync_secret: key.sync_secret,
+            has_key: true,
+        })
+    }
+
+    pub async fn update_api_key(
+        &self,
+        id: Uuid,
+        request: CreateApiKeyRequest,
+    ) -> Result<ApiKeySummary> {
+        validate_api_key_request(&request, false)?;
+        let (mut record, row) = get_encrypted_json::<ApiKeyRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::ApiKey {
+            return Err(Error::InvalidArgument("item is not an api key".into()));
+        }
+        record.label = request.label;
+        record.provider = request.provider;
+        record.base_url = request.base_url;
+        record.model = request.model;
+        record.sync_secret = request.sync_secret;
+        if let Some(api_key) = request.api_key {
+            record.api_key = api_key.expose().to_string();
+        }
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::ApiKey,
+            row.version + 1,
+            !request.sync_secret,
+            false,
+            &record,
+        )
+        .await?;
+        Ok(ApiKeySummary {
+            id: record.id,
+            label: record.label,
+            provider: record.provider,
+            base_url: record.base_url,
+            model: record.model,
+            sync_secret: record.sync_secret,
+            has_key: !record.api_key.is_empty(),
+        })
+    }
+
+    pub async fn delete_api_key(&self, id: Uuid) -> Result<()> {
+        let (record, row) = get_encrypted_json::<ApiKeyRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::ApiKey {
+            return Err(Error::InvalidArgument("item is not an api key".into()));
+        }
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::ApiKey,
+            row.version + 1,
+            !record.sync_secret,
+            true,
+            &record,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Load the full key for Assist HTTP calls. Never expose via IPC DTO.
+    pub async fn get_api_key(&self, id: Uuid) -> Result<ApiKey> {
+        let (record, row) = get_encrypted_json::<ApiKeyRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::ApiKey {
+            return Err(Error::InvalidArgument("item is not an api key".into()));
+        }
+        Ok(ApiKey::from(record))
+    }
+
     pub async fn get_host(&self, id: Uuid) -> Result<Host> {
         let (record, _) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
         Ok(Host::from(record))
@@ -680,6 +827,31 @@ fn validate_project_request(request: &CreateProjectRequest) -> Result<()> {
     {
         return Err(Error::InvalidArgument(
             "default agent id must not be empty".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_api_key_request(request: &CreateApiKeyRequest, require_key: bool) -> Result<()> {
+    if request.label.trim().is_empty() {
+        return Err(Error::InvalidArgument("api key label is required".into()));
+    }
+    if require_key {
+        let Some(key) = &request.api_key else {
+            return Err(Error::InvalidArgument("api key is required".into()));
+        };
+        if key.expose().trim().is_empty() {
+            return Err(Error::InvalidArgument("api key is required".into()));
+        }
+    }
+    if matches!(request.provider, AssistProviderKind::OpenAiCompat)
+        && request
+            .base_url
+            .as_ref()
+            .is_none_or(|url| url.trim().is_empty())
+    {
+        return Err(Error::InvalidArgument(
+            "base URL is required for OpenAI-compatible providers".into(),
         ));
     }
     Ok(())
@@ -914,6 +1086,34 @@ mod tests {
 
         repo.end_running_session(first.id).await.unwrap();
         assert!(repo.list_running_sessions().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn api_key_crud_hides_secret_in_summary() {
+        let (_dir, repo) = unlocked_repo().await;
+        let created = repo
+            .create_api_key(CreateApiKeyRequest {
+                label: "Claude".into(),
+                provider: AssistProviderKind::Anthropic,
+                base_url: None,
+                model: Some("claude-sonnet-4-5".into()),
+                api_key: Some(SecretString::new("sk-test-secret")),
+                sync_secret: false,
+            })
+            .await
+            .unwrap();
+        assert!(created.has_key);
+        assert!(!created.sync_secret);
+
+        let listed = repo.list_api_keys().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].label, "Claude");
+
+        let loaded = repo.get_api_key(created.id).await.unwrap();
+        assert_eq!(loaded.api_key.expose(), "sk-test-secret");
+
+        repo.delete_api_key(created.id).await.unwrap();
+        assert!(repo.list_api_keys().await.unwrap().is_empty());
     }
 
     #[tokio::test]

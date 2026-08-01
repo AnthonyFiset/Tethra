@@ -288,7 +288,7 @@ export function ProjectFormModal({
               {agents.map((agent) => (
                 <option key={agent.id} value={agent.id}>
                   {agent.name}
-                  {agent.persistent ? "" : " (no persistence)"}
+                  {agent.persistent ? " · persists (tmux)" : " (no persistence)"}
                 </option>
               ))}
             </select>

@@ -112,7 +112,10 @@ export function Sidebar({
             )}
           >
             {!collapsed && (
-              <span className="px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-fg-subtle uppercase">
+              <span
+                className="px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-fg-subtle uppercase"
+                title="Click to reattach · × kills the session on the host"
+              >
                 Running
               </span>
             )}
@@ -403,15 +406,23 @@ function RunningRow({
         </span>
       </button>
 
-      <div className="absolute right-1.5 flex items-center gap-0.5 rounded-md bg-hover pl-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <IconButton
-          label={`Clear ${session.projectName} from running list`}
-          size="sm"
-          onClick={() => onEnd(session)}
-          className="hover:text-danger"
-        >
-          <X size={13} />
-        </IconButton>
+      <div className="relative z-10 mr-1 flex shrink-0 items-center">
+        <Tooltip content="Kill session — stops tmux on the host and removes it from Running">
+          <button
+            type="button"
+            aria-label={`Kill ${session.projectName} session`}
+            title="Kill session"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onEnd(session);
+            }}
+            className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border border-line px-2 text-micro text-fg-muted transition-colors hover:border-danger/50 hover:bg-danger/10 hover:text-danger"
+          >
+            <X size={12} />
+            Kill
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

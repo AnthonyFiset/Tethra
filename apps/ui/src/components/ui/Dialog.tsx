@@ -14,6 +14,11 @@ interface DialogProps {
   width?: "sm" | "md" | "lg";
   children?: ReactNode;
   footer?: ReactNode;
+  /**
+   * When true (default), do not restore focus to the previously focused
+   * element (often the terminal). Prevents click-through injecting CSI/OSC.
+   */
+  preventCloseAutoFocus?: boolean;
 }
 
 const WIDTHS = {
@@ -32,6 +37,7 @@ export function Dialog({
   width = "md",
   children,
   footer,
+  preventCloseAutoFocus = true,
 }: DialogProps): React.JSX.Element {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -43,6 +49,9 @@ export function Dialog({
           }}
           onPointerDownOutside={(event) => {
             if (!dismissible) event.preventDefault();
+          }}
+          onCloseAutoFocus={(event) => {
+            if (preventCloseAutoFocus) event.preventDefault();
           }}
           className={cn(
             "fixed top-1/2 left-1/2 z-50 w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2",

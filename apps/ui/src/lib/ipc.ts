@@ -6,9 +6,14 @@ import {
   getCurrentWebviewWindow,
 } from "@tauri-apps/api/webviewWindow";
 import type { AgentSpecDto } from "./generated/AgentSpecDto";
+import type { ApiKeySummaryDto } from "./generated/ApiKeySummaryDto";
+import type { AssistExplainResultDto } from "./generated/AssistExplainResultDto";
+import type { AssistProposeResultDto } from "./generated/AssistProposeResultDto";
 import type { FileEntryDto } from "./generated/FileEntryDto";
 import type { HostKeyPrompt } from "./generated/HostKeyPrompt";
 import type { HostSummaryDto } from "./generated/HostSummaryDto";
+import type { MuxEnsureResultDto } from "./generated/MuxEnsureResultDto";
+import type { MissingToolDto } from "./generated/MissingToolDto";
 import type { ProjectLocationDto } from "./generated/ProjectLocationDto";
 import type { ProjectSummaryDto } from "./generated/ProjectSummaryDto";
 import type { RunningSessionSummaryDto } from "./generated/RunningSessionSummaryDto";
@@ -20,15 +25,21 @@ import type { SyncReportDto } from "./generated/SyncReportDto";
 import type { SyncStatusDto } from "./generated/SyncStatusDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
 import type { TerminalEventEnvelope } from "./generated/TerminalEventEnvelope";
+import type { ToolsProbeDto } from "./generated/ToolsProbeDto";
 import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
 
 export type {
   AgentSpecDto,
+  ApiKeySummaryDto,
+  AssistExplainResultDto,
+  AssistProposeResultDto,
   FileEntryDto,
   HostKeyPrompt,
   HostSummaryDto,
+  MissingToolDto,
+  MuxEnsureResultDto,
   ProjectLocationDto,
   ProjectSummaryDto,
   RunningSessionSummaryDto,
@@ -40,6 +51,7 @@ export type {
   SyncStatusDto,
   TerminalEvent,
   TerminalEventEnvelope,
+  ToolsProbeDto,
   UpdateInfoDto,
   TransferEvent,
   VaultStatusDto,
@@ -178,6 +190,109 @@ export function endRunningSession(id: string): Promise<void> {
   return invoke("end_running_session", { id });
 }
 
+export type AssistProviderId = "anthropic" | "openai" | "openaiCompat";
+
+export interface ApiKeyMutation {
+  label: string;
+  provider: AssistProviderId;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+  syncSecret?: boolean;
+}
+
+export interface AssistContextPayload {
+  cwd?: string;
+  hostLabel: string;
+  isLocal: boolean;
+  transcriptTail: string;
+  lastExitCode?: number;
+}
+
+export function listApiKeys(): Promise<ApiKeySummaryDto[]> {
+  return invoke<ApiKeySummaryDto[]>("list_api_keys");
+}
+
+export function createApiKey(key: ApiKeyMutation): Promise<ApiKeySummaryDto> {
+  return invoke<ApiKeySummaryDto>("create_api_key", { key });
+}
+
+export function updateApiKey(
+  id: string,
+  key: ApiKeyMutation,
+): Promise<ApiKeySummaryDto> {
+  return invoke<ApiKeySummaryDto>("update_api_key", { id, key });
+}
+
+export function deleteApiKey(id: string): Promise<void> {
+  return invoke("delete_api_key", { id });
+}
+
+export function assistPropose(
+  apiKeyId: string,
+  prompt: string,
+  context: AssistContextPayload,
+): Promise<AssistProposeResultDto> {
+  return invoke<AssistProposeResultDto>("assist_propose", {
+    apiKeyId,
+    prompt,
+    context,
+  });
+}
+
+export function assistExplain(
+  apiKeyId: string,
+  prompt: string,
+  context: AssistContextPayload,
+): Promise<AssistExplainResultDto> {
+  return invoke<AssistExplainResultDto>("assist_explain", {
+    apiKeyId,
+    prompt,
+    context,
+  });
+}
+
+export function detectLocalMux(): Promise<MuxEnsureResultDto> {
+  return invoke<MuxEnsureResultDto>("detect_local_mux");
+}
+
+export function installLocalMux(): Promise<MuxEnsureResultDto> {
+  return invoke<MuxEnsureResultDto>("install_local_mux");
+}
+
+/** @deprecated Prefer detectLocalMux — no longer auto-installs on open. */
+export function ensureLocalMux(): Promise<MuxEnsureResultDto> {
+  return invoke<MuxEnsureResultDto>("ensure_local_mux");
+}
+
+export function probeHostTools(
+  hostId: string | undefined,
+  commands: string[],
+): Promise<ToolsProbeDto> {
+  return invoke<ToolsProbeDto>("probe_host_tools", {
+    hostId,
+    commands,
+  });
+}
+
+export function terminalSessionAlive(sessionId: string): Promise<boolean> {
+  return invoke<boolean>("terminal_session_alive", { sessionId });
+}
+
+export function killMuxSession(
+  hostId: string | undefined,
+  muxSession: string,
+): Promise<void> {
+  return invoke("kill_mux_session", {
+    hostId,
+    muxSession,
+  });
+}
+
+export function pruneStaleRunningSessions(): Promise<number> {
+  return invoke<number>("prune_stale_running_sessions");
+}
+
 export function openTerminal(
   hostId: string,
   cols: number,
@@ -190,10 +305,15 @@ export function openTerminal(
   });
 }
 
-export function openLocalTerminal(cols: number, rows: number): Promise<string> {
+export function openLocalTerminal(
+  cols: number,
+  rows: number,
+  cwd?: string,
+): Promise<string> {
   return invoke<string>("open_local_terminal", {
     cols,
     rows,
+    cwd,
   });
 }
 
@@ -206,10 +326,27 @@ export function onTerminalEvent(
   });
 }
 
+/**
+ * Drop accidental xterm onData (dialog click-through / focus DA+OSC replies)
+ * at the IPC boundary. Intentional inserts must pass `{ force: true }`.
+ */
+let ptyUserInputSuppressedUntil = 0;
+
+export function suppressPtyUserInput(durationMs = 800): void {
+  ptyUserInputSuppressedUntil = Math.max(
+    ptyUserInputSuppressedUntil,
+    Date.now() + durationMs,
+  );
+}
+
 export function sendTerminalInput(
   sessionId: string,
   data: Uint8Array,
+  options?: { force?: boolean },
 ): Promise<void> {
+  if (!options?.force && Date.now() < ptyUserInputSuppressedUntil) {
+    return Promise.resolve();
+  }
   return invoke("terminal_input", {
     sessionId,
     data: Array.from(data),

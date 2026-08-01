@@ -56,7 +56,7 @@ pub struct AgentSpec {
     pub command: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
-    /// Wrap in tmux/zellij on remote hosts when true.
+    /// Wrap in tmux/zellij when true (local and remote).
     pub persistent: bool,
 }
 
@@ -101,7 +101,8 @@ pub fn builtin_agents() -> Vec<AgentSpec> {
             command: "".into(),
             args: Vec::new(),
             env: Vec::new(),
-            persistent: false,
+            // Project shells also resume via tmux — typed commands survive close/reopen.
+            persistent: true,
         },
     ]
 }

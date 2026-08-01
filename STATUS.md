@@ -1,6 +1,6 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after M8 (projects + reattach).
+_Snapshot for handoff / reassessment. Last updated after completing M9 (Assist).
 See [`ROADMAP-v2.md`](ROADMAP-v2.md)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
@@ -11,7 +11,7 @@ architecture and hard rules; [`ROADMAP-v2.md`](ROADMAP-v2.md) for the post-M6.1
 plan.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main`; latest shipped tag `v0.2.4`
+- **Branch:** `main`; latest shipped tag `v0.2.5`
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 
@@ -33,7 +33,7 @@ plan.
 | **M6.2** | Sync you don't think about: `sync_secret`, background sync, coordinated re-key, iOS CI, auto-mirror | Done |
 | **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Done |
 | **M8** | Projects and agents: `Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach | Done |
-| **M9** | Assist: NL→command in input, ApprovalGate, pluggable providers, vault API keys | Not started |
+| **M9** | Assist: NL→command in input, ApprovalGate, pluggable providers, vault API keys | Done |
 | **M10** | Fleet power features: port forwarding, live jump hosts, snippets, `FleetExec` broadcast (was old M7) | Not started |
 | **M11** | Mobile: reattach/monitor persistent agents; `platform-ios` shim (was old M8; reframed) | Not started |
 
@@ -50,6 +50,7 @@ crates/
       ssh/              session manager, handler, pty, exec, sftp, approval, fingerprint
       ssh_config.rs     ~/.ssh/config parsing
       terminal/         OSC 133 parser, shell-integration scripts/wrappers
+      assist/           NL→command providers; ApprovalGate AssistInsert
       sync/             SyncBackend, FileBackend, HttpBackend, SyncEngine, conflict
       error.rs
   sync-server/          tethra-sync-server: HTTP sync + update mirror for Tailscale hosts
@@ -62,6 +63,7 @@ crates/
 apps/
   tauri/src-tauri/      command glue only
     src/lib.rs          vault + host + terminal + SFTP + sync + updater commands
+    src/assist.rs       Assist propose/explain + vault API key CRUD
     src/sync.rs         sync settings, folder picker, HTTP configure, join, sync-now
     src/updater.rs      self-update; endpoint derived from sync server URL
     src/output_pump.rs  shared SSH/local terminal batching; OSC 133 + app-wide emit
@@ -71,13 +73,14 @@ apps/
   ui/                   React app
     src/lib/ipc.ts      the ONLY file that calls invoke()
     src/terminal/       xterm registry + shared SSH/local terminal view
-    src/components/     logo, command palette, SyncSettingsModal, UpdateBanner
+    src/components/     logo, command palette, AssistBar, AssistSettingsModal, SyncSettingsModal, UpdateBanner
     src/sftp/           SftpBrowser, FilePane, TransferQueuePanel, queue runner, path helpers
     src/vault/          VaultGate (create/unlock/recover/join), ChangePasswordModal
     src/hosts/          HostFormModal, SshConfigImportModal
+    src/projects/       ProjectFormModal, PathBrowser, launch helpers
 scripts/
   set-version.mjs       stamp one version across all manifests from the git tag
-docs/                   M1.md .. M6.md, M6.2.md, M7.md, UPDATES.md
+docs/                   M1.md .. M9.md, M6.2.md, UPDATES.md
 .github/workflows/      ci.yml + release.yml (dmg / exe / deb + updater artifacts on tag)
 ```
 
@@ -319,7 +322,7 @@ docker compose -f crates/core/tests/docker-compose.yml down -v
 
 ```bash
 # 1. Cut a release (CI stamps version, builds installers, signs updater artifacts)
-git tag v0.2.4 && git push origin v0.2.4
+git tag v0.2.5 && git push origin v0.2.5
 # 2. Publish the draft release on GitHub (gh only sees published releases)
 # 3. On the sync host, mirror it for clients:
 tethra-sync-server fetch-updates
@@ -330,13 +333,10 @@ tethra-sync-server fetch-updates
 
 ## Suggested next step
 
-**M9 — Assist** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): `Cmd/Ctrl+I` inline
-prompt, never auto-execute (ApprovalGate), pluggable providers, vault API keys
-with `sync_secret`.
+**M10 — Fleet** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): port forwarding, live
+jump hosts, snippets, `FleetExec` broadcast. Mobile reattach remains **M11**.
 
-Fleet power features remain **M10**; mobile **M11**.
-
-On the ThinkPad after this release publishes:
+On the ThinkPad after v0.2.5 publishes:
 `tethra-sync-server fetch-updates` (and `install-updates-timer` if not already).
 
 Optional: decide public vs private repo; README + LICENSE; Apple /

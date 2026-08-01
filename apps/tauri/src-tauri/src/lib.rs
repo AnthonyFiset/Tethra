@@ -30,7 +30,9 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 mod app_menu;
+mod assist;
 mod local_fs;
+mod mux;
 mod output_pump;
 mod sftp;
 mod shell_integration;
@@ -49,7 +51,7 @@ pub(crate) struct AppState {
     sessions: Sessions,
     local_pty: Arc<dyn platform::LocalPty>,
     local_sessions: LocalSessions,
-    approval_gate: Arc<dyn ApprovalGate>,
+    pub(crate) approval_gate: Arc<dyn ApprovalGate>,
     sftp_sessions: sftp::SftpSessions,
     active_transfers: sftp::ActiveTransfers,
     prompts: Arc<PromptBroker>,
@@ -795,11 +797,18 @@ async fn open_local_terminal(
     state: State<'_, AppState>,
     cols: u32,
     rows: u32,
+    cwd: Option<String>,
 ) -> Result<String, String> {
-    let spec = state
+    let mut spec = state
         .local_pty
         .default_shell()
         .ok_or_else(|| "no local shell is available".to_string())?;
+    if let Some(dir) = cwd {
+        let path = std::path::PathBuf::from(dir);
+        if path.is_dir() {
+            spec.cwd = Some(path);
+        }
+    }
     let spec = shell_integration::wrap_local_shell(spec);
     state
         .approval_gate
@@ -1168,6 +1177,12 @@ pub fn run() {
             list_running_sessions,
             mark_project_running,
             end_running_session,
+            assist::list_api_keys,
+            assist::create_api_key,
+            assist::update_api_key,
+            assist::delete_api_key,
+            assist::assist_propose,
+            assist::assist_explain,
             preview_ssh_config,
             import_ssh_config,
             create_host,
@@ -1178,6 +1193,13 @@ pub fn run() {
             terminal_input,
             resize_terminal,
             close_terminal,
+            mux::ensure_local_mux,
+            mux::detect_local_mux,
+            mux::install_local_mux,
+            mux::probe_host_tools,
+            mux::terminal_session_alive,
+            mux::kill_mux_session,
+            mux::prune_stale_running_sessions,
             respond_host_key,
             sftp::local_home,
             sftp::local_list,
@@ -1221,6 +1243,8 @@ mod tests {
         ProjectLocationDto::export_all(&cfg).unwrap();
         AgentSpecDto::export_all(&cfg).unwrap();
         RunningSessionSummaryDto::export_all(&cfg).unwrap();
+        assist::export_bindings(&cfg);
+        mux::export_bindings(&cfg);
         VaultStatusDto::export_all(&cfg).unwrap();
         SshConfigHostDto::export_all(&cfg).unwrap();
         SshConfigPreviewDto::export_all(&cfg).unwrap();

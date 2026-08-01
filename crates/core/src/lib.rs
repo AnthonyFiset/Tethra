@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod assist;
 pub mod error;
 pub mod model;
 pub mod ssh;

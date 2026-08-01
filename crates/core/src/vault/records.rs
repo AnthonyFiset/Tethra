@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::model::{
-    Host, KnownHostKey, Project, ProjectLocation, RunningSession, ShellIntegration,
+    ApiKey, AssistProviderKind, Host, KnownHostKey, Project, ProjectLocation, RunningSession,
+    ShellIntegration,
 };
 use chrono::{DateTime, Utc};
 
@@ -149,6 +150,46 @@ impl From<RunningSessionRecord> for RunningSession {
             started_at: record.started_at,
             last_attached_at: record.last_attached_at,
             started_on_device: record.started_on_device,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyRecord {
+    pub id: Uuid,
+    pub label: String,
+    pub provider: AssistProviderKind,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub api_key: String,
+    #[serde(default)]
+    pub sync_secret: bool,
+}
+
+impl From<&ApiKey> for ApiKeyRecord {
+    fn from(key: &ApiKey) -> Self {
+        Self {
+            id: key.id,
+            label: key.label.clone(),
+            provider: key.provider,
+            base_url: key.base_url.clone(),
+            model: key.model.clone(),
+            api_key: key.api_key.expose().to_string(),
+            sync_secret: key.sync_secret,
+        }
+    }
+}
+
+impl From<ApiKeyRecord> for ApiKey {
+    fn from(record: ApiKeyRecord) -> Self {
+        Self {
+            id: record.id,
+            label: record.label,
+            provider: record.provider,
+            base_url: record.base_url,
+            model: record.model,
+            api_key: crate::model::SecretString::new(record.api_key),
+            sync_secret: record.sync_secret,
         }
     }
 }

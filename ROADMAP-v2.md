@@ -174,8 +174,8 @@ own. Presets are just data; no special-casing in code.
 
 ### Persistent sessions — the wedge
 
-For any agent with `persistent: true` on a remote host, run it inside a
-multiplexer instead of a bare shell:
+For any agent with `persistent: true`, run it inside a multiplexer instead of a
+bare shell (local and remote — closing a local tab otherwise kills the PTY):
 
 ```
 tmux new-session -A -s tethra-<project-id> -c <path> -- <agent command>
@@ -188,10 +188,11 @@ to a plain shell with a clear "this session won't survive disconnect" indicator.
 What this buys, in order of how much it matters:
 
 1. Lid close, network change, and VPN flap stop killing agent runs
-2. **Reattach from a different device** — start on the MacBook, resume on Windows
-3. A "running sessions" view: which agents are alive, on which hosts, how long
+2. Local tab close / reopen keeps the same shell or agent
+3. **Reattach from a different device** (remote) — start on the MacBook, resume on Windows
+4. A "running sessions" view: which agents are alive, on which hosts, how long
 
-Item 2 is only possible because the vault already syncs. It's the demo.
+Item 3 is only possible because the vault already syncs. It's the demo.
 
 **Do not build your own multiplexer.** Shelling out to `tmux` is unglamorous and
 correct.

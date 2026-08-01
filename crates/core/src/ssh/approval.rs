@@ -13,6 +13,8 @@ pub enum Action {
     Sftp { host_id: Uuid },
     OpenLocalPty { program: String },
     LocalExec { command: String },
+    /// Assist wants to place a command in the shell input (never auto-executes).
+    AssistInsert { command: String },
 }
 
 impl Action {
@@ -21,7 +23,7 @@ impl Action {
             Self::OpenPty { host_id } | Self::Exec { host_id, .. } | Self::Sftp { host_id } => {
                 Some(*host_id)
             }
-            Self::OpenLocalPty { .. } | Self::LocalExec { .. } => None,
+            Self::OpenLocalPty { .. } | Self::LocalExec { .. } | Self::AssistInsert { .. } => None,
         }
     }
 }

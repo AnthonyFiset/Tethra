@@ -71,16 +71,32 @@ if [[ -z "${TETHRA_SHELL_INTEGRATION:-}" ]]; then
 fi
 "#;
 
+/// Prepend common user tool paths (Homebrew, etc.) so non-login SSH sessions
+/// still find `brew` / `tmux` / CLIs the way Terminal.app does.
+const PATH_BOOTSTRAP: &str = r#"
+for _tethra_p in /opt/homebrew/bin /opt/homebrew/sbin /usr/local/bin /usr/local/sbin "$HOME/.local/bin"; do
+  [ -d "$_tethra_p" ] || continue
+  case ":$PATH:" in *":$_tethra_p:"*) ;; *) PATH="$_tethra_p:$PATH" ;; esac
+done
+export PATH
+unset _tethra_p
+"#;
+
 /// Build a remote `exec` command that installs integration and starts the
 /// user's login shell (`$SHELL`), not a hardcoded bash.
 ///
 /// Detects zsh vs bash from `$SHELL` / passwd; unknown shells get COLORTERM
 /// only and `exec` the real shell so we never force `bash-3.2` on macOS.
+///
+/// Important: when we set a temporary `ZDOTDIR` for integration, we must still
+/// source the user's real `~/.zprofile` / `~/.zshrc` (Homebrew's `brew shellenv`
+/// almost always lives in `.zprofile` on macOS).
 pub fn ssh_default_wrapper_command() -> String {
     let bash_b64 = base64_encode(BASH_INTEGRATION.as_bytes());
     let zsh_b64 = base64_encode(ZSH_INTEGRATION.as_bytes());
     format!(
         r#"export COLORTERM="${{COLORTERM:-truecolor}}"
+{path_bootstrap}
 _shell="${{SHELL:-}}"
 if [ -z "$_shell" ] && command -v getent >/dev/null 2>&1; then
   _shell=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
@@ -93,14 +109,24 @@ _base=$(basename "$_shell")
 case "$_base" in
   zsh)
     _td=$(mktemp -d "${{TMPDIR:-/tmp}}/tethra-si.XXXXXX") || exit 1
+    _user_zdot="${{ZDOTDIR:-$HOME}}"
     if command -v base64 >/dev/null 2>&1; then
       echo '{zsh_b64}' | base64 -d > "$_td/.tethra_si"
     else
       printf '%s' '{zsh_escaped}' > "$_td/.tethra_si"
     fi
-    printf '%s\n' 'source "$_tethra_si"' 'source "${{ZDOTDIR:-$HOME}}/.zshrc" 2>/dev/null || true' > "$_td/.zshrc"
-    export _tethra_si="$_td/.tethra_si" ZDOTDIR="$_td"
-    exec "$_shell" -i
+    # Login files: Homebrew PATH usually lives in ~/.zprofile, not ~/.zshrc.
+    {{
+      printf '%s\n' 'emulate -L zsh'
+      printf '%s\n' '[ -f "'"$_user_zdot"'/.zprofile" ] && source "'"$_user_zdot"'/.zprofile"'
+      printf '%s\n' '[ -f "'"$_user_zdot"'/.zlogin" ] && source "'"$_user_zdot"'/.zlogin"'
+    }} > "$_td/.zprofile"
+    {{
+      printf '%s\n' 'source "'"$_td"'/.tethra_si"'
+      printf '%s\n' '[ -f "'"$_user_zdot"'/.zshrc" ] && source "'"$_user_zdot"'/.zshrc"'
+    }} > "$_td/.zshrc"
+    export ZDOTDIR="$_td"
+    exec "$_shell" -l -i
     ;;
   bash|sh)
     _t=$(mktemp "${{TMPDIR:-/tmp}}/tethra-si.XXXXXX") || exit 1
@@ -109,15 +135,22 @@ case "$_base" in
     else
       printf '%s' '{bash_escaped}' > "$_t"
     fi
+    # Login-style profiles first (PATH), then interactive rc.
+    if [ -f "$HOME/.bash_profile" ]; then
+      printf '\n[ -f "$HOME/.bash_profile" ] && . "$HOME/.bash_profile"\n' >> "$_t"
+    elif [ -f "$HOME/.profile" ]; then
+      printf '\n[ -f "$HOME/.profile" ] && . "$HOME/.profile"\n' >> "$_t"
+    fi
     if [ -f "$HOME/.bashrc" ]; then
       printf '\n[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' >> "$_t"
     fi
     exec "$_shell" --rcfile "$_t" -i
     ;;
   *)
-    exec "$_shell" -i
+    exec "$_shell" -l -i
     ;;
 esac"#,
+        path_bootstrap = PATH_BOOTSTRAP.trim(),
         zsh_b64 = zsh_b64,
         zsh_escaped = shell_single_quote_escape(ZSH_INTEGRATION),
         bash_b64 = bash_b64,
@@ -129,10 +162,13 @@ esac"#,
 pub fn ssh_bash_wrapper_command() -> String {
     let b64 = base64_encode(BASH_INTEGRATION.as_bytes());
     format!(
-        "export COLORTERM=\"${{COLORTERM:-truecolor}}\"; \
+        "{path_bootstrap}; export COLORTERM=\"${{COLORTERM:-truecolor}}\"; \
          _t=$(mktemp \"${{TMPDIR:-/tmp}}/tethra-si.XXXXXX\") && \
          (command -v base64 >/dev/null && echo '{b64}' | base64 -d > \"$_t\" || printf '%s' '{escaped}' > \"$_t\") && \
+         {{ [ -f \"$HOME/.bash_profile\" ] && printf '\\n. \"$HOME/.bash_profile\"\\n' >> \"$_t\"; \
+            [ -f \"$HOME/.bashrc\" ] && printf '\\n. \"$HOME/.bashrc\"\\n' >> \"$_t\"; }} ; \
          exec bash --rcfile \"$_t\" -i",
+        path_bootstrap = PATH_BOOTSTRAP.trim().replace('\n', " "),
         b64 = b64,
         escaped = shell_single_quote_escape(BASH_INTEGRATION),
     )
@@ -142,12 +178,16 @@ pub fn ssh_bash_wrapper_command() -> String {
 pub fn ssh_zsh_wrapper_command() -> String {
     let b64 = base64_encode(ZSH_INTEGRATION.as_bytes());
     format!(
-        "export COLORTERM=\"${{COLORTERM:-truecolor}}\"; \
-         _td=$(mktemp -d \"${{TMPDIR:-/tmp}}/tethra-si.XXXXXX\") && \
-         printf '%s\\n' 'source \"$_tethra_si\"' 'source \"${{ZDOTDIR:-$HOME}}/.zshrc\" 2>/dev/null || true' > \"$_td/.zshrc\" && \
-         (command -v base64 >/dev/null && echo '{b64}' | base64 -d > \"$_td/.tethra_si\" || true) && \
-         export _tethra_si=\"$_td/.tethra_si\" ZDOTDIR=\"$_td\" && \
-         exec zsh -i",
+        r#"{path_bootstrap}
+export COLORTERM="${{COLORTERM:-truecolor}}"
+_td=$(mktemp -d "${{TMPDIR:-/tmp}}/tethra-si.XXXXXX") || exit 1
+_user_zdot="${{ZDOTDIR:-$HOME}}"
+(command -v base64 >/dev/null && echo '{b64}' | base64 -d > "$_td/.tethra_si" || true)
+printf '%s\n' '[ -f "'"$_user_zdot"'/.zprofile" ] && source "'"$_user_zdot"'/.zprofile"' > "$_td/.zprofile"
+printf '%s\n' 'source "'"$_td"'/.tethra_si"' '[ -f "'"$_user_zdot"'/.zshrc" ] && source "'"$_user_zdot"'/.zshrc"' > "$_td/.zshrc"
+export ZDOTDIR="$_td"
+exec zsh -l -i"#,
+        path_bootstrap = PATH_BOOTSTRAP.trim(),
         b64 = b64,
     )
 }
@@ -179,6 +219,10 @@ mod tests {
         assert!(cmd.contains("zsh)"));
         assert!(cmd.contains("bash|sh)"));
         assert!(cmd.contains("COLORTERM"));
+        assert!(cmd.contains("/opt/homebrew/bin"));
+        assert!(cmd.contains("_user_zdot"));
+        assert!(cmd.contains(".zprofile"));
+        assert!(cmd.contains("-l -i"));
     }
 
     #[test]

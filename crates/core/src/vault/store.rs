@@ -18,6 +18,7 @@ pub enum ItemKind {
     Identity,
     Project,
     RunningSession,
+    ApiKey,
 }
 
 impl ItemKind {
@@ -27,6 +28,7 @@ impl ItemKind {
             Self::Identity => "identity",
             Self::Project => "project",
             Self::RunningSession => "running_session",
+            Self::ApiKey => "api_key",
         }
     }
 
@@ -36,6 +38,7 @@ impl ItemKind {
             "identity" => Ok(Self::Identity),
             "project" => Ok(Self::Project),
             "running_session" => Ok(Self::RunningSession),
+            "api_key" => Ok(Self::ApiKey),
             other => Err(Error::InvalidArgument(format!(
                 "unknown item kind: {other}"
             ))),

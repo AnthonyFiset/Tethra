@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AssistBar } from "./components/AssistBar";
+import { AssistSettingsModal } from "./components/AssistSettingsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { Logo } from "./components/Logo";
+import {
+  ToolsHintDialog,
+  shouldShowToolsHint,
+} from "./components/ToolsHintDialog";
 import { Sidebar } from "./components/Sidebar";
 import { SyncSettingsModal } from "./components/SyncSettingsModal";
 import { TabBar } from "./components/TabBar";
@@ -19,6 +25,7 @@ import {
   deleteHost,
   deleteProject,
   endRunningSession,
+  killMuxSession,
   listAgents,
   listHosts,
   listProjects,
@@ -34,27 +41,34 @@ import {
   openLocalTerminal,
   openSftp,
   openTerminal,
+  probeHostTools,
+  pruneStaleRunningSessions,
   resizeTerminal,
   respondHostKey,
   sendTerminalInput,
+  suppressPtyUserInput,
   syncNow,
   touchProjectOpened,
   vaultLock,
   vaultStatus,
+  type AssistContextPayload,
   type HostKeyPrompt,
   type HostSummaryDto,
   type ProjectSummaryDto,
   type RunningSessionSummaryDto,
   type TerminalEvent,
+  type ToolsProbeDto,
   type VaultStatusDto,
 } from "./lib/ipc";
 import { ProjectFormModal } from "./projects/ProjectFormModal";
 import { projectLaunchScript, sleep } from "./projects/launch";
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
+  armClickShield,
   createTerminal,
   disposeTerminal,
   focusTerminal,
+  suppressAllTerminalUserInput,
   writeTerminal,
   writeTerminalMessage,
 } from "./terminal/registry";
@@ -91,6 +105,8 @@ interface Tab {
   localPath?: string;
   /** Last OSC 7 working directory, when reported. */
   cwd?: string;
+  /** Vault project id when this tab was opened from a project. */
+  projectId?: string;
 }
 
 export default function App(): React.JSX.Element {
@@ -206,6 +222,8 @@ function Workspace({
     window.matchMedia("(max-width: 767px)").matches,
   );
   const outputHandlers = useRef(new Map<string, (event: TerminalEvent) => void>());
+  const transcripts = useRef(new Map<string, string>());
+  const lastExitCodes = useRef(new Map<string, number>());
   const [connectingHostId, setConnectingHostId] = useState<string>();
   const [openingFilesHostId, setOpeningFilesHostId] = useState<string>();
   const [openingProjectId, setOpeningProjectId] = useState<string>();
@@ -223,6 +241,13 @@ function Workspace({
     useState<ProjectSummaryDto>();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [assistOpen, setAssistOpen] = useState(false);
+  const [assistSettingsOpen, setAssistSettingsOpen] = useState(false);
+  const [assistKeysEpoch, setAssistKeysEpoch] = useState(0);
+  const [muxHint, setMuxHint] = useState<{
+    probe: ToolsProbeDto;
+    sessionId: string;
+  }>();
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState<string>();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -252,9 +277,9 @@ function Workspace({
     listProjects()
       .then(setProjects)
       .catch((reason: unknown) => setError(String(reason)));
-    listRunningSessions()
-      .then(setRunningSessions)
-      .catch((reason: unknown) => setError(String(reason)));
+    void refreshRunningSessions().catch((reason: unknown) =>
+      setError(String(reason)),
+    );
     let unlistenPrompt: (() => void) | undefined;
     let unlistenSync: (() => void) | undefined;
     onHostKeyPrompt(setPrompt).then((fn) => {
@@ -267,9 +292,9 @@ function Workspace({
       void listProjects()
         .then(setProjects)
         .catch((reason: unknown) => setError(String(reason)));
-      void listRunningSessions()
-        .then(setRunningSessions)
-        .catch((reason: unknown) => setError(String(reason)));
+      void refreshRunningSessions().catch((reason: unknown) =>
+        setError(String(reason)),
+      );
     }).then((fn) => {
       unlistenSync = fn;
     });
@@ -312,13 +337,11 @@ function Workspace({
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         void syncNow()
-          .then(() =>
-            Promise.all([listHosts(), listProjects(), listRunningSessions()]),
-          )
-          .then(([nextHosts, nextProjects, nextSessions]) => {
+          .then(() => Promise.all([listHosts(), listProjects()]))
+          .then(([nextHosts, nextProjects]) => {
             setHosts(nextHosts);
             setProjects(nextProjects);
-            setRunningSessions(nextSessions);
+            return refreshRunningSessions();
           })
           .catch(() => undefined);
       }, 500);
@@ -483,7 +506,9 @@ function Workspace({
   function attachOutput(sessionId: string, closedMessage: string): void {
     outputHandlers.current.set(sessionId, (event) => {
       if (event.kind === "data") {
-        writeTerminal(sessionId, decodeBase64(event.data));
+        const bytes = decodeBase64(event.data);
+        writeTerminal(sessionId, bytes);
+        appendTranscript(sessionId, bytes);
         if (event.dropped) {
           writeTerminalMessage(
             sessionId,
@@ -491,7 +516,12 @@ function Workspace({
           );
         }
       } else if (event.kind === "block") {
-        // OSC 133 markers — reserved for Assist / block UI (M8/M9).
+        if (
+          event.phase === "commandEnd" &&
+          typeof event.exit_code === "number"
+        ) {
+          lastExitCodes.current.set(sessionId, event.exit_code);
+        }
       } else {
         setTabs((current) =>
           current.map((tab) =>
@@ -501,6 +531,48 @@ function Workspace({
         writeTerminalMessage(sessionId, `\x1b[90m${closedMessage}\x1b[0m`);
       }
     });
+  }
+
+  function appendTranscript(sessionId: string, bytes: Uint8Array): void {
+    const chunk = new TextDecoder().decode(bytes);
+    const prev = transcripts.current.get(sessionId) ?? "";
+    const next = (prev + chunk).slice(-16_384);
+    transcripts.current.set(sessionId, next);
+  }
+
+  function assistContextForActive(): AssistContextPayload | undefined {
+    if (!activeTab || (activeTab.kind !== "terminal" && activeTab.kind !== "local")) {
+      return undefined;
+    }
+    const host =
+      activeTab.kind === "local"
+        ? undefined
+        : hosts.find((entry) => entry.id === activeTab.hostId);
+    return {
+      cwd: activeTab.cwd,
+      hostLabel:
+        activeTab.kind === "local"
+          ? "Local"
+          : (host?.label ?? activeTab.title),
+      isLocal: activeTab.kind === "local",
+      transcriptTail: transcripts.current.get(activeTab.sessionId) ?? "",
+      lastExitCode: lastExitCodes.current.get(activeTab.sessionId),
+    };
+  }
+
+  function insertAssistCommand(command: string): void {
+    if (!activeTab || (activeTab.kind !== "terminal" && activeTab.kind !== "local")) {
+      return;
+    }
+    suppressPtyUserInput(1000);
+    suppressAllTerminalUserInput(1000);
+    armClickShield(400);
+    // Never append newline — user must press Enter to run.
+    void sendTerminalInput(
+      activeTab.sessionId,
+      new TextEncoder().encode(command),
+      { force: true },
+    ).catch((reason: unknown) => setError(String(reason)));
   }
 
   function wireTerminal(sessionId: string): void {
@@ -523,15 +595,26 @@ function Workspace({
     });
   }
 
-  function selectTab(sessionId: string): void {
+  /**
+   * Focus a session in the tab bar. For a single leaf, always retarget the
+   * layout. Only keep an existing layout when it's a split that already
+   * contains the session (pane focus within a split).
+   */
+  function activateSession(sessionId: string): void {
     setActiveId(sessionId);
     setZoomedId((current) =>
       current && current !== sessionId ? undefined : current,
     );
     setLayout((current) => {
-      if (current && containsSession(current, sessionId)) return current;
+      if (current?.type === "split" && containsSession(current, sessionId)) {
+        return current;
+      }
       return leaf(sessionId);
     });
+  }
+
+  function selectTab(sessionId: string): void {
+    activateSession(sessionId);
     const tab = tabs.find((item) => item.sessionId === sessionId);
     if (tab && tab.kind !== "sftp") focusTerminal(sessionId);
   }
@@ -556,8 +639,7 @@ function Workspace({
           color: host.color,
         },
       ]);
-      setLayout((current) => current ?? leaf(sessionId));
-      setActiveId(sessionId);
+      activateSession(sessionId);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -585,13 +667,49 @@ function Workspace({
           color: "#8B8B8B",
         },
       ]);
-      setLayout((current) => current ?? leaf(sessionId));
-      setActiveId(sessionId);
+      activateSession(sessionId);
+
+      void maybeShowToolsHint(sessionId, undefined, []);
     } catch (reason) {
       setError(String(reason));
     } finally {
       setOpeningLocal(false);
     }
+  }
+
+  async function maybeShowToolsHint(
+    sessionId: string,
+    hostId: string | undefined,
+    agentCommands: string[],
+  ): Promise<void> {
+    try {
+      const probe = await probeHostTools(hostId, agentCommands);
+      if (shouldShowToolsHint(probe)) {
+        setMuxHint({ probe, sessionId });
+      }
+    } catch {
+      // Probe is best-effort — never block opening a session.
+    }
+  }
+
+  function insertToolCommand(
+    sessionId: string,
+    command: string,
+    run: boolean,
+  ): void {
+    // Never forward control/OSC bytes — only the install command text.
+    const clean = command
+      .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+      .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, "")
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+      .trim();
+    if (!clean) return;
+    suppressPtyUserInput(1000);
+    suppressAllTerminalUserInput(1000);
+    const payload = run ? `${clean}\n` : clean;
+    void sendTerminalInput(sessionId, new TextEncoder().encode(payload), {
+      force: true,
+    }).catch((reason: unknown) => setError(String(reason)));
   }
 
   async function openProject(project: ProjectSummaryDto): Promise<void> {
@@ -601,20 +719,47 @@ function Workspace({
 
     try {
       const agents = await listAgents();
-      const agent = project.defaultAgent
-        ? agents.find((entry) => entry.id === project.defaultAgent)
-        : undefined;
+      const agent =
+        (project.defaultAgent
+          ? agents.find((entry) => entry.id === project.defaultAgent)
+          : undefined) ?? agents.find((entry) => entry.id === "shell");
+
+      // Focus an already-open tab for this project.
+      const existing = tabsRef.current.find(
+        (tab) => tab.projectId === project.id,
+      );
+      if (existing) {
+        activateSession(existing.sessionId);
+        if (existing.kind !== "sftp") focusTerminal(existing.sessionId);
+        return;
+      }
+
+      // Probe the real machine (local or remote) — never the wrong OS.
+      const probeHostId =
+        project.location.kind === "remote"
+          ? project.location.hostId
+          : undefined;
+      const agentCmds =
+        agent?.command?.trim() && agent.id !== "shell"
+          ? [agent.command.trim()]
+          : [];
+      const probe = await probeHostTools(probeHostId, agentCmds).catch(
+        () => undefined,
+      );
+      const muxOnHost = Boolean(probe?.hasTmux || probe?.hasZellij);
 
       let sessionId: string;
       let hostId: string;
       let color: string | null | undefined;
       let kind: Tab["kind"];
+      let cwdAlreadySet = false;
 
       if (project.location.kind === "local") {
-        sessionId = await openLocalTerminal(80, 24);
+        sessionId = await openLocalTerminal(80, 24, project.location.path);
         hostId = "local";
         color = "#8B8B8B";
         kind = "local";
+        cwdAlreadySet = true;
       } else {
         const host = hosts.find(
           (entry) =>
@@ -641,10 +786,14 @@ function Workspace({
           kind,
           connected: true,
           color,
+          projectId: project.id,
         },
       ]);
-      setLayout((current) => current ?? leaf(sessionId));
-      setActiveId(sessionId);
+      activateSession(sessionId);
+
+      if (probe && shouldShowToolsHint(probe)) {
+        setMuxHint({ probe, sessionId });
+      }
 
       await sleep(450);
       const script = projectLaunchScript({
@@ -652,8 +801,15 @@ function Workspace({
         path: project.location.path,
         agent,
         remote: project.location.kind === "remote",
+        platform: probe?.platform,
+        muxAvailable: muxOnHost,
+        cwdAlreadySet,
       });
-      await sendTerminalInput(sessionId, new TextEncoder().encode(script));
+      if (script) {
+        await sendTerminalInput(sessionId, new TextEncoder().encode(script), {
+          force: true,
+        });
+      }
 
       const touched = await touchProjectOpened(project.id);
       setProjects((current) => {
@@ -700,16 +856,38 @@ function Workspace({
     await openProject(project);
   }
 
-  async function clearRunningSession(
+  async function refreshRunningSessions(): Promise<void> {
+    const listed = await listRunningSessions();
+    setRunningSessions(listed);
+    // Drop vault markers for sessions already dead on the host (failed kills, etc.).
+    const removed = await pruneStaleRunningSessions().catch(() => 0);
+    if (removed > 0) {
+      setRunningSessions(await listRunningSessions());
+    }
+  }
+
+  async function killRunningSession(
     session: RunningSessionSummaryDto,
   ): Promise<void> {
+    // Optimistic: disappear from Running immediately.
+    setRunningSessions((current) =>
+      current.filter((item) => item.id !== session.id),
+    );
     try {
+      const openTab = tabsRef.current.find(
+        (tab) => tab.projectId === session.projectId,
+      );
+      if (openTab) {
+        await closeTab(openTab.sessionId);
+      }
+      // Vault marker first so relaunch never resurrects a killed session.
       await endRunningSession(session.id);
-      setRunningSessions((current) =>
-        current.filter((item) => item.id !== session.id),
+      await killMuxSession(session.hostId, session.muxSession).catch(
+        () => undefined,
       );
     } catch (reason) {
       setError(String(reason));
+      void refreshRunningSessions().catch(() => undefined);
     }
   }
 
@@ -735,8 +913,7 @@ function Workspace({
           localPath: home,
         },
       ]);
-      setLayout(() => leaf(opened.sessionId));
-      setActiveId(opened.sessionId);
+      activateSession(opened.sessionId);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -860,8 +1037,12 @@ function Workspace({
       return next;
     });
     outputHandlers.current.delete(sessionId);
+    transcripts.current.delete(sessionId);
+    lastExitCodes.current.delete(sessionId);
     if (tab?.kind === "terminal" || tab?.kind === "local") {
       disposeTerminal(sessionId);
+      // Detach only: drop the UI / PTY client. Remote tmux (and Running marker)
+      // stay alive so the sidebar can reattach. Kill is sidebar × only.
       await closeTerminal(sessionId).catch(() => undefined);
     } else {
       await closeSftp(sessionId).catch(() => undefined);
@@ -949,7 +1130,22 @@ function Workspace({
   }
 
   useEffect(() => {
+    if (!assistOpen) return;
+    if (
+      !activeTab ||
+      (activeTab.kind !== "terminal" && activeTab.kind !== "local")
+    ) {
+      setAssistOpen(false);
+    }
+  }, [activeTab, assistOpen]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && assistOpen) {
+        event.preventDefault();
+        setAssistOpen(false);
+        return;
+      }
       if (event.key === "Escape" && zoomedIdRef.current) {
         event.preventDefault();
         setZoomedId(undefined);
@@ -963,6 +1159,15 @@ function Workspace({
       if (event.key.toLowerCase() === "k" && status.unlocked) {
         event.preventDefault();
         setPaletteOpen(true);
+      }
+      if (event.key.toLowerCase() === "i" && status.unlocked) {
+        const tab = tabsRef.current.find(
+          (entry) => entry.sessionId === activeIdRef.current,
+        );
+        if (tab && (tab.kind === "terminal" || tab.kind === "local")) {
+          event.preventDefault();
+          setAssistOpen(true);
+        }
       }
       if (event.key === "\\") {
         event.preventDefault();
@@ -979,7 +1184,7 @@ function Workspace({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [status.unlocked]);
+  }, [status.unlocked, assistOpen]);
 
   const connectionLabel = activeTab?.connected
     ? activeTab.kind === "sftp"
@@ -987,8 +1192,17 @@ function Workspace({
       : "Connected"
     : "Vault unlocked";
 
-  const effectiveLayout =
-    layout ?? (activeId ? leaf(activeId) : tabs[0] ? leaf(tabs[0].sessionId) : null);
+  // Tab selection is source of truth for what to show. Layout only wins when
+  // it's a real split that still contains the active session.
+  const effectiveLayout = (() => {
+    if (layout?.type === "split" && activeId && containsSession(layout, activeId)) {
+      return layout;
+    }
+    if (activeId) return leaf(activeId);
+    if (layout?.type === "leaf") return layout;
+    if (tabs[0]) return leaf(tabs[0].sessionId);
+    return null;
+  })();
   const canZoom = Boolean(
     zoomedId || (effectiveLayout && effectiveLayout.type === "split"),
   );
@@ -1047,7 +1261,7 @@ function Workspace({
           onDeleteProject={setPendingDeleteProject}
           onAddProject={() => setProjectEditor("new")}
           onReattach={(session) => void reattachSession(session)}
-          onEndSession={(session) => void clearRunningSession(session)}
+          onEndSession={(session) => void killRunningSession(session)}
           onLock={() => void lockNow()}
         />
 
@@ -1068,6 +1282,21 @@ function Workspace({
               onClose={(sessionId) => void closeTab(sessionId)}
             />
           )}
+
+          {assistOpen &&
+            (() => {
+              const context = assistContextForActive();
+              if (!context) return null;
+              return (
+                <AssistBar
+                  context={context}
+                  reloadToken={assistKeysEpoch}
+                  onInsert={insertAssistCommand}
+                  onOpenSettings={() => setAssistSettingsOpen(true)}
+                  onClose={() => setAssistOpen(false)}
+                />
+              );
+            })()}
 
           <section className="relative min-h-0 flex-1">
             {zoomedId && (
@@ -1103,6 +1332,7 @@ function Workspace({
                     if (tab.kind === "sftp") {
                       return (
                         <SftpBrowser
+                          key={tab.sessionId}
                           pane
                           sessionId={tab.sessionId}
                           initialRemotePath={tab.remotePath ?? "."}
@@ -1113,6 +1343,7 @@ function Workspace({
                     }
                     return (
                       <TerminalView
+                        key={tab.sessionId}
                         pane
                         sessionId={tab.sessionId}
                         active={focused}
@@ -1311,6 +1542,24 @@ function Workspace({
         <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />
       )}
 
+      {assistSettingsOpen && (
+        <AssistSettingsModal
+          onClose={() => {
+            setAssistSettingsOpen(false);
+            setAssistKeysEpoch((n) => n + 1);
+          }}
+        />
+      )}
+
+      {muxHint && (
+        <ToolsHintDialog
+          probe={muxHint.probe}
+          sessionId={muxHint.sessionId}
+          onInsert={insertToolCommand}
+          onClose={() => setMuxHint(undefined)}
+        />
+      )}
+
       {syncOpen && (
         <SyncSettingsModal
           onClose={() => setSyncOpen(false)}
@@ -1321,9 +1570,9 @@ function Workspace({
             void listProjects()
               .then(setProjects)
               .catch((reason: unknown) => setError(String(reason)));
-            void listRunningSessions()
-              .then(setRunningSessions)
-              .catch((reason: unknown) => setError(String(reason)));
+            void refreshRunningSessions().catch((reason: unknown) =>
+              setError(String(reason)),
+            );
           }}
           onVaultReplaced={() => {
             setSyncOpen(false);
