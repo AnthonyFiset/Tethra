@@ -6,7 +6,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{Host, KnownHostKey, ShellIntegration};
+use crate::model::{Host, KnownHostKey, Project, ProjectLocation, RunningSession, ShellIntegration};
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostRecord {
@@ -73,4 +74,79 @@ pub struct PasswordIdentityRecord {
     /// Does not apply to private keys (`PROJECT.md` §7).
     #[serde(default)]
     pub sync_secret: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRecord {
+    pub id: Uuid,
+    pub name: String,
+    pub location: ProjectLocation,
+    pub default_agent: Option<String>,
+    pub last_opened: Option<DateTime<Utc>>,
+}
+
+impl From<&Project> for ProjectRecord {
+    fn from(project: &Project) -> Self {
+        Self {
+            id: project.id,
+            name: project.name.clone(),
+            location: project.location.clone(),
+            default_agent: project.default_agent.clone(),
+            last_opened: project.last_opened,
+        }
+    }
+}
+
+impl From<ProjectRecord> for Project {
+    fn from(record: ProjectRecord) -> Self {
+        Self {
+            id: record.id,
+            name: record.name,
+            location: record.location,
+            default_agent: record.default_agent,
+            last_opened: record.last_opened,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunningSessionRecord {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub host_id: Uuid,
+    pub agent_id: Option<String>,
+    pub mux_session: String,
+    pub started_at: DateTime<Utc>,
+    pub last_attached_at: DateTime<Utc>,
+    pub started_on_device: String,
+}
+
+impl From<&RunningSession> for RunningSessionRecord {
+    fn from(session: &RunningSession) -> Self {
+        Self {
+            id: session.id,
+            project_id: session.project_id,
+            host_id: session.host_id,
+            agent_id: session.agent_id.clone(),
+            mux_session: session.mux_session.clone(),
+            started_at: session.started_at,
+            last_attached_at: session.last_attached_at,
+            started_on_device: session.started_on_device.clone(),
+        }
+    }
+}
+
+impl From<RunningSessionRecord> for RunningSession {
+    fn from(record: RunningSessionRecord) -> Self {
+        Self {
+            id: record.id,
+            project_id: record.project_id,
+            host_id: record.host_id,
+            agent_id: record.agent_id,
+            mux_session: record.mux_session,
+            started_at: record.started_at,
+            last_attached_at: record.last_attached_at,
+            started_on_device: record.started_on_device,
+        }
+    }
 }

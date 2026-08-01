@@ -1,6 +1,6 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after M7 (real terminal).
+_Snapshot for handoff / reassessment. Last updated after M8 (projects + reattach).
 See [`ROADMAP-v2.md`](ROADMAP-v2.md)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
@@ -11,7 +11,7 @@ architecture and hard rules; [`ROADMAP-v2.md`](ROADMAP-v2.md) for the post-M6.1
 plan.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main`; latest shipped tag `v0.2.3`
+- **Branch:** `main`; latest shipped tag `v0.2.4`
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 
@@ -32,7 +32,7 @@ plan.
 | **M6.1** | Sync hardening: in-app vault join/reset, tag-driven versions, self-update via sync host, CI cleanup | Done |
 | **M6.2** | Sync you don't think about: `sync_secret`, background sync, coordinated re-key, iOS CI, auto-mirror | Done |
 | **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Done |
-| **M8** | Projects and agents: `Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach | Not started |
+| **M8** | Projects and agents: `Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach | Done |
 | **M9** | Assist: NL→command in input, ApprovalGate, pluggable providers, vault API keys | Not started |
 | **M10** | Fleet power features: port forwarding, live jump hosts, snippets, `FleetExec` broadcast (was old M7) | Not started |
 | **M11** | Mobile: reattach/monitor persistent agents; `platform-ios` shim (was old M8; reframed) | Not started |
@@ -319,7 +319,7 @@ docker compose -f crates/core/tests/docker-compose.yml down -v
 
 ```bash
 # 1. Cut a release (CI stamps version, builds installers, signs updater artifacts)
-git tag v0.2.3 && git push origin v0.2.3
+git tag v0.2.4 && git push origin v0.2.4
 # 2. Publish the draft release on GitHub (gh only sees published releases)
 # 3. On the sync host, mirror it for clients:
 tethra-sync-server fetch-updates
@@ -330,12 +330,14 @@ tethra-sync-server fetch-updates
 
 ## Suggested next step
 
-**M8 — Projects and agents** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): first-class
-`Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach.
+**M9 — Assist** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): `Cmd/Ctrl+I` inline
+prompt, never auto-execute (ApprovalGate), pluggable providers, vault API keys
+with `sync_secret`.
 
 Fleet power features remain **M10**; mobile **M11**.
 
-On the ThinkPad (if not already): `tethra-sync-server install-updates-timer`.
+On the ThinkPad after this release publishes:
+`tethra-sync-server fetch-updates` (and `install-updates-timer` if not already).
 
-Optional before M8: decide public vs private repo; README + LICENSE; Apple /
+Optional: decide public vs private repo; README + LICENSE; Apple /
 Windows code signing for Gatekeeper / SmartScreen-clean installers.

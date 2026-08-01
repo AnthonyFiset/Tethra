@@ -320,7 +320,12 @@ impl Vault {
         self.require_key().await?;
         self.with_db(|db| {
             let mut rows = Vec::new();
-            for kind in [ItemKind::Host, ItemKind::Identity] {
+            for kind in [
+                ItemKind::Host,
+                ItemKind::Identity,
+                ItemKind::Project,
+                ItemKind::RunningSession,
+            ] {
                 for row in db.list_items(kind, true)? {
                     if !row.local_only {
                         rows.push(row);

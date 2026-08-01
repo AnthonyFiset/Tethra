@@ -8,10 +8,13 @@ use chrono::Utc;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use super::records::{HostRecord, PasswordIdentityRecord};
+use super::records::{HostRecord, PasswordIdentityRecord, ProjectRecord, RunningSessionRecord};
 use super::store::{ItemKind, ItemRow};
 use super::{Vault, get_encrypted_json, put_encrypted_json};
-use crate::model::{AuthMaterial, Host, KnownHostKey, SecretString, ShellIntegration};
+use crate::model::{
+    AuthMaterial, Host, KnownHostKey, Project, ProjectLocation, RunningSession, SecretString,
+    ShellIntegration,
+};
 use crate::ssh::{AuthProvider, HostStore};
 use crate::ssh_config::{SshConfigHost, parse_ssh_config, proxy_jump_alias};
 use crate::{Error, Result};
@@ -59,6 +62,51 @@ pub struct CreateHostRequest {
     pub sync_secret: bool,
     pub color: Option<String>,
     pub shell_integration: ShellIntegration,
+}
+
+/// Non-secret project metadata for UI / IPC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSummary {
+    pub id: Uuid,
+    pub name: String,
+    pub location: ProjectLocation,
+    pub default_agent: Option<String>,
+    pub last_opened: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl From<&Project> for ProjectSummary {
+    fn from(project: &Project) -> Self {
+        Self {
+            id: project.id,
+            name: project.name.clone(),
+            location: project.location.clone(),
+            default_agent: project.default_agent.clone(),
+            last_opened: project.last_opened,
+        }
+    }
+}
+
+/// Create/update payload for projects.
+#[derive(Debug)]
+pub struct CreateProjectRequest {
+    pub name: String,
+    pub location: ProjectLocation,
+    pub default_agent: Option<String>,
+}
+
+/// Non-secret running-session metadata for UI / IPC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningSessionSummary {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub project_name: String,
+    pub host_id: Uuid,
+    pub host_label: String,
+    pub agent_id: Option<String>,
+    pub mux_session: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub last_attached_at: chrono::DateTime<chrono::Utc>,
+    pub started_on_device: String,
 }
 
 /// High-level vault operations for hosts and SSH wiring.
@@ -347,6 +395,243 @@ impl VaultRepository {
         Ok(())
     }
 
+    pub async fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
+        let key = self.vault.require_key().await?;
+        let rows = self
+            .vault
+            .with_db(|db| db.list_items(ItemKind::Project, false))
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
+            let record: ProjectRecord = serde_json::from_slice(&plaintext)?;
+            out.push(ProjectSummary::from(&Project::from(record)));
+        }
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok(out)
+    }
+
+    pub async fn create_project(&self, request: CreateProjectRequest) -> Result<ProjectSummary> {
+        validate_project_request(&request)?;
+        let mut project = match &request.location {
+            ProjectLocation::Local { path } => Project::local(&request.name, path),
+            ProjectLocation::Remote { host_id, path } => {
+                Project::remote(&request.name, *host_id, path)
+            }
+        };
+        project.default_agent = request.default_agent;
+        let record = ProjectRecord::from(&project);
+        put_encrypted_json(
+            &self.vault,
+            project.id,
+            ItemKind::Project,
+            1,
+            false,
+            false,
+            &record,
+        )
+        .await?;
+        Ok(ProjectSummary::from(&project))
+    }
+
+    pub async fn update_project(
+        &self,
+        id: Uuid,
+        request: CreateProjectRequest,
+    ) -> Result<ProjectSummary> {
+        validate_project_request(&request)?;
+        let (mut record, row) = get_encrypted_json::<ProjectRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Project {
+            return Err(Error::InvalidArgument("item is not a project".into()));
+        }
+        record.name = request.name;
+        record.location = request.location;
+        record.default_agent = request.default_agent;
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::Project,
+            row.version + 1,
+            false,
+            false,
+            &record,
+        )
+        .await?;
+        Ok(ProjectSummary::from(&Project::from(record)))
+    }
+
+    pub async fn touch_project_opened(&self, id: Uuid) -> Result<ProjectSummary> {
+        let (mut record, row) = get_encrypted_json::<ProjectRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Project {
+            return Err(Error::InvalidArgument("item is not a project".into()));
+        }
+        record.last_opened = Some(Utc::now());
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::Project,
+            row.version + 1,
+            false,
+            false,
+            &record,
+        )
+        .await?;
+        Ok(ProjectSummary::from(&Project::from(record)))
+    }
+
+    pub async fn delete_project(&self, id: Uuid) -> Result<()> {
+        let (record, row) = get_encrypted_json::<ProjectRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Project {
+            return Err(Error::InvalidArgument("item is not a project".into()));
+        }
+        // Drop any advertised running session for this project.
+        if let Some(session) = self.find_running_session_for_project(id).await? {
+            self.end_running_session(session.id).await?;
+        }
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::Project,
+            row.version + 1,
+            false,
+            true,
+            &record,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_running_sessions(&self) -> Result<Vec<RunningSessionSummary>> {
+        let key = self.vault.require_key().await?;
+        let rows = self
+            .vault
+            .with_db(|db| db.list_items(ItemKind::RunningSession, false))
+            .await?;
+        let projects = self.list_projects().await?;
+        let hosts = self.list_hosts().await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
+            let record: RunningSessionRecord = serde_json::from_slice(&plaintext)?;
+            let project_name = projects
+                .iter()
+                .find(|p| p.id == record.project_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Unknown project".into());
+            let host_label = hosts
+                .iter()
+                .find(|h| h.id == record.host_id)
+                .map(|h| h.label.clone())
+                .unwrap_or_else(|| "Unknown host".into());
+            out.push(RunningSessionSummary {
+                id: record.id,
+                project_id: record.project_id,
+                project_name,
+                host_id: record.host_id,
+                host_label,
+                agent_id: record.agent_id,
+                mux_session: record.mux_session,
+                started_at: record.started_at,
+                last_attached_at: record.last_attached_at,
+                started_on_device: record.started_on_device,
+            });
+        }
+        out.sort_by(|a, b| b.last_attached_at.cmp(&a.last_attached_at));
+        Ok(out)
+    }
+
+    /// Upsert one running session per project (reattach updates last_attached_at).
+    pub async fn mark_project_running(
+        &self,
+        project_id: Uuid,
+        host_id: Uuid,
+        agent_id: Option<String>,
+        started_on_device: String,
+    ) -> Result<RunningSessionSummary> {
+        if let Some(existing) = self.find_running_session_for_project(project_id).await? {
+            let (mut record, row) =
+                get_encrypted_json::<RunningSessionRecord>(&self.vault, existing.id).await?;
+            record.host_id = host_id;
+            record.agent_id = agent_id;
+            record.mux_session = crate::model::mux_session_name(project_id);
+            record.last_attached_at = Utc::now();
+            // Keep original started_on_device / started_at.
+            put_encrypted_json(
+                &self.vault,
+                existing.id,
+                ItemKind::RunningSession,
+                row.version + 1,
+                false,
+                false,
+                &record,
+            )
+            .await?;
+            return self
+                .list_running_sessions()
+                .await?
+                .into_iter()
+                .find(|s| s.id == existing.id)
+                .ok_or_else(|| Error::InvalidArgument("running session missing after update".into()));
+        }
+
+        let session = RunningSession::start(project_id, host_id, agent_id, started_on_device);
+        let record = RunningSessionRecord::from(&session);
+        put_encrypted_json(
+            &self.vault,
+            session.id,
+            ItemKind::RunningSession,
+            1,
+            false,
+            false,
+            &record,
+        )
+        .await?;
+        self.list_running_sessions()
+            .await?
+            .into_iter()
+            .find(|s| s.id == session.id)
+            .ok_or_else(|| Error::InvalidArgument("running session missing after create".into()))
+    }
+
+    pub async fn end_running_session(&self, id: Uuid) -> Result<()> {
+        let (record, row) = get_encrypted_json::<RunningSessionRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::RunningSession {
+            return Err(Error::InvalidArgument(
+                "item is not a running session".into(),
+            ));
+        }
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::RunningSession,
+            row.version + 1,
+            false,
+            true,
+            &record,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn find_running_session_for_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Option<RunningSession>> {
+        let key = self.vault.require_key().await?;
+        let rows = self
+            .vault
+            .with_db(|db| db.list_items(ItemKind::RunningSession, false))
+            .await?;
+        for row in rows {
+            let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
+            let record: RunningSessionRecord = serde_json::from_slice(&plaintext)?;
+            if record.project_id == project_id {
+                return Ok(Some(RunningSession::from(record)));
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn get_host(&self, id: Uuid) -> Result<Host> {
         let (record, _) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
         Ok(Host::from(record))
@@ -375,6 +660,27 @@ fn validate_host_color(color: Option<String>) -> Result<Option<String>> {
         ));
     }
     Ok(Some(color.to_ascii_uppercase()))
+}
+
+fn validate_project_request(request: &CreateProjectRequest) -> Result<()> {
+    if request.name.trim().is_empty() {
+        return Err(Error::InvalidArgument("project name is required".into()));
+    }
+    let path = match &request.location {
+        ProjectLocation::Local { path } => path,
+        ProjectLocation::Remote { path, .. } => path,
+    };
+    if path.trim().is_empty() {
+        return Err(Error::InvalidArgument("project path is required".into()));
+    }
+    if let Some(agent) = &request.default_agent
+        && agent.trim().is_empty()
+    {
+        return Err(Error::InvalidArgument(
+            "default agent id must not be empty".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn import_order(
@@ -506,6 +812,106 @@ mod tests {
 
         repo.delete_host(created.id).await.unwrap();
         assert!(repo.list_hosts().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn project_crud_roundtrip() {
+        let (_dir, repo) = unlocked_repo().await;
+        let host = repo
+            .create_host(CreateHostRequest {
+                label: "box".into(),
+                hostname: "10.0.0.1".into(),
+                port: 22,
+                username: "u".into(),
+                password: Some(SecretString::new("pw")),
+                sync_secret: false,
+                color: None,
+                shell_integration: Default::default(),
+            })
+            .await
+            .unwrap();
+
+        let created = repo
+            .create_project(CreateProjectRequest {
+                name: "tethra".into(),
+                location: ProjectLocation::Remote {
+                    host_id: host.id,
+                    path: "/srv/tethra".into(),
+                },
+                default_agent: Some("claude-code".into()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.name, "tethra");
+        assert_eq!(created.default_agent.as_deref(), Some("claude-code"));
+
+        let listed = repo.list_projects().await.unwrap();
+        assert_eq!(listed.len(), 1);
+
+        let touched = repo.touch_project_opened(created.id).await.unwrap();
+        assert!(touched.last_opened.is_some());
+
+        repo.delete_project(created.id).await.unwrap();
+        assert!(repo.list_projects().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn running_session_upsert_and_end() {
+        let (_dir, repo) = unlocked_repo().await;
+        let host = repo
+            .create_host(CreateHostRequest {
+                label: "box".into(),
+                hostname: "10.0.0.1".into(),
+                port: 22,
+                username: "u".into(),
+                password: Some(SecretString::new("pw")),
+                sync_secret: false,
+                color: None,
+                shell_integration: Default::default(),
+            })
+            .await
+            .unwrap();
+        let project = repo
+            .create_project(CreateProjectRequest {
+                name: "tethra".into(),
+                location: ProjectLocation::Remote {
+                    host_id: host.id,
+                    path: "/srv/tethra".into(),
+                },
+                default_agent: Some("claude-code".into()),
+            })
+            .await
+            .unwrap();
+
+        let first = repo
+            .mark_project_running(
+                project.id,
+                host.id,
+                Some("claude-code".into()),
+                "macbook".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.project_name, "tethra");
+        assert_eq!(first.host_label, "box");
+        assert!(first.mux_session.starts_with("tethra-"));
+
+        let second = repo
+            .mark_project_running(
+                project.id,
+                host.id,
+                Some("claude-code".into()),
+                "windows".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.started_on_device, "macbook");
+        assert!(second.last_attached_at >= first.last_attached_at);
+        assert_eq!(repo.list_running_sessions().await.unwrap().len(), 1);
+
+        repo.end_running_session(first.id).await.unwrap();
+        assert!(repo.list_running_sessions().await.unwrap().is_empty());
     }
 
     #[tokio::test]

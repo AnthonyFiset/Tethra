@@ -16,6 +16,8 @@ pub const RECOVERY_SECRET_KEY: &str = "ssh-client.vault.recovery-key";
 pub enum ItemKind {
     Host,
     Identity,
+    Project,
+    RunningSession,
 }
 
 impl ItemKind {
@@ -23,6 +25,8 @@ impl ItemKind {
         match self {
             Self::Host => "host",
             Self::Identity => "identity",
+            Self::Project => "project",
+            Self::RunningSession => "running_session",
         }
     }
 
@@ -30,6 +34,8 @@ impl ItemKind {
         match value {
             "host" => Ok(Self::Host),
             "identity" => Ok(Self::Identity),
+            "project" => Ok(Self::Project),
+            "running_session" => Ok(Self::RunningSession),
             other => Err(Error::InvalidArgument(format!(
                 "unknown item kind: {other}"
             ))),

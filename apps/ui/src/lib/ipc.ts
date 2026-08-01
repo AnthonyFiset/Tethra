@@ -5,9 +5,13 @@ import {
   WebviewWindow,
   getCurrentWebviewWindow,
 } from "@tauri-apps/api/webviewWindow";
+import type { AgentSpecDto } from "./generated/AgentSpecDto";
 import type { FileEntryDto } from "./generated/FileEntryDto";
 import type { HostKeyPrompt } from "./generated/HostKeyPrompt";
 import type { HostSummaryDto } from "./generated/HostSummaryDto";
+import type { ProjectLocationDto } from "./generated/ProjectLocationDto";
+import type { ProjectSummaryDto } from "./generated/ProjectSummaryDto";
+import type { RunningSessionSummaryDto } from "./generated/RunningSessionSummaryDto";
 import type { SftpOpenResult } from "./generated/SftpOpenResult";
 import type { SshConfigHostDto } from "./generated/SshConfigHostDto";
 import type { SshConfigPreviewDto } from "./generated/SshConfigPreviewDto";
@@ -21,9 +25,13 @@ import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
 
 export type {
+  AgentSpecDto,
   FileEntryDto,
   HostKeyPrompt,
   HostSummaryDto,
+  ProjectLocationDto,
+  ProjectSummaryDto,
+  RunningSessionSummaryDto,
   SftpOpenResult,
   SshConfigHostDto,
   SshConfigPreviewDto,
@@ -113,6 +121,61 @@ export function updateHost(
 
 export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
+}
+
+export interface ProjectMutation {
+  name: string;
+  location: ProjectLocationDto;
+  defaultAgent?: string;
+}
+
+export function listProjects(): Promise<ProjectSummaryDto[]> {
+  return invoke<ProjectSummaryDto[]>("list_projects");
+}
+
+export function listAgents(): Promise<AgentSpecDto[]> {
+  return invoke<AgentSpecDto[]>("list_agents");
+}
+
+export function createProject(
+  project: ProjectMutation,
+): Promise<ProjectSummaryDto> {
+  return invoke<ProjectSummaryDto>("create_project", { project });
+}
+
+export function updateProject(
+  id: string,
+  project: ProjectMutation,
+): Promise<ProjectSummaryDto> {
+  return invoke<ProjectSummaryDto>("update_project", { id, project });
+}
+
+export function deleteProject(id: string): Promise<void> {
+  return invoke("delete_project", { id });
+}
+
+export function touchProjectOpened(id: string): Promise<ProjectSummaryDto> {
+  return invoke<ProjectSummaryDto>("touch_project_opened", { id });
+}
+
+export function listRunningSessions(): Promise<RunningSessionSummaryDto[]> {
+  return invoke<RunningSessionSummaryDto[]>("list_running_sessions");
+}
+
+export function markProjectRunning(
+  projectId: string,
+  hostId: string,
+  agentId?: string,
+): Promise<RunningSessionSummaryDto> {
+  return invoke<RunningSessionSummaryDto>("mark_project_running", {
+    projectId,
+    hostId,
+    agentId,
+  });
+}
+
+export function endRunningSession(id: string): Promise<void> {
+  return invoke("end_running_session", { id });
 }
 
 export function openTerminal(

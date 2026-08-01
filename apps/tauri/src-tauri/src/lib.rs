@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use platform::AppPaths;
 use serde::{Deserialize, Serialize};
 use ssh_client_core::Result as CoreResult;
-use ssh_client_core::model::{KnownHostKey, PtySize, SecretString};
+use ssh_client_core::model::{
+    KnownHostKey, ProjectLocation, PtySize, SecretString, builtin_agents,
+};
 use ssh_client_core::ssh::{
     Action, AlwaysApprove, ApprovalGate, HostKeyDecision, HostKeyPolicy, PresentedHostKey,
     PtyHandle, SessionManager,
@@ -18,7 +20,9 @@ use ssh_client_core::ssh_config::{
     SshConfigHost as CoreSshConfigHost, SshConfigPreview as CoreSshConfigPreview, parse_ssh_config,
 };
 use ssh_client_core::vault::{
-    CreateHostRequest, HostSummary as CoreHostSummary, Vault, VaultRepository, VaultStatus,
+    CreateHostRequest, CreateProjectRequest, HostSummary as CoreHostSummary,
+    ProjectSummary as CoreProjectSummary, RunningSessionSummary as CoreRunningSessionSummary,
+    Vault, VaultRepository, VaultStatus,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex, oneshot};
@@ -83,6 +87,108 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             color: host.color.clone(),
             shell_integration: host.shell_integration
                 != ssh_client_core::model::ShellIntegration::Disabled,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+enum ProjectLocationDto {
+    Local { path: String },
+    #[allow(non_snake_case)]
+    Remote { hostId: String, path: String },
+}
+
+impl From<&ProjectLocation> for ProjectLocationDto {
+    fn from(location: &ProjectLocation) -> Self {
+        match location {
+            ProjectLocation::Local { path } => Self::Local { path: path.clone() },
+            ProjectLocation::Remote { host_id, path } => Self::Remote {
+                hostId: host_id.to_string(),
+                path: path.clone(),
+            },
+        }
+    }
+}
+
+impl TryFrom<ProjectLocationDto> for ProjectLocation {
+    type Error = String;
+
+    fn try_from(value: ProjectLocationDto) -> Result<Self, Self::Error> {
+        match value {
+            ProjectLocationDto::Local { path } => Ok(Self::Local { path }),
+            ProjectLocationDto::Remote { hostId, path } => Ok(Self::Remote {
+                host_id: parse_uuid(&hostId, "host")?,
+                path,
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct ProjectSummaryDto {
+    id: String,
+    name: String,
+    location: ProjectLocationDto,
+    default_agent: Option<String>,
+    last_opened: Option<String>,
+}
+
+impl From<&CoreProjectSummary> for ProjectSummaryDto {
+    fn from(project: &CoreProjectSummary) -> Self {
+        Self {
+            id: project.id.to_string(),
+            name: project.name.clone(),
+            location: ProjectLocationDto::from(&project.location),
+            default_agent: project.default_agent.clone(),
+            last_opened: project.last_opened.map(|ts| ts.to_rfc3339()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct AgentSpecDto {
+    id: String,
+    name: String,
+    command: String,
+    args: Vec<String>,
+    persistent: bool,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct RunningSessionSummaryDto {
+    id: String,
+    project_id: String,
+    project_name: String,
+    host_id: String,
+    host_label: String,
+    agent_id: Option<String>,
+    mux_session: String,
+    started_at: String,
+    last_attached_at: String,
+    started_on_device: String,
+}
+
+impl From<&CoreRunningSessionSummary> for RunningSessionSummaryDto {
+    fn from(session: &CoreRunningSessionSummary) -> Self {
+        Self {
+            id: session.id.to_string(),
+            project_id: session.project_id.to_string(),
+            project_name: session.project_name.clone(),
+            host_id: session.host_id.to_string(),
+            host_label: session.host_label.clone(),
+            agent_id: session.agent_id.clone(),
+            mux_session: session.mux_session.clone(),
+            started_at: session.started_at.to_rfc3339(),
+            last_attached_at: session.last_attached_at.to_rfc3339(),
+            started_on_device: session.started_on_device.clone(),
         }
     }
 }
@@ -208,6 +314,14 @@ struct HostMutation {
     /// When false, skip OSC 133 wrapper. Default true (Auto).
     #[serde(default)]
     shell_integration: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectMutation {
+    name: String,
+    location: ProjectLocationDto,
+    default_agent: Option<String>,
 }
 
 struct PromptBroker {
@@ -367,6 +481,159 @@ async fn vault_lock(app: AppHandle, state: State<'_, AppState>) -> Result<VaultS
 async fn list_hosts(state: State<'_, AppState>) -> Result<Vec<HostSummaryDto>, String> {
     let hosts = state.repo.list_hosts().await.map_err(redacted_error)?;
     Ok(hosts.iter().map(HostSummaryDto::from).collect())
+}
+
+#[tauri::command]
+async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummaryDto>, String> {
+    let projects = state.repo.list_projects().await.map_err(redacted_error)?;
+    Ok(projects.iter().map(ProjectSummaryDto::from).collect())
+}
+
+#[tauri::command]
+async fn list_agents() -> Result<Vec<AgentSpecDto>, String> {
+    Ok(builtin_agents()
+        .into_iter()
+        .map(|agent| AgentSpecDto {
+            id: agent.id,
+            name: agent.name,
+            command: agent.command,
+            args: agent.args,
+            persistent: agent.persistent,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn create_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: ProjectMutation,
+) -> Result<ProjectSummaryDto, String> {
+    let created = state
+        .repo
+        .create_project(CreateProjectRequest {
+            name: project.name,
+            location: ProjectLocation::try_from(project.location)?,
+            default_agent: project.default_agent,
+        })
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(ProjectSummaryDto::from(&created))
+}
+
+#[tauri::command]
+async fn update_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    project: ProjectMutation,
+) -> Result<ProjectSummaryDto, String> {
+    let project_id = parse_uuid(&id, "project")?;
+    let updated = state
+        .repo
+        .update_project(
+            project_id,
+            CreateProjectRequest {
+                name: project.name,
+                location: ProjectLocation::try_from(project.location)?,
+                default_agent: project.default_agent,
+            },
+        )
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(ProjectSummaryDto::from(&updated))
+}
+
+#[tauri::command]
+async fn delete_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let project_id = parse_uuid(&id, "project")?;
+    state
+        .repo
+        .delete_project(project_id)
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(())
+}
+
+#[tauri::command]
+async fn touch_project_opened(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ProjectSummaryDto, String> {
+    let project_id = parse_uuid(&id, "project")?;
+    let updated = state
+        .repo
+        .touch_project_opened(project_id)
+        .await
+        .map_err(redacted_error)?;
+    Ok(ProjectSummaryDto::from(&updated))
+}
+
+#[tauri::command]
+async fn list_running_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<RunningSessionSummaryDto>, String> {
+    let sessions = state
+        .repo
+        .list_running_sessions()
+        .await
+        .map_err(redacted_error)?;
+    Ok(sessions
+        .iter()
+        .map(RunningSessionSummaryDto::from)
+        .collect())
+}
+
+#[tauri::command]
+async fn mark_project_running(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    host_id: String,
+    agent_id: Option<String>,
+) -> Result<RunningSessionSummaryDto, String> {
+    let project = parse_uuid(&project_id, "project")?;
+    let host = parse_uuid(&host_id, "host")?;
+    let marked = state
+        .repo
+        .mark_project_running(project, host, agent_id, local_device_label())
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(RunningSessionSummaryDto::from(&marked))
+}
+
+#[tauri::command]
+async fn end_running_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let session_id = parse_uuid(&id, "running session")?;
+    state
+        .repo
+        .end_running_session(session_id)
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(())
+}
+
+fn local_device_label() -> String {
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "device".into())
 }
 
 #[tauri::command]
@@ -887,6 +1154,15 @@ pub fn run() {
             vault_change_password,
             vault_lock,
             list_hosts,
+            list_projects,
+            list_agents,
+            create_project,
+            update_project,
+            delete_project,
+            touch_project_opened,
+            list_running_sessions,
+            mark_project_running,
+            end_running_session,
             preview_ssh_config,
             import_ssh_config,
             create_host,
@@ -936,6 +1212,10 @@ mod tests {
     fn export_bindings() {
         let cfg = ts_rs::Config::default();
         HostSummaryDto::export_all(&cfg).unwrap();
+        ProjectSummaryDto::export_all(&cfg).unwrap();
+        ProjectLocationDto::export_all(&cfg).unwrap();
+        AgentSpecDto::export_all(&cfg).unwrap();
+        RunningSessionSummaryDto::export_all(&cfg).unwrap();
         VaultStatusDto::export_all(&cfg).unwrap();
         SshConfigHostDto::export_all(&cfg).unwrap();
         SshConfigPreviewDto::export_all(&cfg).unwrap();

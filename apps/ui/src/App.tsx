@@ -17,8 +17,14 @@ import {
   closeSftp,
   closeTerminal,
   deleteHost,
+  deleteProject,
+  endRunningSession,
+  listAgents,
   listHosts,
+  listProjects,
+  listRunningSessions,
   localHome,
+  markProjectRunning,
   onCurrentWebviewCloseRequested,
   onHostKeyPrompt,
   onSyncCompleted,
@@ -32,13 +38,18 @@ import {
   respondHostKey,
   sendTerminalInput,
   syncNow,
+  touchProjectOpened,
   vaultLock,
   vaultStatus,
   type HostKeyPrompt,
   type HostSummaryDto,
+  type ProjectSummaryDto,
+  type RunningSessionSummaryDto,
   type TerminalEvent,
   type VaultStatusDto,
 } from "./lib/ipc";
+import { ProjectFormModal } from "./projects/ProjectFormModal";
+import { projectLaunchScript, sleep } from "./projects/launch";
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
   createTerminal,
@@ -183,6 +194,10 @@ function Workspace({
   onStatus: (status: VaultStatusDto) => void;
 }): React.JSX.Element {
   const [hosts, setHosts] = useState<HostSummaryDto[]>([]);
+  const [projects, setProjects] = useState<ProjectSummaryDto[]>([]);
+  const [runningSessions, setRunningSessions] = useState<
+    RunningSessionSummaryDto[]
+  >([]);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [layout, setLayout] = useState<LayoutNode | null>(null);
@@ -193,13 +208,19 @@ function Workspace({
   const outputHandlers = useRef(new Map<string, (event: TerminalEvent) => void>());
   const [connectingHostId, setConnectingHostId] = useState<string>();
   const [openingFilesHostId, setOpeningFilesHostId] = useState<string>();
+  const [openingProjectId, setOpeningProjectId] = useState<string>();
   const [openingLocal, setOpeningLocal] = useState(false);
   const [error, setError] = useState<string>();
   const [prompt, setPrompt] = useState<HostKeyPrompt>();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editor, setEditor] = useState<HostSummaryDto | "new">();
+  const [projectEditor, setProjectEditor] = useState<
+    ProjectSummaryDto | "new"
+  >();
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<HostSummaryDto>();
+  const [pendingDeleteProject, setPendingDeleteProject] =
+    useState<ProjectSummaryDto>();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -228,6 +249,12 @@ function Workspace({
     listHosts()
       .then(setHosts)
       .catch((reason: unknown) => setError(String(reason)));
+    listProjects()
+      .then(setProjects)
+      .catch((reason: unknown) => setError(String(reason)));
+    listRunningSessions()
+      .then(setRunningSessions)
+      .catch((reason: unknown) => setError(String(reason)));
     let unlistenPrompt: (() => void) | undefined;
     let unlistenSync: (() => void) | undefined;
     onHostKeyPrompt(setPrompt).then((fn) => {
@@ -236,6 +263,12 @@ function Workspace({
     onSyncCompleted(() => {
       void listHosts()
         .then(setHosts)
+        .catch((reason: unknown) => setError(String(reason)));
+      void listProjects()
+        .then(setProjects)
+        .catch((reason: unknown) => setError(String(reason)));
+      void listRunningSessions()
+        .then(setRunningSessions)
         .catch((reason: unknown) => setError(String(reason)));
     }).then((fn) => {
       unlistenSync = fn;
@@ -279,8 +312,14 @@ function Workspace({
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         void syncNow()
-          .then(() => listHosts())
-          .then(setHosts)
+          .then(() =>
+            Promise.all([listHosts(), listProjects(), listRunningSessions()]),
+          )
+          .then(([nextHosts, nextProjects, nextSessions]) => {
+            setHosts(nextHosts);
+            setProjects(nextProjects);
+            setRunningSessions(nextSessions);
+          })
           .catch(() => undefined);
       }, 500);
     }
@@ -555,6 +594,125 @@ function Workspace({
     }
   }
 
+  async function openProject(project: ProjectSummaryDto): Promise<void> {
+    setError(undefined);
+    setOpeningProjectId(project.id);
+    setDrawerOpen(false);
+
+    try {
+      const agents = await listAgents();
+      const agent = project.defaultAgent
+        ? agents.find((entry) => entry.id === project.defaultAgent)
+        : undefined;
+
+      let sessionId: string;
+      let hostId: string;
+      let color: string | null | undefined;
+      let kind: Tab["kind"];
+
+      if (project.location.kind === "local") {
+        sessionId = await openLocalTerminal(80, 24);
+        hostId = "local";
+        color = "#8B8B8B";
+        kind = "local";
+      } else {
+        const host = hosts.find(
+          (entry) =>
+            project.location.kind === "remote" &&
+            entry.id === project.location.hostId,
+        );
+        if (!host) {
+          throw new Error("Project host is missing from the vault.");
+        }
+        sessionId = await openTerminal(host.id, 80, 24);
+        hostId = host.id;
+        color = host.color;
+        kind = "terminal";
+      }
+
+      wireTerminal(sessionId);
+      attachOutput(sessionId, "Connection closed.");
+      setTabs((current) => [
+        ...current,
+        {
+          sessionId,
+          hostId,
+          title: project.name,
+          kind,
+          connected: true,
+          color,
+        },
+      ]);
+      setLayout((current) => current ?? leaf(sessionId));
+      setActiveId(sessionId);
+
+      await sleep(450);
+      const script = projectLaunchScript({
+        projectId: project.id,
+        path: project.location.path,
+        agent,
+        remote: project.location.kind === "remote",
+      });
+      await sendTerminalInput(sessionId, new TextEncoder().encode(script));
+
+      const touched = await touchProjectOpened(project.id);
+      setProjects((current) => {
+        const index = current.findIndex((item) => item.id === touched.id);
+        if (index === -1) return [...current, touched];
+        const next = [...current];
+        next[index] = touched;
+        return next;
+      });
+
+      if (
+        project.location.kind === "remote" &&
+        agent?.persistent &&
+        hostId !== "local"
+      ) {
+        const marked = await markProjectRunning(
+          project.id,
+          hostId,
+          agent.id,
+        );
+        setRunningSessions((current) => {
+          const index = current.findIndex((item) => item.id === marked.id);
+          if (index === -1) return [marked, ...current];
+          const next = [...current];
+          next[index] = marked;
+          return next;
+        });
+      }
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setOpeningProjectId(undefined);
+    }
+  }
+
+  async function reattachSession(
+    session: RunningSessionSummaryDto,
+  ): Promise<void> {
+    const project = projects.find((entry) => entry.id === session.projectId);
+    if (!project) {
+      setError("Project for that running session is missing from the vault.");
+      return;
+    }
+    await openProject(project);
+  }
+
+  async function clearRunningSession(
+    session: RunningSessionSummaryDto,
+  ): Promise<void> {
+    try {
+      await endRunningSession(session.id);
+      setRunningSessions((current) =>
+        current.filter((item) => item.id !== session.id),
+      );
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function openFiles(host: HostSummaryDto): Promise<void> {
     setError(undefined);
     setOpeningFilesHostId(host.id);
@@ -775,6 +933,21 @@ function Workspace({
     }
   }
 
+  async function confirmDeleteProject(): Promise<void> {
+    if (!pendingDeleteProject) return;
+    const project = pendingDeleteProject;
+    setPendingDeleteProject(undefined);
+    try {
+      await deleteProject(project.id);
+      setProjects((current) => current.filter((item) => item.id !== project.id));
+      setRunningSessions((current) =>
+        current.filter((item) => item.projectId !== project.id),
+      );
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && zoomedIdRef.current) {
@@ -854,11 +1027,14 @@ function Workspace({
       >
         <Sidebar
           hosts={hosts}
+          projects={projects}
+          runningSessions={runningSessions}
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           recoveryAvailable={status.recoveryAvailable}
           connectingHostId={connectingHostId}
           openingFilesHostId={openingFilesHostId}
+          openingProjectId={openingProjectId}
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           onConnect={(host) => void connect(host)}
           onFiles={(host) => void openFiles(host)}
@@ -866,6 +1042,12 @@ function Workspace({
           onDelete={setPendingDelete}
           onAddHost={() => setEditor("new")}
           onImport={() => setImportOpen(true)}
+          onOpenProject={(project) => void openProject(project)}
+          onEditProject={setProjectEditor}
+          onDeleteProject={setPendingDeleteProject}
+          onAddProject={() => setProjectEditor("new")}
+          onReattach={(session) => void reattachSession(session)}
+          onEndSession={(session) => void clearRunningSession(session)}
           onLock={() => void lockNow()}
         />
 
@@ -1053,6 +1235,32 @@ function Workspace({
         }
       />
 
+      <Dialog
+        open={Boolean(pendingDeleteProject)}
+        onOpenChange={(next) => {
+          if (!next) setPendingDeleteProject(undefined);
+        }}
+        kicker="Delete project"
+        title={`Remove ${pendingDeleteProject?.name ?? ""}?`}
+        description="The project record will be tombstoned in the vault. Open terminals are left alone."
+        footer={
+          <>
+            <Button
+              variant="subtle"
+              onClick={() => setPendingDeleteProject(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => void confirmDeleteProject()}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      />
+
       {editor && (
         <HostFormModal
           initial={editor === "new" ? undefined : editor}
@@ -1063,6 +1271,23 @@ function Workspace({
               if (index === -1) return [...current, host];
               const next = [...current];
               next[index] = host;
+              return next;
+            });
+          }}
+        />
+      )}
+
+      {projectEditor && (
+        <ProjectFormModal
+          initial={projectEditor === "new" ? undefined : projectEditor}
+          hosts={hosts}
+          onClose={() => setProjectEditor(undefined)}
+          onSaved={(project) => {
+            setProjects((current) => {
+              const index = current.findIndex((item) => item.id === project.id);
+              if (index === -1) return [...current, project];
+              const next = [...current];
+              next[index] = project;
               return next;
             });
           }}
@@ -1093,10 +1318,18 @@ function Workspace({
             void listHosts()
               .then(setHosts)
               .catch((reason: unknown) => setError(String(reason)));
+            void listProjects()
+              .then(setProjects)
+              .catch((reason: unknown) => setError(String(reason)));
+            void listRunningSessions()
+              .then(setRunningSessions)
+              .catch((reason: unknown) => setError(String(reason)));
           }}
           onVaultReplaced={() => {
             setSyncOpen(false);
             setHosts([]);
+            setProjects([]);
+            setRunningSessions([]);
             void vaultStatus()
               .then(onStatus)
               .catch((reason: unknown) => setError(String(reason)));

@@ -251,9 +251,9 @@ off. When on, the password rides the same item encryption as other vault items �
 the sync server still learns nothing. This does **not** change the private-key
 policy above.
 
-**Planned (M8):** first-class `Project` (local or remote location + default agent)
+**Shipped (M8):** first-class `Project` (local or remote location + default agent)
 and `AgentSpec` (launch command, env, `persistent` multiplexer wrap). Projects
-sync like hosts. Details in [`ROADMAP-v2.md`](ROADMAP-v2.md).
+and running-session markers sync like hosts. See [`docs/M8.md`](docs/M8.md).
 
 ---
 
@@ -399,6 +399,7 @@ local and over SSH matches Terminal.app / Ghostty. ✅ See `docs/M7.md`.
 **M8 — projects and agents.** First-class `Project` + `AgentSpec`; open project =
 connect → `cd` → launch agent; persistent remote agents via `tmux`/`zellij`
 (do not build a multiplexer); running-sessions view; cross-device reattach.
+✅ See `docs/M8.md`.
 
 **M9 — Assist.** `Cmd/Ctrl+I` → NL to command in the input (never auto-exec);
 pluggable providers; API keys as vault items with `sync_secret`; explain-failure
