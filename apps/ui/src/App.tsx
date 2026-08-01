@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CommandPalette } from "./components/CommandPalette";
 import { Logo } from "./components/Logo";
 import { Sidebar } from "./components/Sidebar";
@@ -20,6 +22,7 @@ import {
   localHome,
   onHostKeyPrompt,
   onSyncCompleted,
+  onTerminalEvent,
   onVaultLocked,
   onVaultStatus,
   openLocalTerminal,
@@ -44,7 +47,25 @@ import {
   writeTerminal,
   writeTerminalMessage,
 } from "./terminal/registry";
+import { SplitPanes } from "./terminal/SplitPanes";
 import { TerminalView } from "./terminal/TerminalView";
+import {
+  type LayoutNode,
+  leaf,
+  splitLeaf,
+  removeSession as removeFromLayout,
+  containsSession,
+} from "./terminal/layout";
+import {
+  currentWindowLabel,
+  isMainWindow,
+  moveTabsToNewWindow,
+  openWorkspaceWindow,
+  takePendingTransfer,
+  workspaceBus,
+  type WorkspaceTab,
+  type WorkspaceTransfer,
+} from "./terminal/windows";
 import { ChangePasswordModal } from "./vault/ChangePasswordModal";
 import { VaultGate } from "./vault/VaultGate";
 
@@ -57,6 +78,8 @@ interface Tab {
   color?: string | null;
   remotePath?: string;
   localPath?: string;
+  /** Last OSC 7 working directory, when reported. */
+  cwd?: string;
 }
 
 export default function App(): React.JSX.Element {
@@ -162,6 +185,12 @@ function Workspace({
   const [hosts, setHosts] = useState<HostSummaryDto[]>([]);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeId, setActiveId] = useState<string>();
+  const [layout, setLayout] = useState<LayoutNode | null>(null);
+  const [zoomedId, setZoomedId] = useState<string>();
+  const [narrow, setNarrow] = useState(() =>
+    window.matchMedia("(max-width: 767px)").matches,
+  );
+  const outputHandlers = useRef(new Map<string, (event: TerminalEvent) => void>());
   const [connectingHostId, setConnectingHostId] = useState<string>();
   const [openingFilesHostId, setOpeningFilesHostId] = useState<string>();
   const [openingLocal, setOpeningLocal] = useState(false);
@@ -174,10 +203,26 @@ function Workspace({
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => window.localStorage.getItem("tethra.sidebar") === "rail",
   );
+
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const zoomedIdRef = useRef(zoomedId);
+  zoomedIdRef.current = zoomedId;
+
+  useEffect(() => {
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     listHosts()
@@ -199,6 +244,31 @@ function Workspace({
       unlistenPrompt?.();
       unlistenSync?.();
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onTerminalEvent((sessionId, event) => {
+      outputHandlers.current.get(sessionId)?.(event);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, []);
 
   useEffect(() => {
@@ -233,10 +303,13 @@ function Workspace({
 
   useEffect(() => {
     if (!status.unlocked) {
+      setLayout(null);
+      setZoomedId(undefined);
       setTabs((current) => {
         for (const tab of current) {
           if (tab.kind === "terminal") {
             disposeTerminal(tab.sessionId);
+            outputHandlers.current.delete(tab.sessionId);
           }
         }
         const local = current.filter((tab) => tab.kind === "local");
@@ -262,21 +335,101 @@ function Workspace({
     );
   }, [sidebarCollapsed]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() === "b") {
-        event.preventDefault();
-        toggleSidebar();
+  function adoptTransfer(transfer: WorkspaceTransfer): void {
+    setTabs((current) => {
+      const byId = new Map(current.map((tab) => [tab.sessionId, tab]));
+      for (const tab of transfer.tabs) {
+        byId.set(tab.sessionId, tab);
       }
-      if (event.key.toLowerCase() === "k" && status.unlocked) {
-        event.preventDefault();
-        setPaletteOpen(true);
+      return [...byId.values()];
+    });
+
+    if (transfer.layoutJson) {
+      try {
+        setLayout(JSON.parse(transfer.layoutJson) as LayoutNode);
+      } catch {
+        setLayout(null);
+      }
+    } else {
+      setLayout(null);
+    }
+
+    if (transfer.activeId) setActiveId(transfer.activeId);
+    if (transfer.zoomedId) setZoomedId(transfer.zoomedId);
+
+    for (const tab of transfer.tabs) {
+      if (tab.kind === "terminal" || tab.kind === "local") {
+        wireTerminal(tab.sessionId);
+        attachOutput(
+          tab.sessionId,
+          tab.kind === "local" ? "Local shell closed." : "Connection closed.",
+        );
+      }
+    }
+  }
+
+  useEffect(() => {
+    const label = currentWindowLabel();
+    const bus = workspaceBus();
+
+    bus.onmessage = (event) => {
+      const transfer = event.data as WorkspaceTransfer;
+      if (transfer.fromLabel === label) return;
+      if (transfer.type === "adopt" && transfer.toLabel === label) {
+        adoptTransfer(transfer);
+      } else if (transfer.type === "reclaim" && isMainWindow()) {
+        adoptTransfer(transfer);
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [status.unlocked]);
+
+    const pending = takePendingTransfer(label);
+    if (pending) adoptTransfer(pending);
+
+    return () => {
+      bus.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMainWindow()) return;
+
+    let unlisten: (() => void) | undefined;
+    const win = getCurrentWebviewWindow();
+
+    void win
+      .onCloseRequested(async (event) => {
+        event.preventDefault();
+
+        const currentTabs = tabsRef.current;
+        const currentLayout = layoutRef.current;
+        const bus = workspaceBus();
+        bus.postMessage({
+          type: "reclaim",
+          fromLabel: currentWindowLabel(),
+          tabs: currentTabs as WorkspaceTab[],
+          layoutJson: currentLayout ? JSON.stringify(currentLayout) : null,
+          activeId: activeIdRef.current,
+          zoomedId: zoomedIdRef.current,
+        } satisfies WorkspaceTransfer);
+        bus.close();
+
+        for (const tab of currentTabs) {
+          if (tab.kind === "terminal" || tab.kind === "local") {
+            disposeTerminal(tab.sessionId);
+            outputHandlers.current.delete(tab.sessionId);
+          }
+        }
+
+        await win.destroy();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.sessionId === activeId),
@@ -291,40 +444,27 @@ function Workspace({
     }
   }
 
-  /** Buffers output arriving before the xterm instance exists. */
-  function makeOutputSink(closedMessage: string) {
-    const queued: TerminalEvent[] = [];
-    let sink: ((event: TerminalEvent) => void) | undefined;
-
-    return {
-      onOutput: (event: TerminalEvent) => {
-        if (sink) sink(event);
-        else queued.push(event);
-      },
-      attach: (sessionId: string) => {
-        sink = (event) => {
-          if (event.kind === "data") {
-            writeTerminal(sessionId, event.data);
-            if (event.dropped) {
-              writeTerminalMessage(
-                sessionId,
-                "\x1b[33mSome output was dropped because rendering fell behind.\x1b[0m",
-              );
-            }
-          } else {
-            setTabs((current) =>
-              current.map((tab) =>
-                tab.sessionId === sessionId
-                  ? { ...tab, connected: false }
-                  : tab,
-              ),
-            );
-            writeTerminalMessage(sessionId, `\x1b[90m${closedMessage}\x1b[0m`);
-          }
-        };
-        queued.splice(0).forEach(sink);
-      },
-    };
+  function attachOutput(sessionId: string, closedMessage: string): void {
+    outputHandlers.current.set(sessionId, (event) => {
+      if (event.kind === "data") {
+        writeTerminal(sessionId, decodeBase64(event.data));
+        if (event.dropped) {
+          writeTerminalMessage(
+            sessionId,
+            "\x1b[33mSome output was dropped because rendering fell behind.\x1b[0m",
+          );
+        }
+      } else if (event.kind === "block") {
+        // OSC 133 markers — reserved for Assist / block UI (M8/M9).
+      } else {
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.sessionId === sessionId ? { ...tab, connected: false } : tab,
+          ),
+        );
+        writeTerminalMessage(sessionId, `\x1b[90m${closedMessage}\x1b[0m`);
+      }
+    });
   }
 
   function wireTerminal(sessionId: string): void {
@@ -337,7 +477,27 @@ function Workspace({
       onResize: (cols, rows) => {
         void resizeTerminal(sessionId, cols, rows);
       },
+      onCwd: (cwd) => {
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.sessionId === sessionId ? { ...tab, cwd } : tab,
+          ),
+        );
+      },
     });
+  }
+
+  function selectTab(sessionId: string): void {
+    setActiveId(sessionId);
+    setZoomedId((current) =>
+      current && current !== sessionId ? undefined : current,
+    );
+    setLayout((current) => {
+      if (current && containsSession(current, sessionId)) return current;
+      return leaf(sessionId);
+    });
+    const tab = tabs.find((item) => item.sessionId === sessionId);
+    if (tab && tab.kind !== "sftp") focusTerminal(sessionId);
   }
 
   async function connect(host: HostSummaryDto): Promise<void> {
@@ -345,10 +505,10 @@ function Workspace({
     setConnectingHostId(host.id);
     setDrawerOpen(false);
 
-    const pump = makeOutputSink("Connection closed.");
     try {
-      const sessionId = await openTerminal(host.id, 80, 24, pump.onOutput);
+      const sessionId = await openTerminal(host.id, 80, 24);
       wireTerminal(sessionId);
+      attachOutput(sessionId, "Connection closed.");
       setTabs((current) => [
         ...current,
         {
@@ -360,8 +520,8 @@ function Workspace({
           color: host.color,
         },
       ]);
+      setLayout((current) => current ?? leaf(sessionId));
       setActiveId(sessionId);
-      pump.attach(sessionId);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -374,10 +534,10 @@ function Workspace({
     setOpeningLocal(true);
     setDrawerOpen(false);
 
-    const pump = makeOutputSink("Local shell closed.");
     try {
-      const sessionId = await openLocalTerminal(80, 24, pump.onOutput);
+      const sessionId = await openLocalTerminal(80, 24);
       wireTerminal(sessionId);
+      attachOutput(sessionId, "Local shell closed.");
       setTabs((current) => [
         ...current,
         {
@@ -389,8 +549,8 @@ function Workspace({
           color: "#8B8B8B",
         },
       ]);
+      setLayout((current) => current ?? leaf(sessionId));
       setActiveId(sessionId);
-      pump.attach(sessionId);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -420,6 +580,7 @@ function Workspace({
           localPath: home,
         },
       ]);
+      setLayout(() => leaf(opened.sessionId));
       setActiveId(opened.sessionId);
     } catch (reason) {
       setError(String(reason));
@@ -428,8 +589,113 @@ function Workspace({
     }
   }
 
+  async function splitPane(
+    orientation: "horizontal" | "vertical",
+  ): Promise<void> {
+    if (
+      !activeTab ||
+      (activeTab.kind !== "terminal" && activeTab.kind !== "local")
+    ) {
+      return;
+    }
+
+    setError(undefined);
+    try {
+      let sessionId: string;
+      let newTab: Tab;
+
+      if (activeTab.kind === "terminal") {
+        sessionId = await openTerminal(activeTab.hostId, 80, 24);
+        const host = hosts.find((entry) => entry.id === activeTab.hostId);
+        newTab = {
+          sessionId,
+          hostId: activeTab.hostId,
+          title: host?.label ?? activeTab.title,
+          kind: "terminal",
+          connected: true,
+          color: host?.color ?? activeTab.color,
+        };
+      } else {
+        sessionId = await openLocalTerminal(80, 24);
+        newTab = {
+          sessionId,
+          hostId: "local",
+          title: "Local",
+          kind: "local",
+          connected: true,
+          color: "#8B8B8B",
+        };
+      }
+
+      wireTerminal(sessionId);
+      attachOutput(
+        sessionId,
+        activeTab.kind === "local" ? "Local shell closed." : "Connection closed.",
+      );
+      setTabs((current) => [...current, newTab]);
+      setLayout((current) =>
+        splitLeaf(
+          current ?? leaf(activeTab.sessionId),
+          activeTab.sessionId,
+          sessionId,
+          orientation,
+        ),
+      );
+      setActiveId(sessionId);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  function toggleZoom(): void {
+    if (!activeId) return;
+    const layoutIsSplit = (layout ?? leaf(activeId)).type === "split";
+    if (!zoomedId && !layoutIsSplit) return;
+    setZoomedId((current) => (current === activeId ? undefined : activeId));
+  }
+
+  function openNewWindow(): void {
+    void openWorkspaceWindow();
+  }
+
+  async function moveActiveToNewWindow(): Promise<void> {
+    if (!activeTab) return;
+
+    const tab = activeTab;
+    await moveTabsToNewWindow({
+      tabs: [tab as WorkspaceTab],
+      layoutJson: JSON.stringify(leaf(tab.sessionId)),
+      activeId: tab.sessionId,
+      zoomedId: zoomedId === tab.sessionId ? tab.sessionId : undefined,
+    });
+
+    setTabs((current) => {
+      const index = current.findIndex(
+        (entry) => entry.sessionId === tab.sessionId,
+      );
+      const next = current.filter((entry) => entry.sessionId !== tab.sessionId);
+      if (activeId === tab.sessionId) {
+        setActiveId(next[Math.max(0, index - 1)]?.sessionId);
+      }
+      return next;
+    });
+    setLayout((current) =>
+      current ? removeFromLayout(current, tab.sessionId) : null,
+    );
+    if (zoomedId === tab.sessionId) setZoomedId(undefined);
+
+    if (tab.kind === "terminal" || tab.kind === "local") {
+      disposeTerminal(tab.sessionId);
+      outputHandlers.current.delete(tab.sessionId);
+    }
+  }
+
   async function closeTab(sessionId: string): Promise<void> {
     const tab = tabs.find((entry) => entry.sessionId === sessionId);
+    setLayout((current) =>
+      current ? removeFromLayout(current, sessionId) : null,
+    );
+    if (zoomedId === sessionId) setZoomedId(undefined);
     setTabs((current) => {
       const index = current.findIndex((entry) => entry.sessionId === sessionId);
       const next = current.filter((entry) => entry.sessionId !== sessionId);
@@ -438,6 +704,7 @@ function Workspace({
       }
       return next;
     });
+    outputHandlers.current.delete(sessionId);
     if (tab?.kind === "terminal" || tab?.kind === "local") {
       disposeTerminal(sessionId);
       await closeTerminal(sessionId).catch(() => undefined);
@@ -461,6 +728,7 @@ function Workspace({
       for (const tab of tabs) {
         if (tab.kind === "terminal") {
           disposeTerminal(tab.sessionId);
+          outputHandlers.current.delete(tab.sessionId);
           await closeTerminal(tab.sessionId).catch(() => undefined);
         } else if (tab.kind === "sftp") {
           await closeSftp(tab.sessionId).catch(() => undefined);
@@ -468,6 +736,8 @@ function Workspace({
       }
       const localTabs = tabs.filter((tab) => tab.kind === "local");
       setTabs(localTabs);
+      setLayout(null);
+      setZoomedId(undefined);
       setActiveId(localTabs[0]?.sessionId);
       const next = await vaultLock();
       onStatus(next);
@@ -487,16 +757,59 @@ function Workspace({
       for (const tab of related) {
         if (tab.kind === "terminal") {
           disposeTerminal(tab.sessionId);
+          outputHandlers.current.delete(tab.sessionId);
           await closeTerminal(tab.sessionId).catch(() => undefined);
         } else {
           await closeSftp(tab.sessionId).catch(() => undefined);
         }
       }
       setTabs((current) => current.filter((tab) => tab.hostId !== host.id));
+      setLayout((current) => {
+        if (!current) return null;
+        let next: LayoutNode | null = current;
+        for (const tab of related) {
+          next = removeFromLayout(next, tab.sessionId);
+          if (!next) break;
+        }
+        return next;
+      });
     } catch (reason) {
       setError(String(reason));
     }
   }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && zoomedIdRef.current) {
+        event.preventDefault();
+        setZoomedId(undefined);
+        return;
+      }
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        toggleSidebar();
+      }
+      if (event.key.toLowerCase() === "k" && status.unlocked) {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+      if (event.key === "\\") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          void splitPane("vertical");
+        } else {
+          void splitPane("horizontal");
+        }
+      }
+      if (event.key === "Enter" && event.shiftKey) {
+        event.preventDefault();
+        toggleZoom();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [status.unlocked]);
 
   const connectionLabel = activeTab?.connected
     ? activeTab.kind === "sftp"
@@ -504,15 +817,30 @@ function Workspace({
       : "Connected"
     : "Vault unlocked";
 
+  const effectiveLayout =
+    layout ?? (activeId ? leaf(activeId) : tabs[0] ? leaf(tabs[0].sessionId) : null);
+  const canZoom = Boolean(
+    zoomedId || (effectiveLayout && effectiveLayout.type === "split"),
+  );
+
   return (
     <div className="flex size-full flex-col bg-base">
       <TitleBar
         connectionLabel={connectionLabel}
         connected={Boolean(activeTab?.connected)}
         openingLocal={openingLocal}
+        canSplit={Boolean(activeTab && activeTab.kind !== "sftp")}
+        zoomed={Boolean(zoomedId)}
+        canZoom={canZoom}
+        appVersion={appVersion}
         onToggleSidebar={toggleSidebar}
         onOpenPalette={() => setPaletteOpen(true)}
         onOpenLocal={() => void openLocal()}
+        onSplitRight={() => void splitPane("horizontal")}
+        onSplitDown={() => void splitPane("vertical")}
+        onToggleZoom={() => toggleZoom()}
+        onNewWindow={() => openNewWindow()}
+        onMoveToNewWindow={() => void moveActiveToNewWindow()}
         onSync={() => setSyncOpen(true)}
         onChangePassword={() => setChangePasswordOpen(true)}
         onAbout={() => setAboutOpen(true)}
@@ -557,16 +885,17 @@ function Workspace({
             <TabBar
               tabs={tabs}
               activeId={activeId}
-              onSelect={(sessionId) => {
-                setActiveId(sessionId);
-                const tab = tabs.find((item) => item.sessionId === sessionId);
-                if (tab && tab.kind !== "sftp") focusTerminal(sessionId);
-              }}
+              onSelect={selectTab}
               onClose={(sessionId) => void closeTab(sessionId)}
             />
           )}
 
           <section className="relative min-h-0 flex-1">
+            {zoomedId && (
+              <div className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-line bg-elevated/90 px-2 py-0.5 text-micro text-fg-muted">
+                Zoomed — Esc to exit
+              </div>
+            )}
             {tabs.length === 0 ? (
               <EmptyState
                 hosts={hosts}
@@ -579,23 +908,41 @@ function Workspace({
                 onLocal={() => void openLocal()}
               />
             ) : (
-              tabs.map((tab) =>
-                tab.kind !== "sftp" ? (
-                  <TerminalView
-                    key={tab.sessionId}
-                    sessionId={tab.sessionId}
-                    active={tab.sessionId === activeId}
-                    color={tab.color ?? "#4C8DF6"}
-                  />
-                ) : (
-                  <SftpBrowser
-                    key={tab.sessionId}
-                    sessionId={tab.sessionId}
-                    initialRemotePath={tab.remotePath ?? "."}
-                    initialLocalPath={tab.localPath ?? "/"}
-                    active={tab.sessionId === activeId}
-                  />
-                ),
+              effectiveLayout && (
+                <SplitPanes
+                  layout={effectiveLayout}
+                  focusedId={activeId}
+                  zoomedId={zoomedId}
+                  narrow={narrow}
+                  onFocus={setActiveId}
+                  onLayoutChange={setLayout}
+                  renderPane={(sessionId, focused) => {
+                    const tab = tabs.find(
+                      (entry) => entry.sessionId === sessionId,
+                    );
+                    if (!tab) return null;
+                    if (tab.kind === "sftp") {
+                      return (
+                        <SftpBrowser
+                          pane
+                          sessionId={tab.sessionId}
+                          initialRemotePath={tab.remotePath ?? "."}
+                          initialLocalPath={tab.localPath ?? "/"}
+                          active={focused}
+                        />
+                      );
+                    }
+                    return (
+                      <TerminalView
+                        pane
+                        sessionId={tab.sessionId}
+                        active={focused}
+                        visible
+                        color={tab.color ?? "#4C8DF6"}
+                      />
+                    );
+                  }}
+                />
               )
             )}
           </section>
@@ -614,10 +961,17 @@ function Workspace({
       <CommandPalette
         open={paletteOpen}
         hosts={hosts}
+        canSplit={Boolean(activeTab && activeTab.kind !== "sftp")}
+        zoomed={Boolean(zoomedId)}
         onOpenChange={setPaletteOpen}
         onConnect={(host) => void connect(host)}
         onFiles={(host) => void openFiles(host)}
         onLocal={() => void openLocal()}
+        onSplitRight={() => void splitPane("horizontal")}
+        onSplitDown={() => void splitPane("vertical")}
+        onToggleZoom={() => toggleZoom()}
+        onNewWindow={() => openNewWindow()}
+        onMoveToNewWindow={() => void moveActiveToNewWindow()}
         onAddHost={() => setEditor("new")}
         onImport={() => setImportOpen(true)}
         onSync={() => setSyncOpen(true)}
@@ -639,7 +993,10 @@ function Workspace({
         <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
           <Logo size={28} />
           <span className="flex flex-col">
-            <span className="text-ui text-fg">Version 0.1.0</span>
+            <span className="text-ui text-fg">
+              Version {appVersion ?? "…"}
+              {import.meta.env.DEV ? " (dev)" : ""}
+            </span>
             <span className="text-micro text-fg-subtle">
               Vault encrypted with Argon2id and XChaCha20-Poly1305
             </span>
@@ -741,8 +1098,6 @@ function Workspace({
               .catch((reason: unknown) => setError(String(reason)));
           }}
           onVaultReplaced={() => {
-            // The old key is gone, so drop back to the gate for the shared
-            // master password.
             setSyncOpen(false);
             setHosts([]);
             void vaultStatus()
@@ -820,4 +1175,14 @@ function EmptyState({
       </div>
     </div>
   );
+}
+
+/** Decode standard base64 PTY payloads from the terminal-event bus. */
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }

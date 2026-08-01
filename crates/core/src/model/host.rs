@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::model::ShellIntegration;
+
 /// Saved SSH host. Credentials live in [`super::Identity`], referenced by ID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Host {
@@ -17,6 +19,9 @@ pub struct Host {
     pub known_host_key: Option<KnownHostKey>,
     pub tags: Vec<String>,
     pub color: Option<String>,
+    /// OSC 133 / OSC 7 injection preference. Default [`ShellIntegration::Auto`].
+    #[serde(default)]
+    pub shell_integration: ShellIntegration,
 }
 
 impl Host {
@@ -37,6 +42,7 @@ impl Host {
             known_host_key: None,
             tags: Vec::new(),
             color: None,
+            shell_integration: ShellIntegration::Auto,
         }
     }
 

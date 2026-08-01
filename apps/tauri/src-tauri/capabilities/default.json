@@ -2,10 +2,15 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop window capabilities",
-  "windows": ["main"],
+  "windows": ["main", "workspace-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title",
+    "core:webview:allow-create-webview-window",
     "dialog:default",
     "updater:default",
     "process:allow-restart"

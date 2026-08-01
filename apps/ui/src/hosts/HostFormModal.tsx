@@ -49,6 +49,9 @@ export function HostFormModal({
   const [username, setUsername] = useState(initial?.username ?? "");
   const [color, setColor] = useState(initial?.color ?? SWATCHES[0]);
   const [syncSecret, setSyncSecret] = useState(initial?.syncSecret ?? false);
+  const [shellIntegration, setShellIntegration] = useState(
+    initial?.shellIntegration ?? true,
+  );
   const passwordRef = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -78,6 +81,7 @@ export function HostFormModal({
         username: username.trim(),
         color,
         syncSecret,
+        shellIntegration,
       };
       if (password) {
         mutation.password = password;
@@ -205,6 +209,25 @@ export function HostFormModal({
           disabled={busy}
           required={!initial}
         />
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={shellIntegration}
+            disabled={busy}
+            onChange={(event) => setShellIntegration(event.target.checked)}
+          />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-ui font-medium text-fg">
+              Shell integration
+            </span>
+            <span className="text-micro text-fg-subtle">
+              Wraps the remote shell to report command blocks and working
+              directory. Turn off for exotic shells that reject the wrapper.
+            </span>
+          </span>
+        </label>
 
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
           <input

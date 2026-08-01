@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 use super::records::{HostRecord, PasswordIdentityRecord};
 use super::store::{ItemKind, ItemRow};
 use super::{Vault, get_encrypted_json, put_encrypted_json};
-use crate::model::{AuthMaterial, Host, KnownHostKey, SecretString};
+use crate::model::{AuthMaterial, Host, KnownHostKey, SecretString, ShellIntegration};
 use crate::ssh::{AuthProvider, HostStore};
 use crate::ssh_config::{SshConfigHost, parse_ssh_config, proxy_jump_alias};
 use crate::{Error, Result};
@@ -28,6 +28,7 @@ pub struct HostSummary {
     /// Whether the password identity is opted into vault sync.
     pub sync_secret: bool,
     pub color: Option<String>,
+    pub shell_integration: ShellIntegration,
 }
 
 impl From<&Host> for HostSummary {
@@ -41,6 +42,7 @@ impl From<&Host> for HostSummary {
             has_password: host.identity_id.is_some(),
             sync_secret: false,
             color: host.color.clone(),
+            shell_integration: host.shell_integration,
         }
     }
 }
@@ -56,6 +58,7 @@ pub struct CreateHostRequest {
     /// Opt-in: sync the password identity ciphertext. Default false.
     pub sync_secret: bool,
     pub color: Option<String>,
+    pub shell_integration: ShellIntegration,
 }
 
 /// High-level vault operations for hosts and SSH wiring.
@@ -114,6 +117,7 @@ impl VaultRepository {
         let mut host =
             Host::new(request.label, request.hostname, request.username).with_port(request.port);
         host.color = validate_host_color(request.color)?;
+        host.shell_integration = request.shell_integration;
 
         if let Some(password) = request.password {
             let identity_id = Uuid::now_v7();
@@ -261,6 +265,7 @@ impl VaultRepository {
         record.port = request.port;
         record.username = request.username;
         record.color = validate_host_color(request.color)?;
+        record.shell_integration = request.shell_integration;
 
         if let Some(password) = request.password {
             let identity_id = record.identity_id.unwrap_or_else(Uuid::now_v7);
@@ -483,6 +488,7 @@ mod tests {
                 password: Some(SecretString::new("testpass")),
                 sync_secret: false,
                 color: Some("#70A5F5".into()),
+            shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -514,6 +520,7 @@ mod tests {
                 password: Some(SecretString::new("testpass")),
                 sync_secret: false,
                 color: None,
+            shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -551,6 +558,7 @@ mod tests {
                 password: Some(SecretString::new("one")),
                 sync_secret: false,
                 color: None,
+            shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -566,6 +574,7 @@ mod tests {
                     password: Some(SecretString::new("two")),
                     sync_secret: false,
                     color: Some("#CF718B".into()),
+                shell_integration: Default::default(),
                 },
             )
             .await
@@ -594,6 +603,7 @@ mod tests {
                 password: Some(SecretString::new("keep-me")),
                 sync_secret: false,
                 color: None,
+            shell_integration: Default::default(),
             })
             .await
             .unwrap();

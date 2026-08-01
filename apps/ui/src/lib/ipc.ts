@@ -10,6 +10,7 @@ import type { SyncJoinResultDto } from "./generated/SyncJoinResultDto";
 import type { SyncReportDto } from "./generated/SyncReportDto";
 import type { SyncStatusDto } from "./generated/SyncStatusDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
+import type { TerminalEventEnvelope } from "./generated/TerminalEventEnvelope";
 import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
@@ -25,6 +26,7 @@ export type {
   SyncReportDto,
   SyncStatusDto,
   TerminalEvent,
+  TerminalEventEnvelope,
   UpdateInfoDto,
   TransferEvent,
   VaultStatusDto,
@@ -39,6 +41,8 @@ export interface HostMutation {
   /** Opt-in: sync the encrypted password identity to other devices. */
   syncSecret?: boolean;
   color?: string;
+  /** Inject OSC 133 / OSC 7 via connect wrapper. Default on. */
+  shellIntegration?: boolean;
 }
 
 export function vaultStatus(): Promise<VaultStatusDto> {
@@ -110,29 +114,27 @@ export function openTerminal(
   hostId: string,
   cols: number,
   rows: number,
-  onOutput: (event: TerminalEvent) => void,
 ): Promise<string> {
-  const output = new Channel<TerminalEvent>();
-  output.onmessage = onOutput;
   return invoke<string>("open_terminal", {
     hostId,
     cols,
     rows,
-    output,
   });
 }
 
-export function openLocalTerminal(
-  cols: number,
-  rows: number,
-  onOutput: (event: TerminalEvent) => void,
-): Promise<string> {
-  const output = new Channel<TerminalEvent>();
-  output.onmessage = onOutput;
+export function openLocalTerminal(cols: number, rows: number): Promise<string> {
   return invoke<string>("open_local_terminal", {
     cols,
     rows,
-    output,
+  });
+}
+
+/** Subscribe to PTY output for any session (all OS windows receive the bus). */
+export function onTerminalEvent(
+  handler: (sessionId: string, event: TerminalEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<TerminalEventEnvelope>("terminal-event", (event) => {
+    handler(event.payload.sessionId, event.payload.event);
   });
 }
 

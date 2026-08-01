@@ -229,12 +229,21 @@ impl SessionManager {
     }
 
     /// Interactive path. Raw bytes, ANSI intact.
+    ///
+    /// When the host's [`ShellIntegration`](crate::model::ShellIntegration) is
+    /// `Auto`, starts a bash wrapper that emits OSC 133 / OSC 7. Falls back to
+    /// a plain shell if the wrapper exec fails to start (caller still gets a
+    /// usable PTY only when the remote accepts the command — exotic hosts can
+    /// set `shell_integration: Disabled`).
     pub async fn open_pty(
         &self,
         host_id: Uuid,
         size: PtySize,
     ) -> Result<(PtyHandle, mpsc::Receiver<Bytes>)> {
         self.gate.approve(&Action::OpenPty { host_id }).await?;
+
+        let host = self.hosts.get(host_id).await?;
+        let integrate = host.shell_integration != crate::model::ShellIntegration::Disabled;
 
         let session = self.connect(host_id).await?;
         let channel = session.channel_open_session().await?;
@@ -250,7 +259,13 @@ impl SessionManager {
                 &pty_modes(),
             )
             .await?;
-        channel.request_shell(true).await?;
+
+        if integrate {
+            let wrapper = crate::terminal::ssh_default_wrapper_command();
+            channel.exec(true, wrapper.as_str()).await?;
+        } else {
+            channel.request_shell(true).await?;
+        }
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<PtyCommand>(32);
         let (out_tx, out_rx) = mpsc::channel::<Bytes>(256);

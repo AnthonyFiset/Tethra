@@ -1,11 +1,15 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import {
+  AppWindow,
+  Columns2,
   DownloadCloud,
   FolderOpen,
   Lock,
+  Maximize2,
   Plus,
   RefreshCw,
+  Rows2,
   TerminalSquare,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -15,10 +19,17 @@ import { HostAvatar } from "./HostAvatar";
 interface CommandPaletteProps {
   open: boolean;
   hosts: HostSummaryDto[];
+  canSplit: boolean;
+  zoomed: boolean;
   onOpenChange: (open: boolean) => void;
   onConnect: (host: HostSummaryDto) => void;
   onFiles: (host: HostSummaryDto) => void;
   onLocal: () => void;
+  onSplitRight: () => void;
+  onSplitDown: () => void;
+  onToggleZoom: () => void;
+  onNewWindow: () => void;
+  onMoveToNewWindow: () => void;
   onAddHost: () => void;
   onImport: () => void;
   onSync: () => void;
@@ -28,10 +39,17 @@ interface CommandPaletteProps {
 export function CommandPalette({
   open,
   hosts,
+  canSplit,
+  zoomed,
   onOpenChange,
   onConnect,
   onFiles,
   onLocal,
+  onSplitRight,
+  onSplitDown,
+  onToggleZoom,
+  onNewWindow,
+  onMoveToNewWindow,
   onAddHost,
   onImport,
   onSync,
@@ -78,6 +96,46 @@ export function CommandPalette({
                   onSelect={() => run(onLocal)}
                 >
                   New local terminal
+                </Item>
+                <Item
+                  value="split right pane vertical"
+                  icon={<Columns2 size={15} />}
+                  detail="⌘\\"
+                  onSelect={() => run(onSplitRight)}
+                >
+                  Split right
+                </Item>
+                <Item
+                  value="split down pane horizontal"
+                  icon={<Rows2 size={15} />}
+                  detail="⌘⇧\\"
+                  onSelect={() => run(onSplitDown)}
+                >
+                  Split down
+                </Item>
+                <Item
+                  value="zoom pane maximize"
+                  icon={<Maximize2 size={15} />}
+                  detail={zoomed ? "Exit zoom" : "Zoom focused pane"}
+                  onSelect={() => run(onToggleZoom)}
+                >
+                  {zoomed ? "Exit zoom" : "Zoom pane"}
+                </Item>
+                <Item
+                  value="new window workspace"
+                  icon={<AppWindow size={15} />}
+                  detail="Empty workspace window"
+                  onSelect={() => run(onNewWindow)}
+                >
+                  New window
+                </Item>
+                <Item
+                  value="move tab to new window"
+                  icon={<AppWindow size={15} />}
+                  detail={canSplit ? "Detach focused tab" : "No tab selected"}
+                  onSelect={() => run(onMoveToNewWindow)}
+                >
+                  Move tab to new window
                 </Item>
               </Group>
 

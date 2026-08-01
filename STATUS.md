@@ -1,7 +1,7 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after M6.2 (sync you don't
-think about). See [`ROADMAP-v2.md`](ROADMAP-v2.md)._
+_Snapshot for handoff / reassessment. Last updated after M7 (real terminal).
+See [`ROADMAP-v2.md`](ROADMAP-v2.md)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
 end-to-end encrypted vault of saved hosts — and a host for coding agents on
@@ -11,7 +11,7 @@ architecture and hard rules; [`ROADMAP-v2.md`](ROADMAP-v2.md) for the post-M6.1
 plan.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main`; latest shipped tag `v0.2.1`
+- **Branch:** `main`; latest shipped tag `v0.2.3`
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 
@@ -31,7 +31,7 @@ plan.
 | **M6** | Sync — `FileBackend`, `HttpBackend`, ThinkPad sync server, release installers | Done |
 | **M6.1** | Sync hardening: in-app vault join/reset, tag-driven versions, self-update via sync host, CI cleanup | Done |
 | **M6.2** | Sync you don't think about: `sync_secret`, background sync, coordinated re-key, iOS CI, auto-mirror | Done |
-| **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Not started |
+| **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Done |
 | **M8** | Projects and agents: `Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach | Not started |
 | **M9** | Assist: NL→command in input, ApprovalGate, pluggable providers, vault API keys | Not started |
 | **M10** | Fleet power features: port forwarding, live jump hosts, snippets, `FleetExec` broadcast (was old M7) | Not started |
@@ -49,6 +49,7 @@ crates/
       vault/            kdf, crypto, store, repository, records (+ reset)
       ssh/              session manager, handler, pty, exec, sftp, approval, fingerprint
       ssh_config.rs     ~/.ssh/config parsing
+      terminal/         OSC 133 parser, shell-integration scripts/wrappers
       sync/             SyncBackend, FileBackend, HttpBackend, SyncEngine, conflict
       error.rs
   sync-server/          tethra-sync-server: HTTP sync + update mirror for Tailscale hosts
@@ -63,7 +64,8 @@ apps/
     src/lib.rs          vault + host + terminal + SFTP + sync + updater commands
     src/sync.rs         sync settings, folder picker, HTTP configure, join, sync-now
     src/updater.rs      self-update; endpoint derived from sync server URL
-    src/output_pump.rs  shared SSH/local terminal batching and backpressure
+    src/output_pump.rs  shared SSH/local terminal batching; OSC 133 + app-wide emit
+    src/shell_integration.rs  local shell wrapper (OSC 133 / OSC 7)
     src/local_fs.rs     local filesystem commands for SFTP left pane
     src/sftp.rs         SFTP browser sessions + transfer tasks
   ui/                   React app
@@ -75,7 +77,7 @@ apps/
     src/hosts/          HostFormModal, SshConfigImportModal
 scripts/
   set-version.mjs       stamp one version across all manifests from the git tag
-docs/                   M1.md .. M6.md, M6.2.md, UPDATES.md
+docs/                   M1.md .. M6.md, M6.2.md, M7.md, UPDATES.md
 .github/workflows/      ci.yml + release.yml (dmg / exe / deb + updater artifacts on tag)
 ```
 
@@ -99,7 +101,22 @@ docs/                   M1.md .. M6.md, M6.2.md, UPDATES.md
 
 ---
 
-## What M6.2 added (most recent work)
+## What M7 added (most recent work)
+
+See [`docs/M7.md`](docs/M7.md).
+
+- **Conformance:** OSC 52 clipboard, Unicode 11 widths, bracketed paste, OSC 7
+  cwd, truecolor env.
+- **OSC 133:** streaming parser in `core`; block events on the app-wide
+  `terminal-event` bus (beside raw bytes).
+- **Shell integration:** connect wrapper + per-host Auto/Disabled preference.
+- **Splits:** layout tree with resize sash and zoom; single-column under 768px.
+- **Multi-window:** new / move-tab windows; closing a secondary window reclaims
+  tabs to main without killing Rust sessions.
+
+---
+
+## What M6.2 added
 
 See [`docs/M6.2.md`](docs/M6.2.md).
 
@@ -235,8 +252,8 @@ See [`docs/M6.md`](docs/M6.md).
 - **Jump hosts:** `ProxyJump` is stored as metadata; live routing is **M10**.
 - **Private keys:** host metadata is the sync target; private-key identities stay
   device-local (key sync is a deferred opt-in; passwords use `sync_secret`).
-- **Terminal:** agent-grade conformance (alt screen, truecolor, bracketed paste,
-  OSC 52/7, mouse, OSC 133 blocks, splits) is **M7**.
+- **Terminal:** M7 done — conformance, OSC 133, shell integration, splits,
+  multi-window. See `docs/M7.md`.
 - **Projects / agents:** no first-class Project or persistent agent sessions yet
   — **M8**.
 - **Power monitor:** macOS observer is a best-effort stub; idle-timer lock is the
@@ -302,7 +319,7 @@ docker compose -f crates/core/tests/docker-compose.yml down -v
 
 ```bash
 # 1. Cut a release (CI stamps version, builds installers, signs updater artifacts)
-git tag v0.2.2 && git push origin v0.2.2
+git tag v0.2.3 && git push origin v0.2.3
 # 2. Publish the draft release on GitHub (gh only sees published releases)
 # 3. On the sync host, mirror it for clients:
 tethra-sync-server fetch-updates
@@ -313,14 +330,10 @@ tethra-sync-server fetch-updates
 
 ## Suggested next step
 
-**M7 — Real terminal** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): agent TTY
-conformance (alt screen, truecolor, bracketed paste, OSC 52/7, mouse, Unicode
-width), OSC 133 command blocks in `core`, splits / multi-window over the session
-registry. Acceptance: Claude Code local and over SSH matches Terminal.app /
-Ghostty.
+**M8 — Projects and agents** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): first-class
+`Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach.
 
-Then **M8 — Projects and agents**. Fleet power features remain **M10**; mobile
-**M11**.
+Fleet power features remain **M10**; mobile **M11**.
 
 On the ThinkPad (if not already): `tethra-sync-server install-updates-timer`.
 

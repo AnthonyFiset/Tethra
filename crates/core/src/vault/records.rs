@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{Host, KnownHostKey};
+use crate::model::{Host, KnownHostKey, ShellIntegration};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostRecord {
@@ -21,6 +21,8 @@ pub struct HostRecord {
     pub known_host_key: Option<KnownHostKey>,
     pub tags: Vec<String>,
     pub color: Option<String>,
+    #[serde(default)]
+    pub shell_integration: ShellIntegration,
 }
 
 impl From<&Host> for HostRecord {
@@ -37,6 +39,7 @@ impl From<&Host> for HostRecord {
             known_host_key: host.known_host_key.clone(),
             tags: host.tags.clone(),
             color: host.color.clone(),
+            shell_integration: host.shell_integration,
         }
     }
 }
@@ -55,6 +58,7 @@ impl From<HostRecord> for Host {
             known_host_key: record.known_host_key,
             tags: record.tags,
             color: record.color,
+            shell_integration: record.shell_integration,
         }
     }
 }

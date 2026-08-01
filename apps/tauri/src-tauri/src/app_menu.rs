@@ -10,9 +10,12 @@ use tauri::menu::{AboutMetadataBuilder, Menu, MenuBuilder, SubmenuBuilder};
 use tauri::{App, Runtime};
 
 pub fn build<R: Runtime>(app: &App<R>) -> tauri::Result<Menu<R>> {
+    // Same source as the in-app About (`getVersion`) and the updater's
+    // "you have X" line: the stamped package version for this binary.
+    let version = app.package_info().version.to_string();
     let about = AboutMetadataBuilder::new()
         .name(Some("Tethra"))
-        .version(Some(env!("CARGO_PKG_VERSION")))
+        .version(Some(version))
         .comments(Some(
             "Private, cross-platform SSH and SFTP workspace with an encrypted vault.",
         ))

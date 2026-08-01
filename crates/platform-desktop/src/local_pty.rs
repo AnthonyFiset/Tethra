@@ -58,6 +58,10 @@ impl LocalPty for DesktopLocalPty {
         for (key, value) in spec.env {
             command.env(key, value);
         }
+        // `npx --prefix … tauri dev` (and similar) inject npm_config_* into the
+        // parent process; nvm refuses to load if those leak into an interactive
+        // shell. Strip them so Local feels like Terminal.app.
+        scrub_npm_env(&mut command);
 
         let child = pair.slave.spawn_command(command).map_err(local_error)?;
         drop(pair.slave);
@@ -239,6 +243,19 @@ fn to_portable_size(size: PtySize) -> PortableSize {
         cols: size.cols,
         pixel_width: size.pixel_width,
         pixel_height: size.pixel_height,
+    }
+}
+
+fn scrub_npm_env(command: &mut CommandBuilder) {
+    let keys: Vec<String> = std::env::vars()
+        .map(|(key, _)| key)
+        .filter(|key| {
+            let lower = key.to_ascii_lowercase();
+            lower.starts_with("npm_config_") || lower.starts_with("npm_package_")
+        })
+        .collect();
+    for key in keys {
+        command.env_remove(key);
     }
 }
 

@@ -1,11 +1,15 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  AppWindow,
+  Columns2,
   Info,
   KeyRound,
   Lock,
+  Maximize2,
   MoreHorizontal,
   PanelLeft,
   RefreshCw,
+  Rows2,
   Search,
   TerminalSquare,
 } from "lucide-react";
@@ -18,9 +22,18 @@ interface TitleBarProps {
   connectionLabel: string;
   connected: boolean;
   openingLocal: boolean;
+  canSplit: boolean;
+  zoomed: boolean;
+  canZoom: boolean;
+  appVersion?: string;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
   onOpenLocal: () => void;
+  onSplitRight: () => void;
+  onSplitDown: () => void;
+  onToggleZoom: () => void;
+  onNewWindow: () => void;
+  onMoveToNewWindow: () => void;
   onSync: () => void;
   onChangePassword: () => void;
   onAbout: () => void;
@@ -31,9 +44,18 @@ export function TitleBar({
   connectionLabel,
   connected,
   openingLocal,
+  canSplit,
+  zoomed,
+  canZoom,
+  appVersion,
   onToggleSidebar,
   onOpenPalette,
   onOpenLocal,
+  onSplitRight,
+  onSplitDown,
+  onToggleZoom,
+  onNewWindow,
+  onMoveToNewWindow,
   onSync,
   onChangePassword,
   onAbout,
@@ -69,6 +91,37 @@ export function TitleBar({
       </button>
 
       <div className="ml-auto flex items-center gap-1">
+        <Tooltip content="Split right" side="bottom">
+          <IconButton
+            label="Split right"
+            onClick={onSplitRight}
+            disabled={!canSplit}
+            className="max-md:hidden"
+          >
+            <Columns2 size={15} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip content="Split down" side="bottom">
+          <IconButton
+            label="Split down"
+            onClick={onSplitDown}
+            disabled={!canSplit}
+            className="max-md:hidden"
+          >
+            <Rows2 size={15} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip content={zoomed ? "Exit zoom  Esc" : "Zoom pane  ⌘⇧↵"} side="bottom">
+          <IconButton
+            label={zoomed ? "Exit zoom" : "Zoom pane"}
+            onClick={onToggleZoom}
+            disabled={!canZoom}
+            className="max-md:hidden"
+          >
+            <Maximize2 size={15} />
+          </IconButton>
+        </Tooltip>
+
         <Tooltip content="New local terminal" side="bottom">
           <IconButton
             label="New local terminal"
@@ -101,6 +154,16 @@ export function TitleBar({
                 Command palette
                 <span className="ml-auto text-fg-subtle">⌘K</span>
               </MenuItem>
+              <MenuItem icon={<AppWindow size={14} />} onSelect={onNewWindow}>
+                New window
+              </MenuItem>
+              <MenuItem
+                icon={<AppWindow size={14} />}
+                onSelect={onMoveToNewWindow}
+              >
+                Move tab to new window
+              </MenuItem>
+              <DropdownMenu.Separator className="my-1 h-px bg-line" />
               <MenuItem icon={<RefreshCw size={14} />} onSelect={onSync}>
                 Vault sync
               </MenuItem>
@@ -114,6 +177,12 @@ export function TitleBar({
               <MenuItem icon={<Info size={14} />} onSelect={onAbout}>
                 About Tethra
               </MenuItem>
+              {appVersion && (
+                <div className="px-2 py-1.5 text-micro text-fg-subtle">
+                  Version {appVersion}
+                  {import.meta.env.DEV ? " (dev)" : ""}
+                </div>
+              )}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>

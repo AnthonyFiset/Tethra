@@ -1,4 +1,6 @@
+import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -7,7 +9,12 @@ interface TerminalRecord {
   terminal: Terminal;
   fit: FitAddon;
   webgl?: WebglAddon;
+  clipboard?: ClipboardAddon;
+  unicode11?: Unicode11Addon;
   resizeTimer?: number;
+  /** Last OSC 7 working directory, when the shell reports one. */
+  cwd?: string;
+  disposables: { dispose(): void }[];
 }
 
 const terminals = new Map<string, TerminalRecord>();
@@ -16,6 +23,8 @@ const encoder = new TextEncoder();
 export interface TerminalCallbacks {
   onInput: (data: Uint8Array) => void;
   onResize: (cols: number, rows: number) => void;
+  /** Fired when OSC 7 reports a working directory. */
+  onCwd?: (cwd: string) => void;
 }
 
 export function createTerminal(
@@ -26,9 +35,14 @@ export function createTerminal(
   if (existing) return existing;
 
   const terminal = new Terminal({
+    allowProposedApi: true,
     cursorBlink: true,
     cursorStyle: "bar",
     convertEol: false,
+    // Bracketed paste stays enabled so shells that request it get it.
+    ignoreBracketedPasteMode: false,
+    // macOS Option sends meta for readline / agent keybindings.
+    macOptionIsMeta: true,
     fontFamily:
       '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
     fontSize: 13,
@@ -51,6 +65,26 @@ export function createTerminal(
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
+
+  const unicode11 = new Unicode11Addon();
+  terminal.loadAddon(unicode11);
+  terminal.unicode.activeVersion = "11";
+
+  const clipboard = new ClipboardAddon();
+  terminal.loadAddon(clipboard);
+
+  const disposables: { dispose(): void }[] = [];
+  disposables.push(
+    terminal.parser.registerOscHandler(7, (data) => {
+      const cwd = parseOsc7(data);
+      if (!cwd) return false;
+      const record = terminals.get(sessionId);
+      if (record) record.cwd = cwd;
+      callbacks.onCwd?.(cwd);
+      return false; // let xterm keep its own handling if any
+    }),
+  );
+
   terminal.onData((data) => callbacks.onInput(encoder.encode(data)));
   terminal.onResize(({ cols, rows }) => {
     const record = terminals.get(sessionId);
@@ -62,7 +96,13 @@ export function createTerminal(
     );
   });
 
-  const record: TerminalRecord = { terminal, fit };
+  const record: TerminalRecord = {
+    terminal,
+    fit,
+    clipboard,
+    unicode11,
+    disposables,
+  };
   terminals.set(sessionId, record);
   return record;
 }
@@ -107,7 +147,10 @@ export function writeTerminal(
   sessionId: string,
   data: number[] | Uint8Array,
 ): void {
-  terminals.get(sessionId)?.terminal.write(Uint8Array.from(data));
+  const record = terminals.get(sessionId);
+  if (!record) return;
+  const bytes = data instanceof Uint8Array ? data : Uint8Array.from(data);
+  record.terminal.write(bytes);
 }
 
 export function writeTerminalMessage(sessionId: string, message: string): void {
@@ -118,10 +161,19 @@ export function focusTerminal(sessionId: string): void {
   terminals.get(sessionId)?.terminal.focus();
 }
 
+export function getTerminalCwd(sessionId: string): string | undefined {
+  return terminals.get(sessionId)?.cwd;
+}
+
 export function disposeTerminal(sessionId: string): void {
   const record = terminals.get(sessionId);
   if (!record) return;
   window.clearTimeout(record.resizeTimer);
+  for (const disposable of record.disposables) {
+    disposable.dispose();
+  }
+  record.clipboard?.dispose();
+  record.unicode11?.dispose();
   record.webgl?.dispose();
   record.terminal.dispose();
   terminals.delete(sessionId);
@@ -135,4 +187,30 @@ export function disposeAllTerminals(): void {
 
 export function hasTerminal(sessionId: string): boolean {
   return terminals.has(sessionId);
+}
+
+/** Parse OSC 7 bodies like `file://hostname/path` or plain paths. */
+function parseOsc7(data: string): string | undefined {
+  const trimmed = data.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith("file://")) {
+    try {
+      const url = new URL(trimmed);
+      let path = decodeURIComponent(url.pathname);
+      // Windows file URLs may look like /C:/Users/...
+      if (/^\/[A-Za-z]:\//.test(path)) {
+        path = path.slice(1);
+      }
+      return path || undefined;
+    } catch {
+      const slash = trimmed.indexOf("/", "file://".length);
+      if (slash === -1) return undefined;
+      try {
+        return decodeURIComponent(trimmed.slice(slash)) || undefined;
+      } catch {
+        return trimmed.slice(slash) || undefined;
+      }
+    }
+  }
+  return trimmed;
 }

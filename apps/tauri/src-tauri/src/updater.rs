@@ -66,6 +66,19 @@ pub async fn update_check(
     state: State<'_, AppState>,
 ) -> Result<UpdateInfoDto, String> {
     let current_version = app.package_info().version.to_string();
+
+    // Dev / `tauri dev` builds must not prompt to install a release — that
+    // only makes sense for packaged installs that came from the update mirror.
+    if cfg!(debug_assertions) {
+        return Ok(UpdateInfoDto {
+            available: false,
+            current_version,
+            version: None,
+            notes: None,
+            pub_date: None,
+        });
+    }
+
     let updater = build_updater(&app, &state).await?;
 
     match updater.check().await.map_err(|e| e.to_string())? {
@@ -92,6 +105,10 @@ pub async fn update_install(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Err("updates are disabled in development builds".into());
+    }
+
     let updater = build_updater(&app, &state).await?;
     let update = updater
         .check()

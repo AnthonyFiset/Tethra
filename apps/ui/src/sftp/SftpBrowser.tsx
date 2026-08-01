@@ -24,6 +24,8 @@ interface SftpBrowserProps {
   initialRemotePath: string;
   initialLocalPath: string;
   active: boolean;
+  /** Fill a split pane instead of absolute stacking. */
+  pane?: boolean;
 }
 
 export function SftpBrowser({
@@ -31,6 +33,7 @@ export function SftpBrowser({
   initialRemotePath,
   initialLocalPath,
   active,
+  pane = false,
 }: SftpBrowserProps): React.JSX.Element {
   const [localPath, setLocalPath] = useState(initialLocalPath);
   const [remotePath, setRemotePath] = useState(initialRemotePath);
@@ -197,8 +200,10 @@ export function SftpBrowser({
   return (
     <div
       className={cn(
-        "absolute inset-0 flex flex-col bg-base",
-        active ? "z-10 flex" : "hidden",
+        "flex flex-col bg-base",
+        pane
+          ? "size-full"
+          : cn("absolute inset-0", active ? "z-10 flex" : "hidden"),
       )}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">

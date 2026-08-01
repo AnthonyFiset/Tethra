@@ -376,6 +376,7 @@ mod tests {
                 password: Some(SecretString::new("s3cret")),
                 sync_secret: false,
                 color: Some("#4C8DF6".into()),
+            shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -426,6 +427,7 @@ mod tests {
                 password: Some(SecretString::new("s3cret")),
                 sync_secret: true,
                 color: None,
+            shell_integration: Default::default(),
             })
             .await
             .unwrap();

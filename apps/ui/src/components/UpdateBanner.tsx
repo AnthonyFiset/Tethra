@@ -4,6 +4,7 @@ import { Button } from "./ui/Button";
 
 /// Checked once per launch; the sync server is the update host, so a device
 /// with sync configured stays current without visiting GitHub.
+/// Skipped entirely in Vite/`tauri dev` — release installs only.
 export function UpdateBanner(): React.JSX.Element | null {
   const [info, setInfo] = useState<UpdateInfoDto>();
   const [busy, setBusy] = useState(false);
@@ -11,6 +12,7 @@ export function UpdateBanner(): React.JSX.Element | null {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    if (import.meta.env.DEV) return;
     // Sync may not be configured, which is not worth surfacing as an error.
     void updateCheck()
       .then(setInfo)

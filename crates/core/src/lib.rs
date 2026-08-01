@@ -13,6 +13,7 @@ pub mod model;
 pub mod ssh;
 pub mod ssh_config;
 pub mod sync;
+pub mod terminal;
 pub mod vault;
 
 pub use error::{Error, Result};

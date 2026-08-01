@@ -20,6 +20,7 @@ tauri-build = { version = "2.6", features = [] }
 [dependencies]
 async-trait = { workspace = true }
 bytes = { workspace = true }
+base64 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 ssh-client-core = { package = "core", path = "../../../crates/core", features = ["sync-http"] }
 platform = { workspace = true }

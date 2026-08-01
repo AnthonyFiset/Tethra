@@ -394,7 +394,7 @@ runner, auto-mirror timer on the sync host. ✅ See `docs/M6.2.md`.
 **M7 — real terminal.** Alternate screen, truecolor, bracketed paste, OSC 52/7,
 mouse/SIGWINCH, Unicode width; OSC 133 command blocks in `core`; splits /
 multi-window over the session registry (hard rule 5). Acceptance: Claude Code
-local and over SSH matches Terminal.app / Ghostty.
+local and over SSH matches Terminal.app / Ghostty. ✅ See `docs/M7.md`.
 
 **M8 — projects and agents.** First-class `Project` + `AgentSpec`; open project =
 connect → `cd` → launch agent; persistent remote agents via `tmux`/`zellij`

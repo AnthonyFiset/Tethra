@@ -491,6 +491,7 @@ mod tests {
                 known_host_key: None,
                 tags: vec![],
                 color: None,
+                shell_integration: Default::default(),
             },
         )
         .await

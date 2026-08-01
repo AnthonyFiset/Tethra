@@ -20,7 +20,6 @@ use ssh_client_core::ssh_config::{
 use ssh_client_core::vault::{
     CreateHostRequest, HostSummary as CoreHostSummary, Vault, VaultRepository, VaultStatus,
 };
-use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{Mutex, oneshot};
 use ts_rs::TS;
@@ -30,6 +29,7 @@ mod app_menu;
 mod local_fs;
 mod output_pump;
 mod sftp;
+mod shell_integration;
 mod sync;
 mod updater;
 
@@ -66,6 +66,8 @@ struct HostSummaryDto {
     has_password: bool,
     sync_secret: bool,
     color: Option<String>,
+    /// When true, inject OSC 133 / OSC 7 via connect wrapper.
+    shell_integration: bool,
 }
 
 impl From<&CoreHostSummary> for HostSummaryDto {
@@ -79,6 +81,8 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             has_password: host.has_password,
             sync_secret: host.sync_secret,
             color: host.color.clone(),
+            shell_integration: host.shell_integration
+                != ssh_client_core::model::ShellIntegration::Disabled,
         }
     }
 }
@@ -158,8 +162,33 @@ struct HostKeyPrompt {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export, export_to = "../../../ui/src/lib/generated/")]
 pub(crate) enum TerminalEvent {
-    Data { data: Vec<u8>, dropped: bool },
+    /// PTY bytes as standard base64 (JSON number arrays are too slow for PTY).
+    Data { data: String, dropped: bool },
+    /// OSC 133 command-block marker (beside raw bytes, never instead of them).
+    Block {
+        phase: TerminalBlockPhase,
+        exit_code: Option<i32>,
+    },
     Closed,
+}
+
+/// App-wide terminal stream envelope so any OS window can attach to a session.
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+pub(crate) struct TerminalEventEnvelope {
+    pub session_id: String,
+    pub event: TerminalEvent,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+pub(crate) enum TerminalBlockPhase {
+    PromptStart,
+    CommandStart,
+    OutputStart,
+    CommandEnd,
 }
 
 #[derive(Deserialize)]
@@ -173,6 +202,9 @@ struct HostMutation {
     #[serde(default)]
     sync_secret: Option<bool>,
     color: Option<String>,
+    /// When false, skip OSC 133 wrapper. Default true (Auto).
+    #[serde(default)]
+    shell_integration: Option<bool>,
 }
 
 struct PromptBroker {
@@ -375,6 +407,11 @@ async fn create_host(
             password: host.password.map(SecretString::new),
             sync_secret: host.sync_secret.unwrap_or(false),
             color: host.color,
+            shell_integration: if host.shell_integration.unwrap_or(true) {
+                ssh_client_core::model::ShellIntegration::Auto
+            } else {
+                ssh_client_core::model::ShellIntegration::Disabled
+            },
         })
         .await
         .map_err(redacted_error)?;
@@ -402,6 +439,11 @@ async fn update_host(
                 password: host.password.map(SecretString::new),
                 sync_secret: host.sync_secret.unwrap_or(false),
                 color: host.color,
+                shell_integration: if host.shell_integration.unwrap_or(true) {
+                    ssh_client_core::model::ShellIntegration::Auto
+                } else {
+                    ssh_client_core::model::ShellIntegration::Disabled
+                },
             },
         )
         .await
@@ -444,11 +486,11 @@ fn load_default_ssh_config() -> Result<String, String> {
 
 #[tauri::command]
 async fn open_terminal(
+    app: AppHandle,
     state: State<'_, AppState>,
     host_id: String,
     cols: u32,
     rows: u32,
-    output: Channel<TerminalEvent>,
 ) -> Result<String, String> {
     if !state
         .repo
@@ -468,21 +510,22 @@ async fn open_terminal(
         .map_err(redacted_error)?;
 
     state.sessions.lock().await.insert(session_id, handle);
-    tauri::async_runtime::spawn(output_pump::forward_output(receiver, output));
+    tauri::async_runtime::spawn(output_pump::forward_output(session_id, receiver, app));
     Ok(session_id.to_string())
 }
 
 #[tauri::command]
 async fn open_local_terminal(
+    app: AppHandle,
     state: State<'_, AppState>,
     cols: u32,
     rows: u32,
-    output: Channel<TerminalEvent>,
 ) -> Result<String, String> {
     let spec = state
         .local_pty
         .default_shell()
         .ok_or_else(|| "no local shell is available".to_string())?;
+    let spec = shell_integration::wrap_local_shell(spec);
     state
         .approval_gate
         .approve(&Action::OpenLocalPty {
@@ -497,7 +540,7 @@ async fn open_local_terminal(
         .map_err(|error| error.to_string())?;
     let session_id = Uuid::now_v7();
     state.local_sessions.lock().await.insert(session_id, handle);
-    tauri::async_runtime::spawn(output_pump::forward_output(receiver, output));
+    tauri::async_runtime::spawn(output_pump::forward_output(session_id, receiver, app));
     Ok(session_id.to_string())
 }
 
@@ -895,6 +938,8 @@ mod tests {
         SshConfigPreviewDto::export_all(&cfg).unwrap();
         HostKeyPrompt::export_all(&cfg).unwrap();
         TerminalEvent::export_all(&cfg).unwrap();
+        TerminalEventEnvelope::export_all(&cfg).unwrap();
+        TerminalBlockPhase::export_all(&cfg).unwrap();
         sync::SyncStatusDto::export_all(&cfg).unwrap();
         sync::SyncReportDto::export_all(&cfg).unwrap();
         sync::SyncJoinResultDto::export_all(&cfg).unwrap();
@@ -943,6 +988,7 @@ mod tests {
             has_password: true,
             sync_secret: false,
             color: Some("#70A5F5".into()),
+            shell_integration: true,
         };
         assert!(dto.has_password);
         let debug = format!("{dto:?}");
