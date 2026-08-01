@@ -33,6 +33,7 @@ pub struct HostSummary {
     /// Whether the password identity is opted into vault sync.
     pub sync_secret: bool,
     pub color: Option<String>,
+    pub tags: Vec<String>,
     pub shell_integration: ShellIntegration,
 }
 
@@ -47,6 +48,7 @@ impl From<&Host> for HostSummary {
             has_password: host.identity_id.is_some(),
             sync_secret: false,
             color: host.color.clone(),
+            tags: host.tags.clone(),
             shell_integration: host.shell_integration,
         }
     }
@@ -685,10 +687,13 @@ impl VaultRepository {
     }
 
     pub async fn create_api_key(&self, request: CreateApiKeyRequest) -> Result<ApiKeySummary> {
-        validate_api_key_request(&request, true)?;
+        // Local OpenAI-compat servers (Ollama / LM Studio) may omit a key.
+        let require_key = !matches!(request.provider, AssistProviderKind::OpenAiCompat);
+        validate_api_key_request(&request, require_key)?;
         let api_key = request
             .api_key
-            .ok_or_else(|| Error::InvalidArgument("api key is required".into()))?;
+            .unwrap_or_else(|| SecretString::new(String::new()));
+        let has_key = !api_key.expose().trim().is_empty();
         let mut key = ApiKey::new(request.label, request.provider, api_key);
         key.base_url = request.base_url;
         key.model = request.model;
@@ -711,7 +716,7 @@ impl VaultRepository {
             base_url: key.base_url,
             model: key.model,
             sync_secret: key.sync_secret,
-            has_key: true,
+            has_key,
         })
     }
 

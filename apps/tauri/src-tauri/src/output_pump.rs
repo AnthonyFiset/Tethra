@@ -39,10 +39,23 @@ pub async fn forward_output(session_id: Uuid, mut receiver: mpsc::Receiver<Bytes
             message = receiver.recv() => {
                 match message {
                     Some(data) => {
-                        for event in osc133.push(&data) {
+                        // Emit data segments before each OSC 133 marker so the
+                        // UI can place gutter markers after the right lines
+                        // instead of collapsing every phase onto one write.
+                        let mut cursor = 0usize;
+                        for (end, event) in osc133.push_indexed(&data) {
+                            if end > cursor {
+                                pending.extend_from_slice(&data[cursor..end]);
+                                cursor = end;
+                            }
+                            if !pending.is_empty() {
+                                flush_one(&mut pending, &app, &session_id, &mut dropped);
+                            }
                             emit(&app, &session_id, block_event(event));
                         }
-                        pending.extend_from_slice(&data);
+                        if cursor < data.len() {
+                            pending.extend_from_slice(&data[cursor..]);
+                        }
                         if pending.len() > MAX_PENDING {
                             drop_middle(&mut pending);
                             dropped = true;

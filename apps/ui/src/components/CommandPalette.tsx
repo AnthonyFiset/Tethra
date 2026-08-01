@@ -4,27 +4,44 @@ import {
   AppWindow,
   Columns2,
   DownloadCloud,
+  FolderKanban,
   FolderOpen,
+  LayoutGrid,
   Lock,
   Maximize2,
+  PanelsTopLeft,
   Plus,
+  Radio,
   RefreshCw,
   Rows2,
+  Sparkles,
   TerminalSquare,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { HostSummaryDto } from "../lib/ipc";
+import type {
+  HostSummaryDto,
+  ProjectSummaryDto,
+  RunningSessionSummaryDto,
+} from "../lib/ipc";
 import { HostAvatar } from "./HostAvatar";
 
 interface CommandPaletteProps {
   open: boolean;
   hosts: HostSummaryDto[];
+  projects: ProjectSummaryDto[];
+  runningSessions: RunningSessionSummaryDto[];
   canSplit: boolean;
   zoomed: boolean;
+  inWorkspace: boolean;
+  hasWorkspaceTabs: boolean;
   onOpenChange: (open: boolean) => void;
   onConnect: (host: HostSummaryDto) => void;
   onFiles: (host: HostSummaryDto) => void;
+  onOpenProject: (project: ProjectSummaryDto) => void;
+  onReattach: (session: RunningSessionSummaryDto) => void;
   onLocal: () => void;
+  onGoLauncher: () => void;
+  onGoWorkspace: () => void;
   onSplitRight: () => void;
   onSplitDown: () => void;
   onToggleZoom: () => void;
@@ -33,18 +50,28 @@ interface CommandPaletteProps {
   onAddHost: () => void;
   onImport: () => void;
   onSync: () => void;
+  onAssistSettings: () => void;
   onLock: () => void;
+  agentLabel?: (agentId: string | null | undefined) => string;
 }
 
 export function CommandPalette({
   open,
   hosts,
+  projects,
+  runningSessions,
   canSplit,
   zoomed,
+  inWorkspace,
+  hasWorkspaceTabs,
   onOpenChange,
   onConnect,
   onFiles,
+  onOpenProject,
+  onReattach,
   onLocal,
+  onGoLauncher,
+  onGoWorkspace,
   onSplitRight,
   onSplitDown,
   onToggleZoom,
@@ -53,7 +80,9 @@ export function CommandPalette({
   onAddHost,
   onImport,
   onSync,
+  onAssistSettings,
   onLock,
+  agentLabel = (id) => id ?? "agent",
 }: CommandPaletteProps): React.JSX.Element {
   function run(action: () => void) {
     onOpenChange(false);
@@ -80,7 +109,7 @@ export function CommandPalette({
           >
             <Command.Input
               autoFocus
-              placeholder="Search hosts and commands…"
+              placeholder="Search hosts, projects, and commands…"
               className="h-12 w-full border-b border-line bg-transparent px-4 text-[15px] text-fg outline-none placeholder:text-fg-subtle"
             />
             <Command.List className="max-h-[50vh] overflow-y-auto p-1.5">
@@ -88,7 +117,27 @@ export function CommandPalette({
                 No matching command
               </Command.Empty>
 
-              <Group heading="Session">
+              <Group heading="Navigate">
+                {inWorkspace && (
+                  <Item
+                    value="launcher dashboard home escape"
+                    icon={<LayoutGrid size={15} />}
+                    detail="⌘Esc"
+                    onSelect={() => run(onGoLauncher)}
+                  >
+                    Back to Launcher
+                  </Item>
+                )}
+                {!inWorkspace && hasWorkspaceTabs && (
+                  <Item
+                    value="workspace tabs panels escape"
+                    icon={<PanelsTopLeft size={15} />}
+                    detail="⌘Esc"
+                    onSelect={() => run(onGoWorkspace)}
+                  >
+                    Back to Workspace
+                  </Item>
+                )}
                 <Item
                   value="new local terminal shell"
                   icon={<TerminalSquare size={15} />}
@@ -97,30 +146,42 @@ export function CommandPalette({
                 >
                   New local terminal
                 </Item>
-                <Item
-                  value="split right pane vertical"
-                  icon={<Columns2 size={15} />}
-                  detail="⌘\\"
-                  onSelect={() => run(onSplitRight)}
-                >
-                  Split right
-                </Item>
-                <Item
-                  value="split down pane horizontal"
-                  icon={<Rows2 size={15} />}
-                  detail="⌘⇧\\"
-                  onSelect={() => run(onSplitDown)}
-                >
-                  Split down
-                </Item>
-                <Item
-                  value="zoom pane maximize"
-                  icon={<Maximize2 size={15} />}
-                  detail={zoomed ? "Exit zoom" : "Zoom focused pane"}
-                  onSelect={() => run(onToggleZoom)}
-                >
-                  {zoomed ? "Exit zoom" : "Zoom pane"}
-                </Item>
+                {inWorkspace && (
+                  <>
+                    <Item
+                      value="split right pane vertical"
+                      icon={<Columns2 size={15} />}
+                      detail="⌘\\"
+                      onSelect={() => run(onSplitRight)}
+                    >
+                      Split right
+                    </Item>
+                    <Item
+                      value="split down pane horizontal"
+                      icon={<Rows2 size={15} />}
+                      detail="⌘⇧\\"
+                      onSelect={() => run(onSplitDown)}
+                    >
+                      Split down
+                    </Item>
+                    <Item
+                      value="zoom pane maximize"
+                      icon={<Maximize2 size={15} />}
+                      detail={zoomed ? "Exit zoom" : "Zoom focused pane"}
+                      onSelect={() => run(onToggleZoom)}
+                    >
+                      {zoomed ? "Exit zoom" : "Zoom pane"}
+                    </Item>
+                    <Item
+                      value="move tab to new window"
+                      icon={<AppWindow size={15} />}
+                      detail={canSplit ? "Detach focused tab" : "No tab selected"}
+                      onSelect={() => run(onMoveToNewWindow)}
+                    >
+                      Move tab to new window
+                    </Item>
+                  </>
+                )}
                 <Item
                   value="new window workspace"
                   icon={<AppWindow size={15} />}
@@ -129,22 +190,46 @@ export function CommandPalette({
                 >
                   New window
                 </Item>
-                <Item
-                  value="move tab to new window"
-                  icon={<AppWindow size={15} />}
-                  detail={canSplit ? "Detach focused tab" : "No tab selected"}
-                  onSelect={() => run(onMoveToNewWindow)}
-                >
-                  Move tab to new window
-                </Item>
               </Group>
+
+              {runningSessions.length > 0 && (
+                <Group heading="Resume">
+                  {runningSessions.map((session) => (
+                    <Item
+                      key={session.id}
+                      value={`resume reattach running ${session.projectName} ${session.hostLabel} ${session.agentId ?? ""}`}
+                      icon={<Radio size={15} />}
+                      detail={`${agentLabel(session.agentId)} · ${session.hostLabel}`}
+                      onSelect={() => run(() => onReattach(session))}
+                    >
+                      Resume {session.projectName}
+                    </Item>
+                  ))}
+                </Group>
+              )}
+
+              {projects.length > 0 && (
+                <Group heading="Projects">
+                  {projects.map((project) => (
+                    <Item
+                      key={project.id}
+                      value={`open project ${project.name} ${project.defaultAgent ?? ""}`}
+                      icon={<FolderKanban size={15} />}
+                      detail={agentLabel(project.defaultAgent ?? "shell")}
+                      onSelect={() => run(() => onOpenProject(project))}
+                    >
+                      Open {project.name}
+                    </Item>
+                  ))}
+                </Group>
+              )}
 
               {hosts.length > 0 && (
                 <Group heading="Hosts">
                   {hosts.map((host) => (
                     <Item
                       key={`connect-${host.id}`}
-                      value={`connect ssh terminal ${host.label} ${host.hostname} ${host.username}`}
+                      value={`connect ssh terminal ${host.label} ${host.hostname} ${host.username} ${host.tags.join(" ")}`}
                       icon={
                         <HostAvatar
                           label={host.label}
@@ -196,6 +281,14 @@ export function CommandPalette({
                   onSelect={() => run(onSync)}
                 >
                   Vault sync
+                </Item>
+                <Item
+                  value="assist providers api keys openrouter ollama anthropic openai models"
+                  icon={<Sparkles size={15} />}
+                  detail="Paste key · Test · pick model"
+                  onSelect={() => run(onAssistSettings)}
+                >
+                  Assist providers
                 </Item>
                 <Item
                   value="lock vault security"

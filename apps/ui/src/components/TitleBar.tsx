@@ -4,13 +4,16 @@ import {
   Columns2,
   Info,
   KeyRound,
+  LayoutGrid,
   Lock,
   Maximize2,
   MoreHorizontal,
   PanelLeft,
+  PanelsTopLeft,
   RefreshCw,
   Rows2,
   Search,
+  Sparkles,
   TerminalSquare,
 } from "lucide-react";
 import { cn } from "../lib/cn";
@@ -26,6 +29,10 @@ interface TitleBarProps {
   zoomed: boolean;
   canZoom: boolean;
   appVersion?: string;
+  /** When false, hide sidebar toggle (Launcher mode). */
+  showSidebarToggle?: boolean;
+  /** Workspace-only chrome: splits, zoom, move tab. */
+  workspaceChrome?: boolean;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
   onOpenLocal: () => void;
@@ -35,9 +42,14 @@ interface TitleBarProps {
   onNewWindow: () => void;
   onMoveToNewWindow: () => void;
   onSync: () => void;
+  onAssistSettings: () => void;
   onChangePassword: () => void;
   onAbout: () => void;
   onLock: () => void;
+  /** Return to Launcher without closing sessions. */
+  onGoLauncher?: () => void;
+  /** Return to Workspace tabs without closing sessions (Launcher mode). */
+  onGoWorkspace?: () => void;
 }
 
 export function TitleBar({
@@ -48,6 +60,8 @@ export function TitleBar({
   zoomed,
   canZoom,
   appVersion,
+  showSidebarToggle = true,
+  workspaceChrome = true,
   onToggleSidebar,
   onOpenPalette,
   onOpenLocal,
@@ -57,9 +71,12 @@ export function TitleBar({
   onNewWindow,
   onMoveToNewWindow,
   onSync,
+  onAssistSettings,
   onChangePassword,
   onAbout,
   onLock,
+  onGoLauncher,
+  onGoWorkspace,
 }: TitleBarProps): React.JSX.Element {
   return (
     // "deep" makes the whole strip draggable; Tauri still exempts buttons.
@@ -67,11 +84,29 @@ export function TitleBar({
       data-tauri-drag-region="deep"
       className="pl-traffic-lights flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface pr-3"
     >
-      <Tooltip content="Toggle sidebar  ⌘B" side="bottom">
-        <IconButton label="Toggle sidebar" onClick={onToggleSidebar}>
-          <PanelLeft size={15} />
-        </IconButton>
-      </Tooltip>
+      {showSidebarToggle && (
+        <Tooltip content="Toggle sidebar  ⌘B" side="bottom">
+          <IconButton label="Toggle sidebar" onClick={onToggleSidebar}>
+            <PanelLeft size={15} />
+          </IconButton>
+        </Tooltip>
+      )}
+
+      {onGoLauncher && (
+        <Tooltip content="Launcher  ⌘Esc" side="bottom">
+          <IconButton label="Back to launcher" onClick={onGoLauncher}>
+            <LayoutGrid size={15} />
+          </IconButton>
+        </Tooltip>
+      )}
+
+      {onGoWorkspace && (
+        <Tooltip content="Workspace  ⌘Esc" side="bottom">
+          <IconButton label="Back to workspace" onClick={onGoWorkspace}>
+            <PanelsTopLeft size={15} />
+          </IconButton>
+        </Tooltip>
+      )}
 
       <Logo variant="lockup" size={17} className="max-[520px]:[&>span]:hidden" />
 
@@ -91,36 +126,40 @@ export function TitleBar({
       </button>
 
       <div className="ml-auto flex items-center gap-1">
-        <Tooltip content="Split right" side="bottom">
-          <IconButton
-            label="Split right"
-            onClick={onSplitRight}
-            disabled={!canSplit}
-            className="max-md:hidden"
-          >
-            <Columns2 size={15} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip content="Split down" side="bottom">
-          <IconButton
-            label="Split down"
-            onClick={onSplitDown}
-            disabled={!canSplit}
-            className="max-md:hidden"
-          >
-            <Rows2 size={15} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip content={zoomed ? "Exit zoom  Esc" : "Zoom pane  ⌘⇧↵"} side="bottom">
-          <IconButton
-            label={zoomed ? "Exit zoom" : "Zoom pane"}
-            onClick={onToggleZoom}
-            disabled={!canZoom}
-            className="max-md:hidden"
-          >
-            <Maximize2 size={15} />
-          </IconButton>
-        </Tooltip>
+        {workspaceChrome && (
+          <>
+            <Tooltip content="Split right" side="bottom">
+              <IconButton
+                label="Split right"
+                onClick={onSplitRight}
+                disabled={!canSplit}
+                className="max-md:hidden"
+              >
+                <Columns2 size={15} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip content="Split down" side="bottom">
+              <IconButton
+                label="Split down"
+                onClick={onSplitDown}
+                disabled={!canSplit}
+                className="max-md:hidden"
+              >
+                <Rows2 size={15} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip content={zoomed ? "Exit zoom  Esc" : "Zoom pane  ⌘⇧↵"} side="bottom">
+              <IconButton
+                label={zoomed ? "Exit zoom" : "Zoom pane"}
+                onClick={onToggleZoom}
+                disabled={!canZoom}
+                className="max-md:hidden"
+              >
+                <Maximize2 size={15} />
+              </IconButton>
+            </Tooltip>
+          </>
+        )}
 
         <Tooltip content="New local terminal" side="bottom">
           <IconButton
@@ -154,18 +193,38 @@ export function TitleBar({
                 Command palette
                 <span className="ml-auto text-fg-subtle">⌘K</span>
               </MenuItem>
+              {onGoLauncher && (
+                <MenuItem icon={<LayoutGrid size={14} />} onSelect={onGoLauncher}>
+                  Launcher
+                  <span className="ml-auto text-fg-subtle">⌘Esc</span>
+                </MenuItem>
+              )}
+              {onGoWorkspace && (
+                <MenuItem
+                  icon={<PanelsTopLeft size={14} />}
+                  onSelect={onGoWorkspace}
+                >
+                  Workspace
+                  <span className="ml-auto text-fg-subtle">⌘Esc</span>
+                </MenuItem>
+              )}
               <MenuItem icon={<AppWindow size={14} />} onSelect={onNewWindow}>
                 New window
               </MenuItem>
-              <MenuItem
-                icon={<AppWindow size={14} />}
-                onSelect={onMoveToNewWindow}
-              >
-                Move tab to new window
-              </MenuItem>
+              {workspaceChrome && (
+                <MenuItem
+                  icon={<AppWindow size={14} />}
+                  onSelect={onMoveToNewWindow}
+                >
+                  Move tab to new window
+                </MenuItem>
+              )}
               <DropdownMenu.Separator className="my-1 h-px bg-line" />
               <MenuItem icon={<RefreshCw size={14} />} onSelect={onSync}>
                 Vault sync
+              </MenuItem>
+              <MenuItem icon={<Sparkles size={14} />} onSelect={onAssistSettings}>
+                Assist providers
               </MenuItem>
               <MenuItem
                 icon={<KeyRound size={14} />}

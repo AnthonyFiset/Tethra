@@ -7,10 +7,13 @@ use super::SecretString;
 
 /// Which HTTP Assist backend to call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum AssistProviderKind {
+    #[serde(rename = "anthropic")]
     Anthropic,
+    /// Prefer `openai`; `openAi` accepted for vault rows written under rename_all=camelCase.
+    #[serde(rename = "openai", alias = "openAi")]
     OpenAi,
+    #[serde(rename = "openaiCompat", alias = "openAiCompat")]
     OpenAiCompat,
 }
 

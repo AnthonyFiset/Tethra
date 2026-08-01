@@ -86,7 +86,7 @@ export function AssistBar({
           className="ml-auto text-micro text-accent hover:underline"
           onClick={onOpenSettings}
         >
-          API keys
+          Providers
         </button>
         <button
           type="button"

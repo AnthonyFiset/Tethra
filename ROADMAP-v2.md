@@ -1,7 +1,11 @@
 # Tethra roadmap — v2
 
-_Supersedes the old M7/M8 rows in [`PROJECT.md`](PROJECT.md) §12. Written after M6.1.
-Canonical milestone summary also lives in `PROJECT.md` §12 and [`STATUS.md`](STATUS.md)._
+_Written after M6.1. **M10/M11 below are superseded** by [`ROADMAP-v3.md`](ROADMAP-v3.md)
+(Launcher/workspace, catalogs, terminal feel, fleet as M13, mobile as M14).
+Keep this file for M6.2–M9 narrative; use v3 for what to build next._
+
+Canonical milestone summary also lives in `PROJECT.md` §12 and [`STATUS.md`](STATUS.md).
+Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 
 ## The reframe
 
@@ -30,14 +34,17 @@ the demo that sells the product, and it contains no model calls.
 
 ## Revised milestones
 
-| # | Name | Why now |
-|---|---|---|
-| **M6.2** | Sync you don't think about | Your stated friction; also clears debt |
-| **M7** | Real terminal | Agent CLIs are demanding TTY clients; everything downstream needs this |
-| **M8** | Projects and agents | The actual product thesis |
-| **M9** | Assist | Natural language to command, gated |
-| **M10** | Fleet power features | Was M7; demoted — parity, not differentiation |
-| **M11** | Mobile | Reframed, and much stronger for it |
+| # | Name | Status | Why now |
+|---|---|---|---|
+| **M6.2** | Sync you don't think about | **Done** | Friction + debt |
+| **M7** | Real terminal | **Done** | Agent CLIs need a real TTY |
+| **M8** | Projects and agents | **Done** | Product thesis |
+| **M9** | Assist | **Done** (v0.2.5) | NL→command, gated |
+| **M10–M14** | _(see v3)_ | — | Launcher → catalogs → feel → fleet → mobile |
+
+**Next work is defined in [`ROADMAP-v3.md`](ROADMAP-v3.md), not the M10/M11 rows below.**
+
+Live strategy snapshot: [`HANDOFF.md`](HANDOFF.md).
 
 ---
 
@@ -68,7 +75,7 @@ different default.
 - **Restore the iOS portability guard.** M6.1 deleted
   `cargo check -p core --target aarch64-apple-ios` because Ubuntu has no `xcrun`.
   Move it to the macOS runner you already have for the `.dmg`, with
-  `rustup target add aarch64-apple-ios`. Without it, `core` rots silently and M11
+  `rustup target add aarch64-apple-ios`. Without it, `core` rots silently and M14
   stops being a port.
 - **Auto-mirror timer** on the ThinkPad so updates don't need a manual
   `fetch-updates`.
@@ -218,18 +225,24 @@ Anything beyond this is competing with the agents you're hosting. Don't.
 
 ---
 
-## M10 — Fleet power features
+## M10 — Fleet power features _(superseded — see v3 M13)_
+
+> **v3 renumbered this to M13** and put Launcher/workspace + catalogs ahead of it.
+> Promote fleet above terminal-feel **only** if `ProxyJump` is blocking machines
+> you need today. Detail: [`ROADMAP-v3.md`](ROADMAP-v3.md).
 
 Port forwarding, live `ProxyJump` routing, snippets, multi-host broadcast.
 
-Demoted from M7 because these are Termius parity, not differentiation — with one
-exception. Build **broadcast** as a `FleetExec` API that takes a host set and
-returns structured per-host results, with the UI on top. Structured fan-out is a
-genuinely useful primitive and it ages well; a broadcast text box does not.
+Demoted from old M7 because these are Termius parity, not differentiation — with
+one exception. Build **broadcast** as a `FleetExec` API that takes a host set and
+returns structured per-host results, with the UI on top.
 
 ---
 
-## M11 — Mobile
+## M11 — Mobile _(superseded — see v3 M14)_
+
+> **v3 defers mobile to the end (M14).** Framing unchanged: check on agents
+> already running, not “SSH from your phone.”
 
 The original framing — "SSH from your phone" — is a chore nobody wants. Typing
 into a terminal on a touchscreen is miserable and always will be.
@@ -245,12 +258,6 @@ Core should still need zero changes. M6.2 restores the guard that keeps that tru
 
 ## Open question
 
-The repo is still private at `v0.2.1`, and `PROJECT.md` describes Tethra as open
-source. That decision gates real work — code signing and notarization, README and
-LICENSE, onboarding for people who don't already know how it works, and the
-support surface that comes with strangers filing issues.
-
-None of it is required if this is three machines and you. All of it is required
-before anyone else can install it without a Gatekeeper override. Worth deciding
-before M8, because "open a project and launch an agent" is the feature that would
-make other people want it.
+See [`ROADMAP-v3.md`](ROADMAP-v3.md) “Two decisions worth making now”: private vs
+public repo (signing + catalog-as-PR), and whether catalogs ship from the ThinkPad
+only or a public URL.

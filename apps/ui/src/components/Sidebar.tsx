@@ -1,5 +1,6 @@
 import {
   DownloadCloud,
+  Folder,
   FolderKanban,
   FolderOpen,
   Lock,
@@ -10,6 +11,7 @@ import {
   Radio,
   ShieldCheck,
   ShieldAlert,
+  TerminalSquare,
   Trash2,
   X,
 } from "lucide-react";
@@ -20,6 +22,7 @@ import type {
 } from "../lib/ipc";
 import { cn } from "../lib/cn";
 import { HostAvatar } from "./HostAvatar";
+import type { TabDescriptor } from "./TabBar";
 import { IconButton } from "./ui/Button";
 import { Tooltip } from "./ui/Tooltip";
 
@@ -27,6 +30,9 @@ interface SidebarProps {
   hosts: HostSummaryDto[];
   projects: ProjectSummaryDto[];
   runningSessions: RunningSessionSummaryDto[];
+  /** Open tabs in this window (Workspace session tree). */
+  openTabs: TabDescriptor[];
+  activeTabId?: string;
   collapsed: boolean;
   drawerOpen: boolean;
   recoveryAvailable: boolean;
@@ -46,13 +52,19 @@ interface SidebarProps {
   onAddProject: () => void;
   onReattach: (session: RunningSessionSummaryDto) => void;
   onEndSession: (session: RunningSessionSummaryDto) => void;
+  onSelectTab: (sessionId: string) => void;
+  onCloseTab: (sessionId: string) => void;
   onLock: () => void;
+  /** Map agent id → display name. */
+  agentLabel?: (agentId: string | null | undefined) => string;
 }
 
 export function Sidebar({
   hosts,
   projects,
   runningSessions,
+  openTabs,
+  activeTabId,
   collapsed,
   drawerOpen,
   recoveryAvailable,
@@ -72,7 +84,10 @@ export function Sidebar({
   onAddProject,
   onReattach,
   onEndSession,
+  onSelectTab,
+  onCloseTab,
   onLock,
+  agentLabel = (id) => id ?? "agent",
 }: SidebarProps): React.JSX.Element {
   return (
     <aside
@@ -95,6 +110,7 @@ export function Sidebar({
           hostCount={hosts.length}
           projectCount={projects.length}
           runningCount={runningSessions.length}
+          openCount={openTabs.length}
           onToggleCollapsed={onToggleCollapsed}
           onAddHost={onAddHost}
           onAddProject={onAddProject}
@@ -103,6 +119,54 @@ export function Sidebar({
       )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        {openTabs.length > 0 && (
+          <nav
+            aria-label="Open sessions"
+            className={cn(
+              "flex flex-col border-b border-line",
+              collapsed ? "items-center gap-1 px-2 py-2" : "gap-0.5 px-2 py-1",
+            )}
+          >
+            {!collapsed && (
+              <span className="px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-fg-subtle uppercase">
+                Open
+              </span>
+            )}
+            {openTabs.map((tab) =>
+              collapsed ? (
+                <Tooltip key={tab.sessionId} content={tab.title}>
+                  <button
+                    onClick={() => onSelectTab(tab.sessionId)}
+                    className={cn(
+                      "cursor-pointer rounded-md p-1 transition-colors hover:bg-hover",
+                      tab.sessionId === activeTabId && "bg-active",
+                    )}
+                  >
+                    <span
+                      className="grid h-7 w-7 place-items-center rounded-md bg-elevated"
+                      style={{ color: tab.color ?? undefined }}
+                    >
+                      {tab.kind === "sftp" ? (
+                        <Folder size={14} />
+                      ) : (
+                        <TerminalSquare size={14} />
+                      )}
+                    </span>
+                  </button>
+                </Tooltip>
+              ) : (
+                <OpenTabRow
+                  key={tab.sessionId}
+                  tab={tab}
+                  active={tab.sessionId === activeTabId}
+                  onSelect={onSelectTab}
+                  onClose={onCloseTab}
+                />
+              ),
+            )}
+          </nav>
+        )}
+
         {runningSessions.length > 0 && (
           <nav
             aria-label="Running sessions"
@@ -142,6 +206,7 @@ export function Sidebar({
                   opening={openingProjectId === session.projectId}
                   onReattach={onReattach}
                   onEnd={onEndSession}
+                  agentLabel={agentLabel}
                 />
               ),
             )}
@@ -283,6 +348,7 @@ function ExpandedHeader({
   hostCount,
   projectCount,
   runningCount,
+  openCount,
   onToggleCollapsed,
   onAddHost,
   onAddProject,
@@ -291,6 +357,7 @@ function ExpandedHeader({
   hostCount: number;
   projectCount: number;
   runningCount: number;
+  openCount: number;
   onToggleCollapsed: () => void;
   onAddHost: () => void;
   onAddProject: () => void;
@@ -302,7 +369,7 @@ function ExpandedHeader({
         Vault
       </span>
       <span className="grid h-4 min-w-4 place-items-center rounded-full border border-line px-1 text-[10px] text-fg-muted">
-        {projectCount + hostCount + runningCount}
+        {openCount + projectCount + hostCount + runningCount}
       </span>
       <div className="ml-auto flex items-center gap-0.5">
         <Tooltip content="Import SSH config" side="bottom">
@@ -371,18 +438,78 @@ function RailHeader({
   );
 }
 
+function OpenTabRow({
+  tab,
+  active,
+  onSelect,
+  onClose,
+}: {
+  tab: TabDescriptor;
+  active: boolean;
+  onSelect: (sessionId: string) => void;
+  onClose: (sessionId: string) => void;
+}): React.JSX.Element {
+  return (
+    <div
+      className={cn(
+        "group relative flex items-center rounded-md transition-colors hover:bg-hover focus-within:bg-hover",
+        active && "bg-active/60",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onSelect(tab.sessionId)}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left"
+      >
+        <span
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-elevated"
+          style={{ color: tab.color ?? undefined }}
+        >
+          {tab.kind === "sftp" ? (
+            <Folder size={14} />
+          ) : (
+            <TerminalSquare size={14} />
+          )}
+        </span>
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-ui font-medium text-fg">{tab.title}</span>
+          <span className="truncate text-micro text-fg-subtle">
+            {tab.kind === "sftp"
+              ? "Files"
+              : tab.kind === "local"
+                ? "Local"
+                : "Terminal"}
+            {!tab.connected ? " · disconnected" : ""}
+          </span>
+        </span>
+      </button>
+      <div className="absolute right-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <IconButton
+          label={`Close ${tab.title}`}
+          size="sm"
+          onClick={() => onClose(tab.sessionId)}
+        >
+          <X size={13} />
+        </IconButton>
+      </div>
+    </div>
+  );
+}
+
 function RunningRow({
   session,
   opening,
   onReattach,
   onEnd,
+  agentLabel,
 }: {
   session: RunningSessionSummaryDto;
   opening: boolean;
   onReattach: (session: RunningSessionSummaryDto) => void;
   onEnd: (session: RunningSessionSummaryDto) => void;
+  agentLabel: (agentId: string | null | undefined) => string;
 }): React.JSX.Element {
-  const agent = session.agentId ?? "agent";
+  const agent = agentLabel(session.agentId);
   return (
     <div className="group relative flex items-center rounded-md transition-colors hover:bg-hover focus-within:bg-hover">
       <button

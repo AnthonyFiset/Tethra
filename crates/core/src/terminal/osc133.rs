@@ -37,10 +37,19 @@ impl Osc133Parser {
     }
 
     pub fn push(&mut self, data: &[u8]) -> Vec<BlockEvent> {
+        self.push_indexed(data)
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect()
+    }
+
+    /// Like [`push`], but each event is paired with the exclusive end offset
+    /// in `data` where the OSC sequence finished (after BEL / ST).
+    pub fn push_indexed(&mut self, data: &[u8]) -> Vec<(usize, BlockEvent)> {
         let mut events = Vec::new();
-        for &byte in data {
+        for (i, &byte) in data.iter().enumerate() {
             if let Some(event) = self.feed(byte) {
-                events.push(event);
+                events.push((i + 1, event));
             }
         }
         events
@@ -198,11 +207,17 @@ mod tests {
     }
 
     #[test]
-    fn command_end_without_exit_code() {
+    fn push_indexed_reports_end_offsets() {
         let mut parser = Osc133Parser::new();
-        assert_eq!(
-            parser.push(&bel("133;D")),
-            vec![BlockEvent::CommandEnd { exit_code: None }]
-        );
+        let mut stream = Vec::new();
+        stream.extend(bel("133;A"));
+        stream.extend(b"hi");
+        stream.extend(bel("133;B"));
+        let events = parser.push_indexed(&stream);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, bel("133;A").len());
+        assert_eq!(events[0].1, BlockEvent::PromptStart);
+        assert_eq!(events[1].0, stream.len());
+        assert_eq!(events[1].1, BlockEvent::CommandStart);
     }
 }

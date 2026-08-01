@@ -1,0 +1,109 @@
+[
+  {
+    "id": "claude-code",
+    "display_name": "Claude Code",
+    "command": "claude",
+    "args": [],
+    "install": {
+      "default": "npm install -g @anthropic-ai/claude-code"
+    },
+    "detect_args": ["--version"],
+    "persistent_default": true,
+    "byok_env": [],
+    "supports_openai_compat": false,
+    "docs_url": "https://docs.anthropic.com/en/docs/claude-code",
+    "status": { "kind": "active" }
+  },
+  {
+    "id": "codex",
+    "display_name": "Codex CLI",
+    "command": "codex",
+    "args": [],
+    "install": {
+      "default": "npm install -g @openai/codex"
+    },
+    "detect_args": ["--version"],
+    "persistent_default": true,
+    "byok_env": ["OPENAI_API_KEY"],
+    "supports_openai_compat": true,
+    "docs_url": "https://github.com/openai/codex",
+    "status": { "kind": "active" }
+  },
+  {
+    "id": "gemini",
+    "display_name": "Gemini CLI",
+    "command": "gemini",
+    "args": [],
+    "install": {
+      "default": "npm install -g @google/gemini-cli"
+    },
+    "detect_args": ["--version"],
+    "persistent_default": true,
+    "byok_env": [],
+    "supports_openai_compat": false,
+    "docs_url": "https://github.com/google-gemini/gemini-cli",
+    "status": { "kind": "deprecated", "successor": "antigravity" }
+  },
+  {
+    "id": "antigravity",
+    "display_name": "Antigravity CLI",
+    "command": "agy",
+    "args": [],
+    "install": {
+      "macos": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+      "linux": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+      "windows": "irm https://antigravity.google/cli/install.ps1 | iex",
+      "default": "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+    },
+    "detect_args": ["--version"],
+    "persistent_default": true,
+    "byok_env": [],
+    "supports_openai_compat": false,
+    "docs_url": "https://antigravity.google/docs/cli/install",
+    "status": { "kind": "active" }
+  },
+  {
+    "id": "opencode",
+    "display_name": "OpenCode",
+    "command": "opencode",
+    "args": [],
+    "install": {
+      "default": "npm install -g opencode-ai"
+    },
+    "detect_args": ["--version"],
+    "persistent_default": true,
+    "byok_env": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+    "supports_openai_compat": true,
+    "docs_url": "https://github.com/sst/opencode",
+    "status": { "kind": "active" }
+  },
+  {
+    "id": "aider",
+    "display_name": "aider",
+    "command": "aider",
+    "args": [],
+    "install": {
+      "macos": "brew install aider",
+      "default": "pipx install aider-chat"
+    },
+    "detect_args": ["--version"],
+    "persistent_default": true,
+    "byok_env": ["OPENAI_API_KEY", "OPENAI_API_BASE"],
+    "supports_openai_compat": true,
+    "docs_url": "https://aider.chat",
+    "status": { "kind": "active" }
+  },
+  {
+    "id": "shell",
+    "display_name": "Shell only",
+    "command": "",
+    "args": [],
+    "install": {},
+    "detect_args": [],
+    "persistent_default": true,
+    "byok_env": [],
+    "supports_openai_compat": false,
+    "docs_url": null,
+    "status": { "kind": "active" }
+  }
+]

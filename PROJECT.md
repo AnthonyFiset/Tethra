@@ -12,16 +12,18 @@
 A free, open-source SSH and SFTP client with an encrypted vault of saved hosts
 that syncs across devices — and the place coding agents run, on your laptop and
 on every machine you own. Not an agent itself: a *host* for agents (Claude Code,
-Codex CLI, Gemini CLI, aider, …). The vault, fleet, and sync are the expensive
-half; the wedge is **session persistence** (transparent multiplexer wrap so an
-agent survives sleep/network/lid close and can reattach from another device).
+Codex CLI, OpenCode, aider, and whatever replaces them next — catalogs, not
+compiled presets). The vault, fleet, and sync are the expensive half; the wedge
+is **session persistence** (transparent multiplexer wrap so an agent survives
+sleep/network/lid close and can reattach from another device).
 
-**Desktop first** (macOS, Windows, Linux). **iOS and Android later**, reframed
-as checking on agents already running — but every decision today is made so that
-mobile is a port, not a rewrite.
+**Desktop first** (macOS, Windows, Linux). **Mobile last (M14)** — check on agents
+already running — but every decision today is made so that mobile is a port, not
+a rewrite.
 
 The original Termius-with-unread-credentials scope is done through M6.1. The
-post-M6.1 plan is in [`ROADMAP-v2.md`](ROADMAP-v2.md). §9's `exec` path and
+post-M6.1 narrative through Assist is in [`ROADMAP-v2.md`](ROADMAP-v2.md); **what
+to build next** is [`ROADMAP-v3.md`](ROADMAP-v3.md). §9's `exec` path and
 `ApprovalGate` remain the seam Assist (M9) plugs into.
 
 ---
@@ -360,8 +362,9 @@ front:
 
 ## 12. Milestones
 
-Shipped through M6.1. Post-M6.1 detail lives in [`ROADMAP-v2.md`](ROADMAP-v2.md);
-this section is the summary Cursor should respect.
+Shipped through M9 (v0.2.5). **What to build next** lives in
+[`ROADMAP-v3.md`](ROADMAP-v3.md). v2 (`ROADMAP-v2.md`) is historical for M6.2–M9.
+This section is the summary Cursor should respect; strategy brief: `HANDOFF.md`.
 
 **M1 — headless core.** `core/ssh` with a small CLI harness in `examples/`. No
 Tauri at all. Connect, PTY, resize, exec, SFTP list/get/put. If this works
@@ -394,25 +397,39 @@ runner, auto-mirror timer on the sync host. ✅ See `docs/M6.2.md`.
 **M7 — real terminal.** Alternate screen, truecolor, bracketed paste, OSC 52/7,
 mouse/SIGWINCH, Unicode width; OSC 133 command blocks in `core`; splits /
 multi-window over the session registry (hard rule 5). Acceptance: Claude Code
-local and over SSH matches Terminal.app / Ghostty. ✅ See `docs/M7.md`.
+local and over SSH matches Terminal.app / Ghostty. ✅ See `docs/M7.md`. Stay on
+xterm.js (known scroll-jump under agent TUIs → M12).
 
 **M8 — projects and agents.** First-class `Project` + `AgentSpec`; open project =
 connect → `cd` → launch agent; persistent remote agents via `tmux`/`zellij`
 (do not build a multiplexer); running-sessions view; cross-device reattach.
-✅ See `docs/M8.md`.
+✅ See `docs/M8.md`. Presets must become data catalogs in M11 (not compiled-in).
 
 **M9 — Assist.** `Cmd/Ctrl+I` → NL to command in the input (never auto-exec);
 pluggable providers; API keys as vault items with `sync_secret`; explain-failure
 via block context. Stay small — do not compete with the agents you host.
-See `docs/M9.md`.
+✅ See `docs/M9.md`. OpenAI-compat path is the bulk of “all providers”; M11 is UX
++ presets.
 
-**M10 — fleet power features.** Port forwarding, live `ProxyJump`, snippets,
-multi-host broadcast via a structured `FleetExec` API. (Was M7; demoted —
-Termius parity, not differentiation.)
+**M10 — launcher and workspace.** Two modes: Launcher (Resume-first dashboard,
+no sidebar) ↔ Workspace (current UI, sidebar here only). Last tab → Launcher;
+Launcher never kills sessions. See `ROADMAP-v3.md`, `docs/M10.md`.
 
-**M11 — mobile.** Reframed: reattach to persistent agent sessions, read output,
-approve/stop, short reply — not "SSH from your phone". `platform-ios` shim;
-core should need zero changes.
+**M11 — provider and agent catalogs.** Synced `Catalog<T>` (bundled → sync-server
+→ vault overrides). **M11.1–11.3 done** — provider paste-key + Test UX; agent
+catalog + project picker (`docs/M11.md`). BYOK env injection at launch deferred.
+See `ROADMAP-v3.md` §A.
+
+**M12 — terminal feel.** OSC 133 blocks (**M12.1**), agent TUI scroll-jump filter
+(**M12.2**), token theme (**M12.3**), same-device serialize reattach (**M12.4**) —
+see `docs/M12.md`. Still open: ligature toggle, cross-device scrollback sync,
+optional asciinema.
+
+**M13 — fleet power features.** Port forwarding, live `ProxyJump`, snippets,
+`FleetExec` structured broadcast. Promote above M12 only if jump hosts block you.
+
+**M14 — mobile.** Deferred. Reattach/monitor persistent agents — not “SSH from
+your phone.” Keep `cargo check -p core --target aarch64-apple-ios` green.
 
 ---
 
@@ -423,11 +440,14 @@ Do not build these, and push back if asked outside the milestone that owns them:
 - Anything beyond M9 Assist that turns Tethra into an agent (host agents; don't
   compete with them)
 - Telnet, serial, RDP, VNC
-- Mosh (revisit with M11 if mobile needs it, not before)
+- Mosh (revisit with M14 if mobile needs it, not before)
 - Team/organization sharing
 - Plugin system
-- Custom themes beyond light/dark
+- Migrating Radix → Base UI “because shadcn did” (v3: stay on Radix)
+- Replacing xterm.js with Ghostty-WASM or similar (v3: stay; fix scroll-jump in M12)
 - A custom multiplexer (shell out to `tmux` / `zellij`)
+- Compiling agent/provider presets into the binary as the long-term source of
+  truth (M11 catalogs are data)
 
 ---
 

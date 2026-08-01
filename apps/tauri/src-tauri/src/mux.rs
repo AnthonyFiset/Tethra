@@ -169,42 +169,49 @@ fn install_for(tool: &str, platform: &str, has_brew: bool) -> Option<(String, St
             "zellij".into(),
             "brew install zellij".into(),
         )),
-        ("claude", _) => Some((
-            "claude".into(),
-            "Claude Code".into(),
-            "npm install -g @anthropic-ai/claude-code".into(),
-        )),
-        ("codex", _) => Some((
-            "codex".into(),
-            "Codex CLI".into(),
-            "npm install -g @openai/codex".into(),
-        )),
-        ("gemini", _) => Some((
-            "gemini".into(),
-            "Gemini CLI".into(),
-            "npm install -g @google/gemini-cli".into(),
-        )),
-        ("aider", "macos") if has_brew => {
-            Some(("aider".into(), "aider".into(), "brew install aider".into()))
+        _ => {
+            let preset = ssh_client_core::agents::agent_preset_by_command(tool)
+                .ok()
+                .flatten()?;
+            let cmd = match (platform, has_brew) {
+                ("macos", false)
+                    if preset
+                        .install
+                        .macos
+                        .as_deref()
+                        .is_some_and(|c| c.contains("brew")) =>
+                {
+                    preset
+                        .install
+                        .default
+                        .as_deref()
+                        .or(preset.install.macos.as_deref())
+                }
+                _ => preset.install.for_platform(platform),
+            }?;
+            Some((
+                preset.command.clone(),
+                preset.display_name.clone(),
+                cmd.to_string(),
+            ))
         }
-        ("aider", _) => Some((
-            "aider".into(),
-            "aider".into(),
-            "pipx install aider-chat".into(),
-        )),
-        _ => None,
     }
 }
 
-fn reason_for(tool: &str) -> &'static str {
+fn reason_for(tool: &str) -> String {
     match tool {
-        "tmux" => "Keeps project sessions alive across disconnects and quitting Tethra.",
-        "zellij" => "Alternative multiplexer when tmux is unavailable.",
-        "claude" => "Required to launch the Claude Code agent for this project.",
-        "codex" => "Required to launch the Codex CLI agent for this project.",
-        "gemini" => "Required to launch the Gemini CLI agent for this project.",
-        "aider" => "Required to launch the aider agent for this project.",
-        _ => "Required for this project’s default agent.",
+        "tmux" => "Keeps project sessions alive across disconnects and quitting Tethra.".into(),
+        "zellij" => "Alternative multiplexer when tmux is unavailable.".into(),
+        other => {
+            if let Ok(Some(preset)) = ssh_client_core::agents::agent_preset_by_command(other) {
+                format!(
+                    "Required to launch the {} agent for this project.",
+                    preset.display_name
+                )
+            } else {
+                "Required for this project’s default agent.".into()
+            }
+        }
     }
 }
 
@@ -287,7 +294,7 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
         missing.push(MissingToolDto {
             id,
             label,
-            reason: reason_for("tmux").into(),
+            reason: reason_for("tmux"),
             install_command: cmd,
         });
     }
@@ -305,14 +312,14 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
             missing.push(MissingToolDto {
                 id,
                 label,
-                reason: reason_for(tool).into(),
+                reason: reason_for(tool),
                 install_command: cmd,
             });
         } else {
             missing.push(MissingToolDto {
                 id: tool.clone(),
                 label: tool.clone(),
-                reason: reason_for(tool).into(),
+                reason: reason_for(tool),
                 install_command: format!(
                     "# install `{tool}` for this host, then reopen the project"
                 ),

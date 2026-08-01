@@ -16,6 +16,7 @@ import type { MuxEnsureResultDto } from "./generated/MuxEnsureResultDto";
 import type { MissingToolDto } from "./generated/MissingToolDto";
 import type { ProjectLocationDto } from "./generated/ProjectLocationDto";
 import type { ProjectSummaryDto } from "./generated/ProjectSummaryDto";
+import type { ProviderPresetDto } from "./generated/ProviderPresetDto";
 import type { RunningSessionSummaryDto } from "./generated/RunningSessionSummaryDto";
 import type { SftpOpenResult } from "./generated/SftpOpenResult";
 import type { SshConfigHostDto } from "./generated/SshConfigHostDto";
@@ -25,6 +26,7 @@ import type { SyncReportDto } from "./generated/SyncReportDto";
 import type { SyncStatusDto } from "./generated/SyncStatusDto";
 import type { TerminalEvent } from "./generated/TerminalEvent";
 import type { TerminalEventEnvelope } from "./generated/TerminalEventEnvelope";
+import type { TestProviderResultDto } from "./generated/TestProviderResultDto";
 import type { ToolsProbeDto } from "./generated/ToolsProbeDto";
 import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
@@ -42,6 +44,7 @@ export type {
   MuxEnsureResultDto,
   ProjectLocationDto,
   ProjectSummaryDto,
+  ProviderPresetDto,
   RunningSessionSummaryDto,
   SftpOpenResult,
   SshConfigHostDto,
@@ -51,6 +54,7 @@ export type {
   SyncStatusDto,
   TerminalEvent,
   TerminalEventEnvelope,
+  TestProviderResultDto,
   ToolsProbeDto,
   UpdateInfoDto,
   TransferEvent,
@@ -207,6 +211,23 @@ export interface AssistContextPayload {
   isLocal: boolean;
   transcriptTail: string;
   lastExitCode?: number;
+}
+
+export interface TestProviderRequest {
+  provider: AssistProviderId;
+  baseUrl?: string;
+  apiKey?: string;
+  presetId?: string;
+}
+
+export function listAssistPresets(): Promise<ProviderPresetDto[]> {
+  return invoke<ProviderPresetDto[]>("list_assist_presets");
+}
+
+export function assistTestProvider(
+  request: TestProviderRequest,
+): Promise<TestProviderResultDto> {
+  return invoke<TestProviderResultDto>("assist_test_provider", { request });
 }
 
 export function listApiKeys(): Promise<ApiKeySummaryDto[]> {

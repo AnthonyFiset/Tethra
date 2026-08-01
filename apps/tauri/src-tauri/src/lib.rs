@@ -9,9 +9,7 @@ use async_trait::async_trait;
 use platform::AppPaths;
 use serde::{Deserialize, Serialize};
 use ssh_client_core::Result as CoreResult;
-use ssh_client_core::model::{
-    KnownHostKey, ProjectLocation, PtySize, SecretString, builtin_agents,
-};
+use ssh_client_core::model::{KnownHostKey, ProjectLocation, PtySize, SecretString};
 use ssh_client_core::ssh::{
     Action, AlwaysApprove, ApprovalGate, HostKeyDecision, HostKeyPolicy, PresentedHostKey,
     PtyHandle, SessionManager,
@@ -72,6 +70,7 @@ struct HostSummaryDto {
     has_password: bool,
     sync_secret: bool,
     color: Option<String>,
+    tags: Vec<String>,
     /// When true, inject OSC 133 / OSC 7 via connect wrapper.
     shell_integration: bool,
 }
@@ -87,6 +86,7 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             has_password: host.has_password,
             sync_secret: host.sync_secret,
             color: host.color.clone(),
+            tags: host.tags.clone(),
             shell_integration: host.shell_integration
                 != ssh_client_core::model::ShellIntegration::Disabled,
         }
@@ -165,6 +165,42 @@ struct AgentSpecDto {
     command: String,
     args: Vec<String>,
     persistent: bool,
+    docs_url: Option<String>,
+    /// `active` | `deprecated`
+    status: String,
+    successor: Option<String>,
+    byok_env: Vec<String>,
+    supports_openai_compat: bool,
+    install_macos: Option<String>,
+    install_linux: Option<String>,
+    install_windows: Option<String>,
+    install_default: Option<String>,
+}
+
+fn agent_spec_dto_from_preset(preset: &ssh_client_core::agents::AgentPreset) -> AgentSpecDto {
+    use ssh_client_core::agents::AgentPresetStatus;
+    let (status, successor) = match &preset.status {
+        AgentPresetStatus::Active => ("active".into(), None),
+        AgentPresetStatus::Deprecated { successor } => {
+            ("deprecated".into(), Some(successor.clone()))
+        }
+    };
+    AgentSpecDto {
+        id: preset.id.clone(),
+        name: preset.display_name.clone(),
+        command: preset.command.clone(),
+        args: preset.args.clone(),
+        persistent: preset.persistent_default,
+        docs_url: preset.docs_url.clone(),
+        status,
+        successor,
+        byok_env: preset.byok_env.clone(),
+        supports_openai_compat: preset.supports_openai_compat,
+        install_macos: preset.install.macos.clone(),
+        install_linux: preset.install.linux.clone(),
+        install_windows: preset.install.windows.clone(),
+        install_default: preset.install.default.clone(),
+    }
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -498,16 +534,8 @@ async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummaryD
 
 #[tauri::command]
 async fn list_agents() -> Result<Vec<AgentSpecDto>, String> {
-    Ok(builtin_agents()
-        .into_iter()
-        .map(|agent| AgentSpecDto {
-            id: agent.id,
-            name: agent.name,
-            command: agent.command,
-            args: agent.args,
-            persistent: agent.persistent,
-        })
-        .collect())
+    let presets = ssh_client_core::agents::bundled_agent_presets().map_err(redacted_error)?;
+    Ok(presets.iter().map(agent_spec_dto_from_preset).collect())
 }
 
 #[tauri::command]
@@ -1177,6 +1205,8 @@ pub fn run() {
             list_running_sessions,
             mark_project_running,
             end_running_session,
+            assist::list_assist_presets,
+            assist::assist_test_provider,
             assist::list_api_keys,
             assist::create_api_key,
             assist::update_api_key,
@@ -1300,6 +1330,7 @@ mod tests {
             has_password: true,
             sync_secret: false,
             color: Some("#70A5F5".into()),
+            tags: vec!["lab".into()],
             shell_integration: true,
         };
         assert!(dto.has_password);

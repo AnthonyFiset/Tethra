@@ -1,17 +1,18 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after completing M9 (Assist).
-See [`ROADMAP-v2.md`](ROADMAP-v2.md)._
+_Snapshot for handoff / reassessment. Last updated for **v0.2.6** (M10–M12 + polish
+audit). Strategy brief: [`HANDOFF.md`](HANDOFF.md).
+**Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (v2 kept for M6.2–M9 history)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
 end-to-end encrypted vault of saved hosts — and a host for coding agents on
 every machine you own. Desktop-first (macOS/Windows/Linux), architected so
 iOS/Android are a port, not a rewrite. See [`PROJECT.md`](PROJECT.md) for
-architecture and hard rules; [`ROADMAP-v2.md`](ROADMAP-v2.md) for the post-M6.1
-plan.
+architecture and hard rules; [`ROADMAP-v3.md`](ROADMAP-v3.md) for what to build
+next.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main`; latest shipped tag `v0.2.5`
+- **Branch:** `main`; latest shipped tag `v0.2.6`
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 
@@ -34,8 +35,11 @@ plan.
 | **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Done |
 | **M8** | Projects and agents: `Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach | Done |
 | **M9** | Assist: NL→command in input, ApprovalGate, pluggable providers, vault API keys | Done |
-| **M10** | Fleet power features: port forwarding, live jump hosts, snippets, `FleetExec` broadcast (was old M7) | Not started |
-| **M11** | Mobile: reattach/monitor persistent agents; `platform-ios` shim (was old M8; reframed) | Not started |
+| **M10** | Launcher + workspace (Resume-first dashboard; sidebar only in Workspace) | **Done** — see `docs/M10.md` |
+| **M11** | Provider + agent catalogs (data, not compiled); paste-key / `GET /models` UX | **Done** — M11.1–11.3 (`docs/M11.md`); BYOK launch deferred |
+| **M12** | Terminal feel: OSC 133 blocks UI, scroll-jump, fonts, reattach scrollback | **Done** (core) — M12.1–12.4 (`docs/M12.md`); asciinema / ligatures / cross-device scrollback optional |
+| **M13** | Fleet: port forwarding, live jump hosts, snippets, `FleetExec` (was v2 M10) | Not started |
+| **M14** | Mobile: reattach/monitor agents (deferred; was v2 M11) | Deferred |
 
 ---
 
@@ -64,6 +68,7 @@ apps/
   tauri/src-tauri/      command glue only
     src/lib.rs          vault + host + terminal + SFTP + sync + updater commands
     src/assist.rs       Assist propose/explain + vault API key CRUD
+    src/mux.rs          probe tools, ensure/kill mux, prune stale RunningSessions
     src/sync.rs         sync settings, folder picker, HTTP configure, join, sync-now
     src/updater.rs      self-update; endpoint derived from sync server URL
     src/output_pump.rs  shared SSH/local terminal batching; OSC 133 + app-wide emit
@@ -80,7 +85,7 @@ apps/
     src/projects/       ProjectFormModal, PathBrowser, launch helpers
 scripts/
   set-version.mjs       stamp one version across all manifests from the git tag
-docs/                   M1.md .. M9.md, M6.2.md, UPDATES.md
+docs/                   M1.md .. M10.md, M6.2.md, UPDATES.md; root HANDOFF.md + ROADMAP-v3.md
 .github/workflows/      ci.yml + release.yml (dmg / exe / deb + updater artifacts on tag)
 ```
 
@@ -104,7 +109,34 @@ docs/                   M1.md .. M9.md, M6.2.md, UPDATES.md
 
 ---
 
-## What M7 added (most recent work)
+## What M9 + v0.2.5 session polish added (most recent)
+
+See [`docs/M9.md`](docs/M9.md) and [`HANDOFF.md`](HANDOFF.md).
+
+- **Assist:** Cmd/Ctrl+I bar; propose / explain; insert without Enter;
+  `ApprovalGate::AssistInsert`; Anthropic / OpenAI / OpenAI-compat providers;
+  vault API keys with `sync_secret`.
+- **Mux semantics:** tab close = detach only; sidebar Kill = kill mux + tombstone
+  `RunningSession`.
+- **Tools probe:** OS-aware missing-tool dialog with Copy / Insert / Insert & run;
+  install insert gated so DA/mouse/OSC replies cannot prepend junk.
+- **Tab focus:** opening or selecting a session always shows that session’s pane
+  (`activateSession` + `activeId`-driven layout + safe xterm attach).
+
+---
+
+## What M8 added
+
+See [`docs/M8.md`](docs/M8.md).
+
+- **Project + AgentSpec** vault models; open = connect → cd → launch agent.
+- **tmux / zellij** persistence for `persistent` agents (local + remote).
+- **Running sessions** sidebar + cross-device reattach via vault markers.
+- Built-in agent presets (shell, Claude Code, Codex, aider, …) as data.
+
+---
+
+## What M7 added
 
 See [`docs/M7.md`](docs/M7.md).
 
@@ -252,23 +284,27 @@ See [`docs/M6.md`](docs/M6.md).
 - **Signing key:** updater private key lives at `~/.tethra-updater.key` on the
   machine that generated it and as a repo secret — losing it forces manual
   reinstalls of every client.
-- **Jump hosts:** `ProxyJump` is stored as metadata; live routing is **M10**.
+- **Jump hosts:** `ProxyJump` is stored as metadata; live routing is **M13**
+  (promote above M12 only if jump is blocking today — see `ROADMAP-v3.md`).
 - **Private keys:** host metadata is the sync target; private-key identities stay
   device-local (key sync is a deferred opt-in; passwords use `sync_secret`).
-- **Terminal:** M7 done — conformance, OSC 133, shell integration, splits,
-  multi-window. See `docs/M7.md`.
-- **Projects / agents:** no first-class Project or persistent agent sessions yet
-  — **M8**.
+- **Terminal / projects / Assist:** M7–M9 done — see `docs/M7.md`, `docs/M8.md`,
+  `docs/M9.md`, and `HANDOFF.md`.
+- **xterm.js:** stay; M12.2 mitigates agent TUI scroll-jump; M12.4 restores
+  same-device project scrollback via serialize + IndexedDB. Cross-device snapshot
+  sync still open.
+- **Radix:** stay; do not migrate to Base UI unless a specific bug forces it.
 - **Power monitor:** macOS observer is a best-effort stub; idle-timer lock is the
   primary path.
-- **Mobile:** `platform-ios` is a stub; no mobile build yet — **M11** (reattach to
-  agents, not full phone SSH typing).
+- **Mobile:** `platform-ios` is a stub — **M14** (deferred). Keep
+  `cargo check -p core --target aarch64-apple-ios` green.
 - **Code signing:** installers are unsigned — macOS needs `xattr -cr` / Gatekeeper
-  override, Windows shows SmartScreen. Notarization/signing deferred (open
-  question before M8 — see `ROADMAP-v2.md`).
+  override, Windows shows SmartScreen. Tied to public-repo decision in v3.
 - **macOS distribution:** native sidebar vibrancy uses Tauri's `macos-private-api`,
   compatible with direct distribution but must be removed before a Mac App Store
   submission.
+- **Agent/provider presets:** **M11.1–11.3** ship bundled provider + agent
+  catalogs; BYOK env injection and sync-server catalog fetch remain follow-ups.
 
 ---
 
@@ -333,11 +369,14 @@ tethra-sync-server fetch-updates
 
 ## Suggested next step
 
-**M10 — Fleet** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): port forwarding, live
-jump hosts, snippets, `FleetExec` broadcast. Mobile reattach remains **M11**.
+**M13 — Fleet** (port forward, live ProxyJump, snippets, `FleetExec`) unless you
+want optional **M12.5 asciinema** or ligature toggle first
+([`ROADMAP-v3.md`](ROADMAP-v3.md), [`docs/M12.md`](docs/M12.md)).
+
+Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 
 On the ThinkPad after v0.2.5 publishes:
 `tethra-sync-server fetch-updates` (and `install-updates-timer` if not already).
 
-Optional: decide public vs private repo; README + LICENSE; Apple /
-Windows code signing for Gatekeeper / SmartScreen-clean installers.
+Open decisions (v3): public vs private repo; catalog hosting (ThinkPad-only vs
+public URL).

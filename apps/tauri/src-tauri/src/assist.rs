@@ -88,6 +88,56 @@ pub struct AssistExplainResultDto {
     text: String,
 }
 
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+pub struct ProviderPresetDto {
+    id: String,
+    display_name: String,
+    /// `anthropic` | `openai` | `openaiCompat`
+    transport: String,
+    base_url: String,
+    models_endpoint: Option<String>,
+    api_key_url: Option<String>,
+    key_prefix_hint: Option<String>,
+    requires_key: bool,
+    default_model: Option<String>,
+}
+
+impl From<&assist::ProviderPreset> for ProviderPresetDto {
+    fn from(preset: &assist::ProviderPreset) -> Self {
+        Self {
+            id: preset.id.clone(),
+            display_name: preset.display_name.clone(),
+            transport: preset.transport.as_str().into(),
+            base_url: preset.base_url.clone(),
+            models_endpoint: preset.models_endpoint.clone(),
+            api_key_url: preset.api_key_url.clone(),
+            key_prefix_hint: preset.key_prefix_hint.clone(),
+            requires_key: preset.requires_key,
+            default_model: preset.default_model.clone(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestProviderMutation {
+    provider: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    preset_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+pub struct TestProviderResultDto {
+    ok: bool,
+    models: Vec<String>,
+    error: Option<String>,
+}
+
 fn parse_provider(value: &str) -> Result<AssistProviderKind, String> {
     match value {
         "anthropic" => Ok(AssistProviderKind::Anthropic),
@@ -95,6 +145,30 @@ fn parse_provider(value: &str) -> Result<AssistProviderKind, String> {
         "openaiCompat" => Ok(AssistProviderKind::OpenAiCompat),
         other => Err(format!("unknown assist provider: {other}")),
     }
+}
+
+#[tauri::command]
+pub async fn list_assist_presets() -> Result<Vec<ProviderPresetDto>, String> {
+    let presets = assist::bundled_presets().map_err(redacted_error)?;
+    Ok(presets.iter().map(ProviderPresetDto::from).collect())
+}
+
+#[tauri::command]
+pub async fn assist_test_provider(
+    request: TestProviderMutation,
+) -> Result<TestProviderResultDto, String> {
+    let result = assist::test_provider(assist::TestProviderRequest {
+        provider: parse_provider(&request.provider)?,
+        base_url: request.base_url,
+        api_key: request.api_key,
+        preset_id: request.preset_id,
+    })
+    .await;
+    Ok(TestProviderResultDto {
+        ok: result.ok,
+        models: result.models,
+        error: result.error,
+    })
 }
 
 #[tauri::command]
@@ -228,4 +302,6 @@ pub fn export_bindings(cfg: &ts_rs::Config) {
     ApiKeySummaryDto::export_all(cfg).unwrap();
     AssistProposeResultDto::export_all(cfg).unwrap();
     AssistExplainResultDto::export_all(cfg).unwrap();
+    ProviderPresetDto::export_all(cfg).unwrap();
+    TestProviderResultDto::export_all(cfg).unwrap();
 }

@@ -24,6 +24,13 @@ const SWATCHES = [
 
 interface HostFormModalProps {
   initial?: HostSummaryDto;
+  /** Prefill when adding a host from Quick connect (not yet saved). */
+  draft?: {
+    label: string;
+    hostname: string;
+    port: number;
+    username: string;
+  };
   onClose: () => void;
   onSaved: (host: HostSummaryDto) => void;
 }
@@ -38,15 +45,22 @@ function takeValue(ref: RefObject<HTMLInputElement | null>): string {
 
 export function HostFormModal({
   initial,
+  draft,
   onClose,
   onSaved,
 }: HostFormModalProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [label, setLabel] = useState(initial?.label ?? "");
-  const [hostname, setHostname] = useState(initial?.hostname ?? "127.0.0.1");
-  const [port, setPort] = useState(String(initial?.port ?? 22));
-  const [username, setUsername] = useState(initial?.username ?? "");
+  const [label, setLabel] = useState(initial?.label ?? draft?.label ?? "");
+  const [hostname, setHostname] = useState(
+    initial?.hostname ?? draft?.hostname ?? "127.0.0.1",
+  );
+  const [port, setPort] = useState(
+    String(initial?.port ?? draft?.port ?? 22),
+  );
+  const [username, setUsername] = useState(
+    initial?.username ?? draft?.username ?? "",
+  );
   const [color, setColor] = useState(initial?.color ?? SWATCHES[0]);
   const [syncSecret, setSyncSecret] = useState(initial?.syncSecret ?? false);
   const [shellIntegration, setShellIntegration] = useState(

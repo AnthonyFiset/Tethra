@@ -48,7 +48,7 @@ impl Project {
     }
 }
 
-/// How to launch an agent CLI. Presets are data — no special-casing in code.
+/// How to launch an agent CLI. Presets are data — see [`crate::agents`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSpec {
     pub id: String,
@@ -60,55 +60,20 @@ pub struct AgentSpec {
     pub persistent: bool,
 }
 
-/// Built-in agent presets shipped with the app.
+/// Built-in agent presets from the bundled catalog (includes deprecated entries).
 pub fn builtin_agents() -> Vec<AgentSpec> {
-    vec![
-        AgentSpec {
-            id: "claude-code".into(),
-            name: "Claude Code".into(),
-            command: "claude".into(),
-            args: Vec::new(),
-            env: Vec::new(),
-            persistent: true,
-        },
-        AgentSpec {
-            id: "codex".into(),
-            name: "Codex CLI".into(),
-            command: "codex".into(),
-            args: Vec::new(),
-            env: Vec::new(),
-            persistent: true,
-        },
-        AgentSpec {
-            id: "gemini".into(),
-            name: "Gemini CLI".into(),
-            command: "gemini".into(),
-            args: Vec::new(),
-            env: Vec::new(),
-            persistent: true,
-        },
-        AgentSpec {
-            id: "aider".into(),
-            name: "aider".into(),
-            command: "aider".into(),
-            args: Vec::new(),
-            env: Vec::new(),
-            persistent: true,
-        },
-        AgentSpec {
-            id: "shell".into(),
-            name: "Shell only".into(),
-            command: "".into(),
-            args: Vec::new(),
-            env: Vec::new(),
-            // Project shells also resume via tmux — typed commands survive close/reopen.
-            persistent: true,
-        },
-    ]
+    crate::agents::bundled_agent_presets()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_agent_spec())
+        .collect()
 }
 
 pub fn find_builtin_agent(id: &str) -> Option<AgentSpec> {
-    builtin_agents().into_iter().find(|agent| agent.id == id)
+    crate::agents::agent_preset_by_id(id)
+        .ok()
+        .flatten()
+        .map(|p| p.to_agent_spec())
 }
 
 /// Stable tmux/zellij session name for a project (must match the UI launcher).

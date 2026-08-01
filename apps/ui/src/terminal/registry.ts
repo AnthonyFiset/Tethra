@@ -1,19 +1,31 @@
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { disposeBlockTracker, flushBlockPhases } from "./blocks";
+import {
+  SCROLLBACK_LINE_CAP,
+  loadScrollbackSnapshot,
+  saveScrollbackSnapshot,
+} from "./scrollback";
+import { SyncClearFilter } from "./syncFilter";
+import { themeFromAppTokens } from "./theme";
 
 interface TerminalRecord {
   terminal: Terminal;
   fit: FitAddon;
+  serialize: SerializeAddon;
   webgl?: WebglAddon;
   clipboard?: ClipboardAddon;
   unicode11?: Unicode11Addon;
   resizeTimer?: number;
   /** Last OSC 7 working directory, when the shell reports one. */
   cwd?: string;
+  /** Strips ED2/ED3 inside DEC 2026 sync blocks (agent TUI scroll-jump). */
+  syncFilter: SyncClearFilter;
   disposables: { dispose(): void }[];
 }
 
@@ -104,24 +116,16 @@ export function createTerminal(
     // macOS Option sends meta for readline / agent keybindings.
     macOptionIsMeta: true,
     fontFamily:
-      '"SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace',
+      '"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace',
     fontSize: 13,
-    lineHeight: 1.2,
+    lineHeight: 1.25,
+    letterSpacing: 0,
     scrollback: 10_000,
-    theme: {
-      background: "#0d0d0d",
-      foreground: "#e8e8e8",
-      cursor: "#4c8df6",
-      selectionBackground: "#2c4a75",
-      black: "#1b1b1b",
-      red: "#e06c75",
-      green: "#98c379",
-      yellow: "#e5c07b",
-      blue: "#61afef",
-      magenta: "#c678dd",
-      cyan: "#56b6c2",
-      white: "#d7dae0",
-    },
+    // iTerm/Terminal.app–like ED2: push cleared viewport into scrollback instead
+    // of nuking it (xterm default). Softens agent full-redraw scroll yanks.
+    scrollOnEraseInDisplay: true,
+    scrollOnUserInput: true,
+    theme: themeFromAppTokens(),
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
@@ -132,6 +136,9 @@ export function createTerminal(
 
   const clipboard = new ClipboardAddon();
   terminal.loadAddon(clipboard);
+
+  const serialize = new SerializeAddon();
+  terminal.loadAddon(serialize);
 
   const disposables: { dispose(): void }[] = [];
   disposables.push(
@@ -161,8 +168,10 @@ export function createTerminal(
   const record: TerminalRecord = {
     terminal,
     fit,
+    serialize,
     clipboard,
     unicode11,
+    syncFilter: new SyncClearFilter(),
     disposables,
   };
   terminals.set(sessionId, record);
@@ -219,8 +228,28 @@ export function writeTerminal(
 ): void {
   const record = terminals.get(sessionId);
   if (!record) return;
-  const bytes = data instanceof Uint8Array ? data : Uint8Array.from(data);
-  record.terminal.write(bytes);
+  const raw = data instanceof Uint8Array ? data : Uint8Array.from(data);
+  const bytes = record.syncFilter.push(raw);
+  if (bytes.length === 0) {
+    flushBlockPhases(sessionId, record.terminal);
+    return;
+  }
+  record.terminal.write(bytes, () => {
+    flushBlockPhases(sessionId, record.terminal);
+  });
+}
+
+/** Re-apply the app token theme (e.g. after future theme switches). */
+export function refreshTerminalTheme(sessionId?: string): void {
+  const theme = themeFromAppTokens();
+  if (sessionId) {
+    const record = terminals.get(sessionId);
+    if (record) record.terminal.options.theme = theme;
+    return;
+  }
+  for (const record of terminals.values()) {
+    record.terminal.options.theme = theme;
+  }
 }
 
 export function writeTerminalMessage(sessionId: string, message: string): void {
@@ -241,14 +270,61 @@ export function disposeTerminal(sessionId: string): void {
   window.clearTimeout(record.resizeTimer);
   inputSuppressedUntil.delete(sessionId);
   inputHandlers.delete(sessionId);
+  disposeBlockTracker(sessionId);
+  record.syncFilter.reset();
   for (const disposable of record.disposables) {
     disposable.dispose();
   }
+  record.serialize.dispose();
   record.clipboard?.dispose();
   record.unicode11?.dispose();
   record.webgl?.dispose();
   record.terminal.dispose();
   terminals.delete(sessionId);
+}
+
+/**
+ * Snapshot scrollback for a project before disposing the UI terminal.
+ * Call while the terminal still exists.
+ */
+export async function persistProjectScrollback(
+  sessionId: string,
+  projectId: string,
+): Promise<void> {
+  const record = terminals.get(sessionId);
+  if (!record || !projectId) return;
+  try {
+    const data = record.serialize.serialize({
+      scrollback: SCROLLBACK_LINE_CAP,
+      excludeAltBuffer: true,
+    });
+    if (data.trim()) {
+      await saveScrollbackSnapshot(projectId, data);
+    }
+  } catch {
+    // Serialize can throw if the buffer is in a weird state — ignore.
+  }
+}
+
+/**
+ * Restore a prior project snapshot into a freshly created terminal.
+ * Best before the first attach/open paint when possible; still works after.
+ */
+export async function restoreProjectScrollback(
+  sessionId: string,
+  projectId: string,
+): Promise<boolean> {
+  const record = terminals.get(sessionId);
+  if (!record || !projectId) return false;
+  const data = await loadScrollbackSnapshot(projectId);
+  if (!data?.trim()) return false;
+  return await new Promise<boolean>((resolve) => {
+    try {
+      record.terminal.write(data, () => resolve(true));
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 export function disposeAllTerminals(): void {

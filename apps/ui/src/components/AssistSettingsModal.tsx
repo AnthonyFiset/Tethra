@@ -1,12 +1,15 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  assistTestProvider,
   createApiKey,
   deleteApiKey,
   listApiKeys,
+  listAssistPresets,
   updateApiKey,
   type ApiKeyMutation,
   type ApiKeySummaryDto,
   type AssistProviderId,
+  type ProviderPresetDto,
 } from "../lib/ipc";
 import { Button } from "./ui/Button";
 import { Dialog } from "./ui/Dialog";
@@ -20,12 +23,23 @@ export function AssistSettingsModal({
   onClose,
 }: AssistSettingsModalProps): React.JSX.Element {
   const [keys, setKeys] = useState<ApiKeySummaryDto[]>([]);
+  const [presets, setPresets] = useState<ProviderPresetDto[]>([]);
   const [editing, setEditing] = useState<ApiKeySummaryDto | "new">();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const autoOpened = useRef(false);
 
   async function refresh(): Promise<void> {
-    setKeys(await listApiKeys());
+    const [nextKeys, nextPresets] = await Promise.all([
+      listApiKeys(),
+      listAssistPresets(),
+    ]);
+    setKeys(nextKeys);
+    setPresets(nextPresets);
+    if (!autoOpened.current && nextKeys.length === 0 && nextPresets.length > 0) {
+      autoOpened.current = true;
+      setEditing("new");
+    }
   }
 
   useEffect(() => {
@@ -52,8 +66,8 @@ export function AssistSettingsModal({
         if (!next) onClose();
       }}
       kicker="Assist"
-      title="API keys"
-      description="Keys stay encrypted in the vault. Opt in to sync_secret to share them across devices."
+      title="Providers"
+      description="Pick a provider, paste a key, Test to load live models. Keys stay encrypted in the vault."
       width="md"
       footer={
         <Button variant="subtle" onClick={onClose}>
@@ -66,14 +80,14 @@ export function AssistSettingsModal({
 
         <div className="flex items-center justify-between">
           <span className="text-micro text-fg-muted">
-            {keys.length} key{keys.length === 1 ? "" : "s"}
+            {keys.length} provider{keys.length === 1 ? "" : "s"}
           </span>
           <Button
             variant="primary"
-            disabled={busy}
+            disabled={busy || presets.length === 0}
             onClick={() => setEditing("new")}
           >
-            Add key
+            Add provider
           </Button>
         </div>
 
@@ -88,7 +102,7 @@ export function AssistSettingsModal({
                   {key.label}
                 </span>
                 <span className="block truncate text-micro text-fg-subtle">
-                  {key.provider}
+                  {providerLabel(key, presets)}
                   {key.model ? ` · ${key.model}` : ""}
                   {key.syncSecret ? " · syncs" : " · local only"}
                 </span>
@@ -110,17 +124,30 @@ export function AssistSettingsModal({
             </li>
           ))}
           {keys.length === 0 && (
-            <p className="m-0 text-micro text-fg-subtle">
-              No keys yet. Add Anthropic, OpenAI, or an OpenAI-compatible
-              endpoint (Ollama / vLLM).
-            </p>
+            <div className="rounded-md border border-dashed border-line px-3 py-4 text-center">
+              <p className="m-0 text-ui text-fg">
+                Add Anthropic, OpenRouter, Ollama, or any OpenAI-compatible
+                endpoint.
+              </p>
+              <p className="mt-1 mb-3 text-micro text-fg-subtle">
+                Paste a key → Test → pick a live model.
+              </p>
+              <Button
+                variant="primary"
+                disabled={busy || presets.length === 0}
+                onClick={() => setEditing("new")}
+              >
+                Add provider
+              </Button>
+            </div>
           )}
         </ul>
       </div>
 
-      {editing && (
+      {editing && presets.length > 0 && (
         <ApiKeyEditor
           initial={editing === "new" ? undefined : editing}
+          presets={presets}
           onClose={() => setEditing(undefined)}
           onSaved={async () => {
             setEditing(undefined);
@@ -132,41 +159,156 @@ export function AssistSettingsModal({
   );
 }
 
+function normalizeUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function matchPreset(
+  key: ApiKeySummaryDto | undefined,
+  presets: ProviderPresetDto[],
+): ProviderPresetDto {
+  if (!key) {
+    return presets.find((p) => p.id === "anthropic") ?? presets[0]!;
+  }
+  const byUrl = key.baseUrl
+    ? presets.find(
+        (p) =>
+          p.baseUrl && normalizeUrl(p.baseUrl) === normalizeUrl(key.baseUrl!),
+      )
+    : undefined;
+  if (byUrl) return byUrl;
+  if (key.provider === "anthropic") {
+    return presets.find((p) => p.id === "anthropic") ?? presets[0]!;
+  }
+  if (key.provider === "openai") {
+    return presets.find((p) => p.id === "openai") ?? presets[0]!;
+  }
+  return presets.find((p) => p.id === "custom") ?? presets[0]!;
+}
+
+function providerLabel(
+  key: ApiKeySummaryDto,
+  presets: ProviderPresetDto[],
+): string {
+  return matchPreset(key, presets).displayName;
+}
+
 function ApiKeyEditor({
   initial,
+  presets,
   onClose,
   onSaved,
 }: {
   initial?: ApiKeySummaryDto;
+  presets: ProviderPresetDto[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }): React.JSX.Element {
-  const [label, setLabel] = useState(initial?.label ?? "");
-  const [provider, setProvider] = useState<AssistProviderId>(
-    (initial?.provider as AssistProviderId) ?? "anthropic",
+  const matched = matchPreset(initial, presets);
+  const [presetId, setPresetId] = useState(matched.id);
+  const preset = presets.find((p) => p.id === presetId) ?? matched;
+  const [label, setLabel] = useState(initial?.label ?? preset.displayName);
+  const [baseUrl, setBaseUrl] = useState(
+    initial?.baseUrl ?? preset.baseUrl ?? "",
   );
-  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
-  const [model, setModel] = useState(initial?.model ?? "");
+  const [model, setModel] = useState(
+    initial?.model ?? preset.defaultModel ?? "",
+  );
   const [apiKey, setApiKey] = useState("");
   const [syncSecret, setSyncSecret] = useState(initial?.syncSecret ?? false);
+  const [models, setModels] = useState<string[]>(
+    initial?.model ? [initial.model] : [],
+  );
+  const [testState, setTestState] = useState<
+    "idle" | "testing" | "ok" | "error"
+  >("idle");
+  const [testError, setTestError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+
+  function applyPreset(next: ProviderPresetDto): void {
+    setPresetId(next.id);
+    if (!initial) {
+      setLabel(next.displayName);
+    }
+    setBaseUrl(next.baseUrl);
+    setModel(next.defaultModel ?? "");
+    setModels(next.defaultModel ? [next.defaultModel] : []);
+    setTestState("idle");
+    setTestError(undefined);
+  }
+
+  async function runTest(): Promise<void> {
+    setTestState("testing");
+    setTestError(undefined);
+    setError(undefined);
+    try {
+      if (preset.requiresKey && !apiKey.trim()) {
+        throw new Error(
+          initial?.hasKey
+            ? "Paste the API key to test (it is never re-read from the vault)."
+            : "API key is required to test this provider.",
+        );
+      }
+      if (preset.keyPrefixHint && apiKey.trim()) {
+        const hint = preset.keyPrefixHint;
+        if (!apiKey.trim().startsWith(hint)) {
+          setTestError(`Key usually starts with ${hint} — testing anyway.`);
+        }
+      }
+      const result = await assistTestProvider({
+        provider: preset.transport as AssistProviderId,
+        baseUrl: baseUrl.trim() || undefined,
+        apiKey: apiKey.trim() || undefined,
+        presetId: preset.id,
+      });
+      if (!result.ok) {
+        setTestState("error");
+        setTestError(result.error ?? "Provider test failed.");
+        setModels([]);
+        return;
+      }
+      setTestState("ok");
+      setModels(result.models);
+      if (result.models.length > 0) {
+        setModel((current) =>
+          current && result.models.includes(current)
+            ? current
+            : (preset.defaultModel &&
+                result.models.includes(preset.defaultModel)
+              ? preset.defaultModel
+              : result.models[0]!),
+        );
+      }
+    } catch (reason) {
+      setTestState("error");
+      setTestError(String(reason));
+      setModels([]);
+    }
+  }
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
+      const provider = preset.transport as AssistProviderId;
       const mutation: ApiKeyMutation = {
         label: label.trim(),
         provider,
-        baseUrl: baseUrl.trim() || undefined,
+        baseUrl:
+          provider === "openaiCompat" || baseUrl.trim()
+            ? baseUrl.trim() || undefined
+            : undefined,
         model: model.trim() || undefined,
         syncSecret,
       };
       if (apiKey.trim()) mutation.apiKey = apiKey.trim();
-      if (!initial && !mutation.apiKey) {
+      if (!initial && preset.requiresKey && !mutation.apiKey) {
         throw new Error("API key is required.");
+      }
+      if (provider === "openaiCompat" && !mutation.baseUrl) {
+        throw new Error("Base URL is required for OpenAI-compatible providers.");
       }
       if (initial) {
         await updateApiKey(initial.id, mutation);
@@ -181,6 +323,11 @@ function ApiKeyEditor({
     }
   }
 
+  const showBaseUrl =
+    preset.transport === "openaiCompat" ||
+    preset.id === "custom" ||
+    Boolean(baseUrl && preset.baseUrl !== baseUrl);
+
   return (
     <Dialog
       open
@@ -188,7 +335,12 @@ function ApiKeyEditor({
         if (!next) onClose();
       }}
       kicker="Assist"
-      title={initial ? "Edit API key" : "Add API key"}
+      title={initial ? "Edit provider" : "Add provider"}
+      description={
+        initial
+          ? undefined
+          : "Choose a preset, paste your key, then Test to load models."
+      }
       footer={
         <>
           <Button variant="subtle" onClick={onClose} disabled={busy}>
@@ -221,42 +373,116 @@ function ApiKeyEditor({
         <label className="flex flex-col gap-1.5">
           <span className="text-micro font-medium text-fg-muted">Provider</span>
           <select
-            value={provider}
-            onChange={(event) =>
-              setProvider(event.target.value as AssistProviderId)
-            }
+            value={presetId}
+            onChange={(event) => {
+              const next = presets.find((p) => p.id === event.target.value);
+              if (next) applyPreset(next);
+            }}
             className={inputClass}
+            disabled={Boolean(initial)}
           >
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI</option>
-            <option value="openaiCompat">OpenAI-compatible</option>
+            {presets.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.displayName}
+              </option>
+            ))}
           </select>
         </label>
-        {provider === "openaiCompat" && (
+        {showBaseUrl && (
           <Field
             label="Base URL"
             value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="http://thinkpad:11434/v1"
-            required
+            onChange={(event) => {
+              setBaseUrl(event.target.value);
+              setTestState("idle");
+            }}
+            placeholder="http://127.0.0.1:11434/v1"
+            required={preset.transport === "openaiCompat"}
           />
         )}
-        <Field
-          label="Model (optional)"
-          value={model}
-          onChange={(event) => setModel(event.target.value)}
-          placeholder={
-            provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"
-          }
-        />
-        <Field
-          label={initial ? "API key (leave blank to keep)" : "API key"}
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-          type="password"
-          autoComplete="off"
-          required={!initial}
-        />
+        {preset.requiresKey && (
+          <Field
+            label={
+              initial
+                ? "API key (paste to Test; leave blank on Save to keep)"
+                : "API key"
+            }
+            value={apiKey}
+            onChange={(event) => {
+              setApiKey(event.target.value);
+              setTestState("idle");
+            }}
+            type="password"
+            autoComplete="off"
+            required={!initial}
+            hint={
+              preset.apiKeyUrl ? (
+                <a
+                  href={preset.apiKeyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent underline-offset-2 hover:underline"
+                >
+                  Get a key
+                </a>
+              ) : preset.keyPrefixHint ? (
+                `Usually starts with ${preset.keyPrefixHint}`
+              ) : undefined
+            }
+          />
+        )}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="subtle"
+            type="button"
+            disabled={busy || testState === "testing"}
+            onClick={() => void runTest()}
+          >
+            {testState === "testing" ? "Testing…" : "Test"}
+          </Button>
+          <span
+            className={
+              testState === "ok"
+                ? "inline-block size-2.5 rounded-full bg-success"
+                : testState === "error"
+                  ? "inline-block size-2.5 rounded-full bg-danger"
+                  : "inline-block size-2.5 rounded-full bg-fg-subtle/40"
+            }
+            aria-hidden
+          />
+          <span className="min-w-0 flex-1 truncate text-micro text-fg-subtle">
+            {testState === "ok"
+              ? `${models.length} model${models.length === 1 ? "" : "s"}`
+              : testState === "error"
+                ? (testError ?? "Failed")
+                : testState === "testing"
+                  ? "Calling /models…"
+                  : "Not tested yet"}
+          </span>
+        </div>
+        {models.length > 0 ? (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-micro font-medium text-fg-muted">Model</span>
+            <select
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              className={inputClass}
+            >
+              {models.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <Field
+            label="Model (optional)"
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+            placeholder={preset.defaultModel ?? "Run Test to load models"}
+          />
+        )}
         <label className="flex items-center gap-2 text-ui text-fg">
           <input
             type="checkbox"

@@ -1,6 +1,8 @@
 //! Assist: NL → shell command (or explain), never auto-execute (M9).
 
 #[cfg(feature = "sync-http")]
+mod catalog;
+#[cfg(feature = "sync-http")]
 mod http;
 mod prompt;
 
@@ -11,6 +13,11 @@ use crate::ssh::{Action, ApprovalGate};
 use crate::{Error, Result};
 
 pub use prompt::{strip_command_fences, system_explain, system_propose};
+
+#[cfg(feature = "sync-http")]
+pub use catalog::{ProviderPreset, bundled_presets, preset_by_id};
+#[cfg(feature = "sync-http")]
+pub use http::{TestProviderRequest, TestProviderResult, test_provider};
 
 /// Session context sent with an Assist request.
 #[derive(Debug, Clone, Default)]
