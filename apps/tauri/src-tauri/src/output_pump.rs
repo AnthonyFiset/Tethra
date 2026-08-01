@@ -26,11 +26,7 @@ fn encode_b64(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
-pub async fn forward_output(
-    session_id: Uuid,
-    mut receiver: mpsc::Receiver<Bytes>,
-    app: AppHandle,
-) {
+pub async fn forward_output(session_id: Uuid, mut receiver: mpsc::Receiver<Bytes>, app: AppHandle) {
     let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut pending = Vec::with_capacity(MAX_CHUNK);
@@ -102,12 +98,7 @@ fn block_event(event: BlockEvent) -> TerminalEvent {
     }
 }
 
-fn flush_one(
-    pending: &mut Vec<u8>,
-    app: &AppHandle,
-    session_id: &str,
-    dropped: &mut bool,
-) {
+fn flush_one(pending: &mut Vec<u8>, app: &AppHandle, session_id: &str, dropped: &mut bool) {
     let split = pending.len().min(MAX_CHUNK);
     let remainder = pending.split_off(split);
     let data = std::mem::replace(pending, remainder);

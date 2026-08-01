@@ -163,7 +163,10 @@ struct HostKeyPrompt {
 #[ts(export, export_to = "../../../ui/src/lib/generated/")]
 pub(crate) enum TerminalEvent {
     /// PTY bytes as standard base64 (JSON number arrays are too slow for PTY).
-    Data { data: String, dropped: bool },
+    Data {
+        data: String,
+        dropped: bool,
+    },
     /// OSC 133 command-block marker (beside raw bytes, never instead of them).
     Block {
         phase: TerminalBlockPhase,

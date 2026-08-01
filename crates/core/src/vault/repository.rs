@@ -488,7 +488,7 @@ mod tests {
                 password: Some(SecretString::new("testpass")),
                 sync_secret: false,
                 color: Some("#70A5F5".into()),
-            shell_integration: Default::default(),
+                shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -520,7 +520,7 @@ mod tests {
                 password: Some(SecretString::new("testpass")),
                 sync_secret: false,
                 color: None,
-            shell_integration: Default::default(),
+                shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -558,7 +558,7 @@ mod tests {
                 password: Some(SecretString::new("one")),
                 sync_secret: false,
                 color: None,
-            shell_integration: Default::default(),
+                shell_integration: Default::default(),
             })
             .await
             .unwrap();
@@ -574,7 +574,7 @@ mod tests {
                     password: Some(SecretString::new("two")),
                     sync_secret: false,
                     color: Some("#CF718B".into()),
-                shell_integration: Default::default(),
+                    shell_integration: Default::default(),
                 },
             )
             .await
@@ -603,7 +603,7 @@ mod tests {
                 password: Some(SecretString::new("keep-me")),
                 sync_secret: false,
                 color: None,
-            shell_integration: Default::default(),
+                shell_integration: Default::default(),
             })
             .await
             .unwrap();
