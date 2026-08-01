@@ -28,7 +28,15 @@ tethra-sync-server fetch-updates --tag v0.2.1
 
 5. Clients show "Tethra x.y.z is available" on next launch and update in place.
 
-To keep the host current automatically, add a systemd user timer:
+To keep the host current automatically, install the updates timer (also offered
+by the setup wizard):
+
+```bash
+tethra-sync-server install-updates-timer
+# later: tethra-sync-server uninstall-updates-timer
+```
+
+That writes units whose `ExecStart` points at the installed binary:
 
 ```ini
 # ~/.config/systemd/user/tethra-updates.service
@@ -37,7 +45,7 @@ Description=Mirror Tethra release assets
 
 [Service]
 Type=oneshot
-ExecStart=%h/Documents/Projects/Tethra/target/release/tethra-sync-server fetch-updates
+ExecStart=/path/to/tethra-sync-server fetch-updates
 ```
 
 ```ini
@@ -55,8 +63,7 @@ WantedBy=timers.target
 ```
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now tethra-updates.timer
+systemctl --user status tethra-updates.timer
 ```
 
 ## Why `dangerousInsecureTransportProtocol` is on

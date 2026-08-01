@@ -58,7 +58,7 @@ export function ChangePasswordModal({
       }}
       kicker="Vault"
       title="Change master password"
-      description="Rewraps the vault key under a new password. Encrypted host rows are not re-encrypted."
+      description="Rewraps the vault key under a new password. Encrypted host rows are not re-encrypted. Other devices adopt the new wrap on their next sync — then unlock with this password."
     >
       <form
         onSubmit={(event) => void submit(event)}

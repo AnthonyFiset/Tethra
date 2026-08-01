@@ -76,6 +76,24 @@ pub fn unwrap_key(wrapping_key: &[u8; KEY_LEN], blob: &EncryptedBlob) -> Result<
     Ok(VaultKey::new(key))
 }
 
+/// Seal plaintext under the vault key (used for sync re-key attestations).
+pub fn seal_with_vault_key(
+    vault_key: &VaultKey,
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<EncryptedBlob> {
+    encrypt_raw(vault_key.expose(), plaintext, aad)
+}
+
+/// Open a vault-key sealed blob.
+pub fn open_with_vault_key(
+    vault_key: &VaultKey,
+    aad: &[u8],
+    blob: &EncryptedBlob,
+) -> Result<Vec<u8>> {
+    decrypt_raw(vault_key.expose(), blob, aad)
+}
+
 /// Encrypt an item with AAD = `item_id || version` (little-endian version).
 pub fn encrypt_item(
     vault_key: &VaultKey,

@@ -10,14 +10,19 @@
 ## 1. What we're building
 
 A free, open-source SSH and SFTP client with an encrypted vault of saved hosts
-that syncs across devices. Think Termius, but the sync server can't read your
-credentials.
+that syncs across devices — and the place coding agents run, on your laptop and
+on every machine you own. Not an agent itself: a *host* for agents (Claude Code,
+Codex CLI, Gemini CLI, aider, …). The vault, fleet, and sync are the expensive
+half; the wedge is **session persistence** (transparent multiplexer wrap so an
+agent survives sleep/network/lid close and can reattach from another device).
 
-**Desktop first** (macOS, Windows, Linux). **iOS and Android later** — but every
-decision today is made so that mobile is a port, not a rewrite.
+**Desktop first** (macOS, Windows, Linux). **iOS and Android later**, reframed
+as checking on agents already running — but every decision today is made so that
+mobile is a port, not a rewrite.
 
-Eventually: an AI agent layer that can run commands across hosts. We are not
-building that yet, but §9 describes the seam it plugs into.
+The original Termius-with-unread-credentials scope is done through M6.1. The
+post-M6.1 plan is in [`ROADMAP-v2.md`](ROADMAP-v2.md). §9's `exec` path and
+`ApprovalGate` remain the seam Assist (M9) plugs into.
 
 ---
 
@@ -33,8 +38,10 @@ undone later.
 3. **Plaintext secrets never cross the IPC boundary into JavaScript.** The
    frontend refers to hosts and identities by ID only.
 4. **No secrets in `localStorage`, `sessionStorage`, or IndexedDB.** Ever.
-5. **Tabs and panes are frontend state, not OS windows.** Multi-window is a later
-   desktop-only enhancement layered on top.
+5. **Session state lives in Rust, keyed by session ID. Tab and pane *layout* is
+   frontend state. OS windows are a desktop-only presentation layer over the
+   same session registry.** Panes can move between windows; closing a window
+   must not kill its sessions. Mobile never opens a second window.
 6. **No fixed-width desktop chrome.** Layout must collapse to a single column
    under 768px from day one, even if it looks unpolished.
 7. **Every struct holding key material derives `Zeroize` / `ZeroizeOnDrop`.**
@@ -239,6 +246,15 @@ you append its public key to a host's `authorized_keys`. Syncing encrypted
 private keys is a later opt-in feature, off by default. Do not make it the
 default — one master password compromise should not lose every host.
 
+**Password sync (M6.2):** an explicit per-identity `sync_secret` flag, default
+off. When on, the password rides the same item encryption as other vault items —
+the sync server still learns nothing. This does **not** change the private-key
+policy above.
+
+**Planned (M8):** first-class `Project` (local or remote location + default agent)
+and `AgentSpec` (launch command, env, `persistent` multiplexer wrap). Projects
+sync like hosts. Details in [`ROADMAP-v2.md`](ROADMAP-v2.md).
+
 ---
 
 ## 8. Sync
@@ -301,8 +317,8 @@ impl SessionManager {
 ```
 
 Both paths route through an `ApprovalGate` hook before executing. It is a no-op
-in v1, but the call site exists so that agent-initiated destructive commands can
-later require confirmation without restructuring anything.
+today, but the call site exists so Assist (M9) and agent-initiated destructive
+commands can require confirmation without restructuring anything.
 
 ### 9.1 Host key verification
 
@@ -344,42 +360,72 @@ front:
 
 ## 12. Milestones
 
+Shipped through M6.1. Post-M6.1 detail lives in [`ROADMAP-v2.md`](ROADMAP-v2.md);
+this section is the summary Cursor should respect.
+
 **M1 — headless core.** `core/ssh` with a small CLI harness in `examples/`. No
 Tauri at all. Connect, PTY, resize, exec, SFTP list/get/put. If this works
-standalone, portability is proven.
+standalone, portability is proven. ✅
 
 **M2 — desktop shell.** Tauri window, xterm.js wired to the PTY path with the
-batching from §10, tab bar, connect from a hard-coded host list.
+batching from §10, tab bar, connect from a hard-coded host list. ✅
 
 **M3 — vault.** Full §6 implementation, unlock/lock UI, `keyring`-backed
-recovery, host CRUD.
+recovery, host CRUD. ✅
 
 **M4 — `~/.ssh/config` import.** Highest value-per-line-of-code feature in the
-project. Parse via `russh-config`, map to `Host` records, preserve `ProxyJump`.
+project. Parse via `russh-config`, map to `Host` records, preserve `ProxyJump`. ✅
 
-**M5 — SFTP UI.** Dual-pane browser, drag/drop, transfer queue with resume.
+**M5 — SFTP UI.** Dual-pane browser, drag/drop, transfer queue with resume. ✅
+
+**M5.5 / M5.6 — identity, local terminal, UI polish.** Stable identity, local
+PTY, host colors, branding, design tokens, command palette. ✅
 
 **M6 — sync.** `FileBackend` + `HttpBackend` (`tethra-sync-server` for Tailscale
-hosts). Host metadata only; password identities stay local. See `docs/M6.md`.
+hosts). Host metadata only; password identities stay local. See `docs/M6.md`. ✅
 
-**M7 — power features.** Local/remote/dynamic port forwarding, jump hosts,
-snippets, multi-host broadcast.
+**M6.1 — sync hardening + self-update.** In-app vault join/reset, tag-driven
+versions, self-update via sync host. ✅
 
-**M8 — mobile.** Add `platform-ios`, build the shim, fix the layout. The core
-should need zero changes; if it needs changes, a hard rule was broken earlier.
+**M6.2 — sync you don't think about.** Opt-in `sync_secret` for passwords,
+background sync, coordinated re-key, restore iOS `cargo check` on the macOS
+runner, auto-mirror timer on the sync host. ✅ See `docs/M6.2.md`.
+
+**M7 — real terminal.** Alternate screen, truecolor, bracketed paste, OSC 52/7,
+mouse/SIGWINCH, Unicode width; OSC 133 command blocks in `core`; splits /
+multi-window over the session registry (hard rule 5). Acceptance: Claude Code
+local and over SSH matches Terminal.app / Ghostty.
+
+**M8 — projects and agents.** First-class `Project` + `AgentSpec`; open project =
+connect → `cd` → launch agent; persistent remote agents via `tmux`/`zellij`
+(do not build a multiplexer); running-sessions view; cross-device reattach.
+
+**M9 — Assist.** `Cmd/Ctrl+I` → NL to command in the input (never auto-exec);
+pluggable providers; API keys as vault items with `sync_secret`; explain-failure
+via block context. Stay small — do not compete with the agents you host.
+
+**M10 — fleet power features.** Port forwarding, live `ProxyJump`, snippets,
+multi-host broadcast via a structured `FleetExec` API. (Was M7; demoted —
+Termius parity, not differentiation.)
+
+**M11 — mobile.** Reframed: reattach to persistent agent sessions, read output,
+approve/stop, short reply — not "SSH from your phone". `platform-ios` shim;
+core should need zero changes.
 
 ---
 
-## 13. Explicitly out of scope for v1
+## 13. Explicitly out of scope for now
 
-Do not build these, and push back if asked to before M7 lands:
+Do not build these, and push back if asked outside the milestone that owns them:
 
-- AI agent features (the `exec` seam is enough for now)
+- Anything beyond M9 Assist that turns Tethra into an agent (host agents; don't
+  compete with them)
 - Telnet, serial, RDP, VNC
-- Mosh (worth doing at M8 for mobile, not before)
+- Mosh (revisit with M11 if mobile needs it, not before)
 - Team/organization sharing
 - Plugin system
 - Custom themes beyond light/dark
+- A custom multiplexer (shell out to `tmux` / `zellij`)
 
 ---
 

@@ -132,6 +132,24 @@ pub fn run_wizard() -> Result<Config, String> {
         }
     }
 
+    let install_updates =
+        Confirm::new("Also install an hourly timer to mirror desktop updates automatically?")
+            .with_default(true)
+            .prompt()
+            .map_err(inquire_err)?;
+    if install_updates {
+        match service::install_updates_timer() {
+            Ok(()) => {
+                println!("Installed user timer `tethra-updates.timer` (hourly fetch-updates).");
+                println!("Manage with: systemctl --user status tethra-updates.timer");
+            }
+            Err(e) => {
+                eprintln!("Could not install updates timer: {e}");
+                eprintln!("You can retry later with: tethra-sync-server install-updates-timer");
+            }
+        }
+    }
+
     Ok(config)
 }
 

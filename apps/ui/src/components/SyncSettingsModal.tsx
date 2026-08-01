@@ -145,7 +145,7 @@ export function SyncSettingsModal({
       width="lg"
       kicker="Sync"
       title="Vault sync"
-      description="Share host metadata across Mac, Windows, and Linux. Password identities stay on each device. Use a folder, or point at your ThinkPad sync server over Tailscale."
+      description="Share encrypted host metadata across Mac, Windows, and Linux. Passwords stay device-local unless you opt in per host. Sync runs in the background; use Sync now when you want certainty."
     >
       <div className="flex flex-col gap-4">
         {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -235,15 +235,15 @@ export function SyncSettingsModal({
           <Button variant="ghost" disabled={busy || !status?.configured} onClick={() => void disable()}>
             Disable
           </Button>
-          <Button variant="subtle" disabled={busy} onClick={onClose}>
-            Close
-          </Button>
           <Button
-            variant="primary"
+            variant="subtle"
             disabled={busy || !status?.configured}
             onClick={() => void runSync()}
           >
             {busy ? "Working…" : "Sync now"}
+          </Button>
+          <Button variant="subtle" disabled={busy} onClick={onClose}>
+            Close
           </Button>
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -50,6 +51,7 @@ pub(crate) struct AppState {
     prompts: Arc<PromptBroker>,
     sync_settings: Arc<Mutex<sync::SyncSettings>>,
     sync_engine: Arc<Mutex<Option<Arc<ssh_client_core::sync::SyncEngine>>>>,
+    background_sync_gen: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -62,6 +64,7 @@ struct HostSummaryDto {
     port: u16,
     username: String,
     has_password: bool,
+    sync_secret: bool,
     color: Option<String>,
 }
 
@@ -74,6 +77,7 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             port: host.port,
             username: host.username.clone(),
             has_password: host.has_password,
+            sync_secret: host.sync_secret,
             color: host.color.clone(),
         }
     }
@@ -166,6 +170,8 @@ struct HostMutation {
     port: u16,
     username: String,
     password: Option<String>,
+    #[serde(default)]
+    sync_secret: Option<bool>,
     color: Option<String>,
 }
 
@@ -271,6 +277,7 @@ async fn vault_unlock(
         .map_err(redacted_error)?;
     let dto = VaultStatusDto::from(&status);
     let _ = app.emit("vault-status", dto.clone());
+    sync::schedule_background_sync(app.clone(), &state);
     Ok(dto)
 }
 
@@ -294,10 +301,12 @@ async fn vault_recover(
 
 #[tauri::command]
 async fn vault_change_password(
+    app: AppHandle,
     state: State<'_, AppState>,
     current_password: String,
     new_password: String,
 ) -> Result<(), String> {
+    let previous = state.repo.vault().export_sync_header().await.ok();
     state
         .repo
         .vault()
@@ -306,7 +315,12 @@ async fn vault_change_password(
             &SecretString::new(new_password),
         )
         .await
-        .map_err(redacted_error)
+        .map_err(redacted_error)?;
+    if let Some(previous) = previous.as_ref() {
+        sync::publish_rekey_if_configured(&state, previous).await?;
+    }
+    sync::schedule_background_sync(app, &state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -330,6 +344,7 @@ async fn preview_ssh_config(state: State<'_, AppState>) -> Result<SshConfigPrevi
 
 #[tauri::command]
 async fn import_ssh_config(
+    app: AppHandle,
     state: State<'_, AppState>,
     aliases: Vec<String>,
 ) -> Result<Vec<HostSummaryDto>, String> {
@@ -340,11 +355,13 @@ async fn import_ssh_config(
         .import_ssh_config(&contents, &aliases)
         .await
         .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
     Ok(imported.iter().map(HostSummaryDto::from).collect())
 }
 
 #[tauri::command]
 async fn create_host(
+    app: AppHandle,
     state: State<'_, AppState>,
     host: HostMutation,
 ) -> Result<HostSummaryDto, String> {
@@ -356,15 +373,18 @@ async fn create_host(
             port: host.port,
             username: host.username,
             password: host.password.map(SecretString::new),
+            sync_secret: host.sync_secret.unwrap_or(false),
             color: host.color,
         })
         .await
         .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
     Ok(HostSummaryDto::from(&created))
 }
 
 #[tauri::command]
 async fn update_host(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     host: HostMutation,
@@ -380,22 +400,26 @@ async fn update_host(
                 port: host.port,
                 username: host.username,
                 password: host.password.map(SecretString::new),
+                sync_secret: host.sync_secret.unwrap_or(false),
                 color: host.color,
             },
         )
         .await
         .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
     Ok(HostSummaryDto::from(&updated))
 }
 
 #[tauri::command]
-async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn delete_host(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let host_id = parse_uuid(&id, "host")?;
     state
         .repo
         .delete_host(host_id)
         .await
-        .map_err(redacted_error)
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(())
 }
 
 pub(crate) async fn ensure_vault_unlocked(state: &AppState) -> Result<(), String> {
@@ -669,6 +693,36 @@ pub fn run() {
                 prompts: Arc::clone(&prompts),
                 sync_settings: Arc::new(Mutex::new(sync_settings)),
                 sync_engine: Arc::new(Mutex::new(sync_engine)),
+                background_sync_gen: Arc::new(AtomicU64::new(0)),
+            });
+
+            // Periodic background sync while unlocked.
+            let sync_app = app_handle.clone();
+            let sync_vault = Arc::clone(&vault);
+            let sync_engine_slot = app.state::<AppState>().sync_engine.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(sync::BACKGROUND_SYNC_INTERVAL);
+                ticker.tick().await; // skip immediate first tick
+                loop {
+                    ticker.tick().await;
+                    if !sync_vault.is_unlocked().await.unwrap_or(false) {
+                        continue;
+                    }
+                    let engine = {
+                        let guard = sync_engine_slot.lock().await;
+                        guard.clone()
+                    };
+                    let Some(engine) = engine else {
+                        continue;
+                    };
+                    match engine.sync_now().await {
+                        Ok(report) => {
+                            let _ =
+                                sync_app.emit("sync-completed", sync::SyncReportDto::from(&report));
+                        }
+                        Err(err) => tracing::debug!(%err, "interval sync skipped"),
+                    }
+                }
             });
 
             // Periodic idle-lock watcher.
@@ -887,6 +941,7 @@ mod tests {
             port: 22,
             username: "user".into(),
             has_password: true,
+            sync_secret: false,
             color: Some("#70A5F5".into()),
         };
         assert!(dto.has_password);

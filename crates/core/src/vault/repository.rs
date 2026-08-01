@@ -25,6 +25,8 @@ pub struct HostSummary {
     pub port: u16,
     pub username: String,
     pub has_password: bool,
+    /// Whether the password identity is opted into vault sync.
+    pub sync_secret: bool,
     pub color: Option<String>,
 }
 
@@ -37,6 +39,7 @@ impl From<&Host> for HostSummary {
             port: host.port,
             username: host.username.clone(),
             has_password: host.identity_id.is_some(),
+            sync_secret: false,
             color: host.color.clone(),
         }
     }
@@ -50,6 +53,8 @@ pub struct CreateHostRequest {
     pub port: u16,
     pub username: String,
     pub password: Option<SecretString>,
+    /// Opt-in: sync the password identity ciphertext. Default false.
+    pub sync_secret: bool,
     pub color: Option<String>,
 }
 
@@ -85,9 +90,21 @@ impl VaultRepository {
                     .is_some_and(|item| !item.deleted && item.kind == ItemKind::Identity),
                 None => false,
             };
+            let sync_secret = match record.identity_id {
+                Some(identity_id) if has_password => {
+                    match get_encrypted_json::<PasswordIdentityRecord>(&self.vault, identity_id)
+                        .await
+                    {
+                        Ok((identity, _)) => identity.sync_secret,
+                        Err(_) => false,
+                    }
+                }
+                _ => false,
+            };
             let host = Host::from(record);
             let mut summary = HostSummary::from(&host);
             summary.has_password = has_password;
+            summary.sync_secret = sync_secret;
             out.push(summary);
         }
         Ok(out)
@@ -104,13 +121,14 @@ impl VaultRepository {
                 id: identity_id,
                 label: format!("{} password", host.label),
                 password: password.expose().to_string(),
+                sync_secret: request.sync_secret,
             };
             put_encrypted_json(
                 &self.vault,
                 identity_id,
                 ItemKind::Identity,
                 1,
-                true,
+                !request.sync_secret,
                 false,
                 &identity,
             )
@@ -129,7 +147,9 @@ impl VaultRepository {
             &record,
         )
         .await?;
-        Ok(HostSummary::from(&host))
+        let mut summary = HostSummary::from(&host);
+        summary.sync_secret = request.sync_secret && host.identity_id.is_some();
+        Ok(summary)
     }
 
     /// Import selected aliases from OpenSSH configuration in one SQLite transaction.
@@ -248,6 +268,7 @@ impl VaultRepository {
                 id: identity_id,
                 label: format!("{} password", record.label),
                 password: password.expose().to_string(),
+                sync_secret: request.sync_secret,
             };
             let version = if record.identity_id.is_some() {
                 self.next_version(identity_id).await?
@@ -259,18 +280,36 @@ impl VaultRepository {
                 identity_id,
                 ItemKind::Identity,
                 version,
-                true,
+                !request.sync_secret,
                 false,
                 &identity,
             )
             .await?;
             record.identity_id = Some(identity_id);
+        } else if let Some(identity_id) = record.identity_id
+            && let Ok((mut identity, irow)) =
+                get_encrypted_json::<PasswordIdentityRecord>(&self.vault, identity_id).await
+            && identity.sync_secret != request.sync_secret
+        {
+            identity.sync_secret = request.sync_secret;
+            put_encrypted_json(
+                &self.vault,
+                identity_id,
+                ItemKind::Identity,
+                irow.version + 1,
+                !request.sync_secret,
+                false,
+                &identity,
+            )
+            .await?;
         }
 
         let next = row.version + 1;
         put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
         let host = Host::from(record);
-        Ok(HostSummary::from(&host))
+        let mut summary = HostSummary::from(&host);
+        summary.sync_secret = request.sync_secret && host.identity_id.is_some();
+        Ok(summary)
     }
 
     pub async fn delete_host(&self, id: Uuid) -> Result<()> {
@@ -284,7 +323,7 @@ impl VaultRepository {
                 identity_id,
                 ItemKind::Identity,
                 irow.version + 1,
-                true,
+                !identity.sync_secret,
                 true,
                 &identity,
             )
@@ -442,6 +481,7 @@ mod tests {
                 port: 2222,
                 username: "testuser".into(),
                 password: Some(SecretString::new("testpass")),
+                sync_secret: false,
                 color: Some("#70A5F5".into()),
             })
             .await
@@ -472,6 +512,7 @@ mod tests {
                 port: 2222,
                 username: "testuser".into(),
                 password: Some(SecretString::new("testpass")),
+                sync_secret: false,
                 color: None,
             })
             .await
@@ -508,6 +549,7 @@ mod tests {
                 port: 22,
                 username: "alice".into(),
                 password: Some(SecretString::new("one")),
+                sync_secret: false,
                 color: None,
             })
             .await
@@ -522,6 +564,7 @@ mod tests {
                     port: 2222,
                     username: "bob".into(),
                     password: Some(SecretString::new("two")),
+                    sync_secret: false,
                     color: Some("#CF718B".into()),
                 },
             )
@@ -549,6 +592,7 @@ mod tests {
                 port: 22,
                 username: "old-user".into(),
                 password: Some(SecretString::new("keep-me")),
+                sync_secret: false,
                 color: None,
             })
             .await

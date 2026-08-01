@@ -1,16 +1,19 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after M6._
+_Snapshot for handoff / reassessment. Last updated after M6.2 (sync you don't
+think about). See [`ROADMAP-v2.md`](ROADMAP-v2.md)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
-end-to-end encrypted vault of saved hosts. Desktop-first (macOS/Windows/Linux),
-architected so iOS/Android are a port, not a rewrite. See [`PROJECT.md`](PROJECT.md)
-for the authoritative architecture and hard rules.
+end-to-end encrypted vault of saved hosts — and a host for coding agents on
+every machine you own. Desktop-first (macOS/Windows/Linux), architected so
+iOS/Android are a port, not a rewrite. See [`PROJECT.md`](PROJECT.md) for
+architecture and hard rules; [`ROADMAP-v2.md`](ROADMAP-v2.md) for the post-M6.1
+plan.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main` with M6 changes in the current working tree
+- **Branch:** `main`; latest shipped tag `v0.2.1`
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
-- **Toolchain:** Node 20+ required (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes
+- **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 
 ---
 
@@ -26,8 +29,13 @@ for the authoritative architecture and hard rules.
 | **M5.5** | Stable identity, local terminal, host colors, branding, sidebar rail, command palette, native polish | Done |
 | **M5.6** | UI overhaul: Tailwind v4 design tokens, Radix primitives, icon rail, native menu, window drag fix | Done |
 | **M6** | Sync — `FileBackend`, `HttpBackend`, ThinkPad sync server, release installers | Done |
-| **M7** | Power features: port forwarding, live jump hosts, snippets, multi-host broadcast | Not started |
-| **M8** | Mobile: `platform-ios` shim, layout fixes; core should need zero changes | Not started |
+| **M6.1** | Sync hardening: in-app vault join/reset, tag-driven versions, self-update via sync host, CI cleanup | Done |
+| **M6.2** | Sync you don't think about: `sync_secret`, background sync, coordinated re-key, iOS CI, auto-mirror | Done |
+| **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Not started |
+| **M8** | Projects and agents: `Project` + `AgentSpec`, open→cd→launch, tmux persistence, cross-device reattach | Not started |
+| **M9** | Assist: NL→command in input, ApprovalGate, pluggable providers, vault API keys | Not started |
+| **M10** | Fleet power features: port forwarding, live jump hosts, snippets, `FleetExec` broadcast (was old M7) | Not started |
+| **M11** | Mobile: reattach/monitor persistent agents; `platform-ios` shim (was old M8; reframed) | Not started |
 
 ---
 
@@ -38,31 +46,37 @@ crates/
   core/                 portable product logic; MUST NOT depend on Tauri
     src/
       model/            Host, Identity, auth types
-      vault/            kdf, crypto, store, repository, records
+      vault/            kdf, crypto, store, repository, records (+ reset)
       ssh/              session manager, handler, pty, exec, sftp, approval, fingerprint
       ssh_config.rs     ~/.ssh/config parsing
       sync/             SyncBackend, FileBackend, HttpBackend, SyncEngine, conflict
       error.rs
-  sync-server/          tethra-sync-server (HTTP over FileBackend) for Tailscale hosts
+  sync-server/          tethra-sync-server: HTTP sync + update mirror for Tailscale hosts
+    src/server.rs       axum routes: sync + /updates/* + /healthz
+    src/mirror.rs       gh-backed release-asset mirror (fetch-updates)
+    src/updates.rs      update manifest model + version compare
   platform/             trait definitions only (including LocalPty)
   platform-desktop/     keyring, paths, power monitor, portable-pty local terminal
   platform-ios/         stub
 apps/
   tauri/src-tauri/      command glue only
-    src/lib.rs          vault + host + terminal + SFTP + sync commands
-    src/sync.rs         sync settings, folder picker, HTTP configure, sync-now
+    src/lib.rs          vault + host + terminal + SFTP + sync + updater commands
+    src/sync.rs         sync settings, folder picker, HTTP configure, join, sync-now
+    src/updater.rs      self-update; endpoint derived from sync server URL
     src/output_pump.rs  shared SSH/local terminal batching and backpressure
     src/local_fs.rs     local filesystem commands for SFTP left pane
     src/sftp.rs         SFTP browser sessions + transfer tasks
   ui/                   React app
     src/lib/ipc.ts      the ONLY file that calls invoke()
     src/terminal/       xterm registry + shared SSH/local terminal view
-    src/components/     logo, command palette, SyncSettingsModal
+    src/components/     logo, command palette, SyncSettingsModal, UpdateBanner
     src/sftp/           SftpBrowser, FilePane, TransferQueuePanel, queue runner, path helpers
-    src/vault/          VaultGate, ChangePasswordModal
+    src/vault/          VaultGate (create/unlock/recover/join), ChangePasswordModal
     src/hosts/          HostFormModal, SshConfigImportModal
-docs/                   M1.md .. M6.md
-.github/workflows/      ci.yml + release.yml (dmg / exe / deb on tag)
+scripts/
+  set-version.mjs       stamp one version across all manifests from the git tag
+docs/                   M1.md .. M6.md, M6.2.md, UPDATES.md
+.github/workflows/      ci.yml + release.yml (dmg / exe / deb + updater artifacts on tag)
 ```
 
 ### Hard rules being enforced
@@ -70,15 +84,88 @@ docs/                   M1.md .. M6.md
 - No platform APIs in `core`; access via `platform` traits.
 - Plaintext secrets never cross IPC; frontend refers to hosts by ID only.
 - No secrets in `localStorage` / `sessionStorage` / `IndexedDB` / React state.
-- Tabs and panes are frontend state, not OS windows.
+- Session state in Rust by session ID; tab/pane layout is frontend state; OS
+  windows are a desktop-only presentation layer (closing a window must not kill
+  sessions). See `PROJECT.md` hard rule 5 / M7.
 - Layout collapses to single column under 768px.
 - Key material zeroizes on drop; `#![forbid(unsafe_code)]` in `core`.
 - `ipc.ts` is the sole `invoke()` surface; TS types generated via `ts-rs`.
-- Sync moves host ciphertext only; password identities stay `local_only`.
+- Sync moves host ciphertext; password identities stay `local_only` unless the
+  per-identity `sync_secret` opt-in is on (M6.2).
+- Every device shares one vault key: the sync header's wrapped key is the source
+  of truth; a device must join (adopt the header) rather than create its own vault.
+  Coordinated re-key (M6.2) publishes a `rekey_from` attestation so peers adopt a
+  new password wrap without reset.
 
 ---
 
-## What M6 added (most recent work)
+## What M6.2 added (most recent work)
+
+See [`docs/M6.2.md`](docs/M6.2.md).
+
+- **`sync_secret`:** opt-in password identity sync (default off); host form checkbox.
+- **Background sync:** debounce after mutations/unlock, 5-minute interval, focus/
+  visibility refresh; Sync now kept as a certainty action.
+- **Coordinated re-key:** `rekey_from` attestation on the shared header so peers
+  adopt a master-password change on next sync.
+- **iOS CI:** `macos-latest` job runs `cargo check -p core --target aarch64-apple-ios`.
+- **Auto-mirror:** `tethra-sync-server install-updates-timer` (+ wizard prompt).
+
+---
+
+## What M6.1 added
+
+### Sync correctness — [`crates/core/src/sync/engine.rs`](crates/core/src/sync/engine.rs)
+- `publish_header` no longer blindly overwrites the shared header; it seeds an
+  empty backend and otherwise refuses when the local vault key differs, so a
+  second device can't strand the others' ciphertext.
+- `header_matches_backend` + a clear `Error::Sync` ("created separately") instead
+  of a raw AEAD failure.
+- `Vault::reset()` wipes items, header, and keyring recovery secret so a device
+  can abandon its own vault and join the synced one.
+- Regression test: `separately_created_vault_refuses_to_clobber_header`.
+
+### Join flow — desktop + UI
+- `sync_join_http` (with `reset_existing`) adopts the shared header before a
+  vault exists, and bootstraps at startup when sync is already configured.
+- **Join a synced vault** is always reachable on the welcome screen, even when a
+  vault exists, with a confirmed **Replace this device's vault and join**.
+- The same reset-and-join action appears on the sync mismatch error in
+  `SyncSettingsModal`. No more deleting `vault.sqlite3` by hand.
+
+### Versioning — [`scripts/set-version.mjs`](scripts/set-version.mjs)
+- One idempotent script stamps `tauri.conf.json`, `package.json`,
+  `package-lock.json`, and workspace `Cargo.toml` from the git tag; CI runs it on
+  every release so shipped binaries match the tag (fixes v0.1.1 shipping as 0.1.0).
+
+### Self-update — [`apps/tauri/src-tauri/src/updater.rs`](apps/tauri/src-tauri/src/updater.rs) + [`crates/sync-server`](crates/sync-server)
+- `tauri-plugin-updater` + `tauri-plugin-process`; updater artifacts signed in CI
+  with `TAURI_SIGNING_PRIVATE_KEY` (public key in `tauri.conf.json`).
+- Clients derive the update endpoint from their configured HTTP sync server, so
+  updates are zero-config. `UpdateBanner` offers "Update and restart".
+- The sync server mirrors release assets via `gh` (`fetch-updates`) and serves
+  `GET /updates/{target}/{arch}/{current_version}` + `/updates/download/{file}`;
+  private-repo assets never need a client credential. See [`docs/UPDATES.md`](docs/UPDATES.md).
+- `dangerousInsecureTransportProtocol` is enabled because the tailnet host is
+  plain HTTP; payloads are minisign-verified on-device, so transport isn't trusted.
+
+### Startup/crash fixes
+- `#![windows_subsystem = "windows"]` (release) removes the blank console window
+  on Windows launch.
+- The updater's release-only https check was crashing the app at startup with an
+  http endpoint; fixed and verified by running the release binary both ways.
+
+### CI/CD cleanup — `.github/workflows/`
+- Removed the `aarch64-apple-ios` compile check (never worked on Ubuntu — no
+  `xcrun`) and the `--features cli` clippy flag.
+- Dropped the Intel Mac (`macos-13`) release target; release now builds Apple
+  Silicon `.dmg`, Windows NSIS `.exe`, Linux `.deb`/AppImage, and the sync-server
+  binary — plus signed updater artifacts.
+- Idempotent version stamping; cancelled the old stuck/failed runs.
+
+---
+
+## What M6 added
 
 ### Core — [`crates/core/src/sync/`](crates/core/src/sync/)
 - `FileBackend` layout: `manifest.json`, `vault-header.json`, `items/<uuid>.json`
@@ -87,16 +174,12 @@ docs/                   M1.md .. M6.md
 - Hosts sync; password identities stay device-local
 
 ### Sync server — [`crates/sync-server`](crates/sync-server)
-- `tethra-sync-server` for Ubuntu/ThinkPad over Tailscale
-- Optional `--token` / `TETHRA_SYNC_TOKEN`
+- `tethra-sync-server` for Ubuntu/ThinkPad over Tailscale, setup wizard + status
+  TUI + systemd user unit; optional `--token` / `TETHRA_SYNC_TOKEN`
 
 ### Desktop + UI
 - Configure shared folder or HTTP URL+token; Sync now / Disable
 - **Vault sync** in the ⋯ menu and command palette
-
-### Releases
-- Tag `v*` (or run **Release** manually) → macOS `.dmg`, Windows NSIS `.exe`,
-  Linux packages, plus a Linux `tethra-sync-server` artifact
 
 See [`docs/M6.md`](docs/M6.md).
 
@@ -139,29 +222,33 @@ See [`docs/M6.md`](docs/M6.md).
   and a transfer queue with progress, pause, resume, retry, cancel.
 - Responsive: side-by-side panes on desktop, stacked below 768px.
 
-### Housekeeping
-- Removed the unused `AppIcons/` pack; canonical icons live in
-  `apps/tauri/src-tauri/icons/`. Dock icon rebuilt on Apple's grid (transparent
-  squircle) earlier in the session.
-
 ---
 
 ## Known limitations / deferred
 
 - **SFTP:** folder (recursive) transfers not supported; the transfer queue is not
-  persisted across app restarts; resume only applies to partial files retained in
-  the current session.
-- **Sync:** manual Sync now only (no background interval yet); password identities
-  never sync — re-enter per device after bootstrap.
-- **Jump hosts:** `ProxyJump` is stored as metadata; live routing is M7.
+  persisted across restarts; resume only applies to partial files retained in the
+  current session.
+- **Signing key:** updater private key lives at `~/.tethra-updater.key` on the
+  machine that generated it and as a repo secret — losing it forces manual
+  reinstalls of every client.
+- **Jump hosts:** `ProxyJump` is stored as metadata; live routing is **M10**.
 - **Private keys:** host metadata is the sync target; private-key identities stay
-  device-local (key sync is a deferred opt-in).
+  device-local (key sync is a deferred opt-in; passwords use `sync_secret`).
+- **Terminal:** agent-grade conformance (alt screen, truecolor, bracketed paste,
+  OSC 52/7, mouse, OSC 133 blocks, splits) is **M7**.
+- **Projects / agents:** no first-class Project or persistent agent sessions yet
+  — **M8**.
 - **Power monitor:** macOS observer is a best-effort stub; idle-timer lock is the
   primary path.
-- **Mobile:** `platform-ios` is a stub; no mobile build yet.
-- **macOS distribution:** native sidebar vibrancy uses Tauri's
-  `macos-private-api` feature, which is compatible with direct distribution but
-  must be removed or replaced before a Mac App Store submission.
+- **Mobile:** `platform-ios` is a stub; no mobile build yet — **M11** (reattach to
+  agents, not full phone SSH typing).
+- **Code signing:** installers are unsigned — macOS needs `xattr -cr` / Gatekeeper
+  override, Windows shows SmartScreen. Notarization/signing deferred (open
+  question before M8 — see `ROADMAP-v2.md`).
+- **macOS distribution:** native sidebar vibrancy uses Tauri's `macos-private-api`,
+  compatible with direct distribution but must be removed before a Mac App Store
+  submission.
 
 ---
 
@@ -197,13 +284,12 @@ npx --prefix ../../ui tauri dev
 
 # Full local CI-equivalent (from repo root)
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --features cli -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p core --lib --bins
 cargo test -p tethra
 cargo test -p tethra export_bindings
 git diff --exit-code -- apps/ui/src/lib/generated
 npm run build --prefix apps/ui
-cargo check -p core --target aarch64-apple-ios          # iOS portability guard
 cargo tree -p core --edges normal --prefix none | grep -qE '^(tauri|wry|tao)' && echo FAIL || echo OK
 
 # Docker-backed SSH/SFTP integration tests
@@ -212,17 +298,31 @@ cargo test -p core --test ssh_integration -- --ignored --test-threads=1 --nocapt
 docker compose -f crates/core/tests/docker-compose.yml down -v
 ```
 
-The local CI-equivalent commands pass on the M5.5 working tree. The existing
-Docker suite remains the M5 regression check (6 tests, including SFTP
-mkdir/rename/remove and progress/cancel/resume).
+## Release & update flow
+
+```bash
+# 1. Cut a release (CI stamps version, builds installers, signs updater artifacts)
+git tag v0.2.2 && git push origin v0.2.2
+# 2. Publish the draft release on GitHub (gh only sees published releases)
+# 3. On the sync host, mirror it for clients:
+tethra-sync-server fetch-updates
+# 4. Clients with HTTP sync configured show "Update and restart" on next launch
+```
 
 ---
 
 ## Suggested next step
 
-**M7 — Power features** (port forwarding, live jump hosts, snippets, multi-host
-broadcast), or polish M6 with periodic background sync and a systemd unit
-example for the ThinkPad server.
+**M7 — Real terminal** (see [`ROADMAP-v2.md`](ROADMAP-v2.md)): agent TTY
+conformance (alt screen, truecolor, bracketed paste, OSC 52/7, mouse, Unicode
+width), OSC 133 command blocks in `core`, splits / multi-window over the session
+registry. Acceptance: Claude Code local and over SSH matches Terminal.app /
+Ghostty.
 
-Optional: add a README + LICENSE and flip the repo public; configure Apple /
-Windows code signing when you want Gatekeeper / SmartScreen-clean installers.
+Then **M8 — Projects and agents**. Fleet power features remain **M10**; mobile
+**M11**.
+
+On the ThinkPad (if not already): `tethra-sync-server install-updates-timer`.
+
+Optional before M8: decide public vs private repo; README + LICENSE; Apple /
+Windows code signing for Gatekeeper / SmartScreen-clean installers.

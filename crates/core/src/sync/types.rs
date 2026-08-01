@@ -47,6 +47,20 @@ pub struct SyncedVaultHeader {
     pub argon2: Argon2Params,
     pub wrapped_vault_key: EncryptedBlob,
     pub created_at: DateTime<Utc>,
+    /// Present after a coordinated master-password change. Peers that still
+    /// hold the previous vault key verify the attestation and adopt this header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rekey_from: Option<RekeyFrom>,
+}
+
+/// Proof that a new shared header is a legitimate re-wrap of the same vault key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RekeyFrom {
+    pub previous_salt: Vec<u8>,
+    pub previous_argon2: Argon2Params,
+    pub previous_wrapped_vault_key: EncryptedBlob,
+    /// AEAD under the vault key binding the new wrap material.
+    pub attestation: EncryptedBlob,
 }
 
 /// Tombstones are retained this many days before optional GC.

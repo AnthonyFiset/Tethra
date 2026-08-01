@@ -3,7 +3,7 @@
 //! Key material never leaves this module except through deliberate decrypt APIs
 //! while the vault is unlocked.
 
-mod crypto;
+pub(crate) mod crypto;
 mod kdf;
 pub(crate) mod records;
 mod repository;

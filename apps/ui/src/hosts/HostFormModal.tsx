@@ -48,6 +48,7 @@ export function HostFormModal({
   const [port, setPort] = useState(String(initial?.port ?? 22));
   const [username, setUsername] = useState(initial?.username ?? "");
   const [color, setColor] = useState(initial?.color ?? SWATCHES[0]);
+  const [syncSecret, setSyncSecret] = useState(initial?.syncSecret ?? false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -76,6 +77,7 @@ export function HostFormModal({
         port: parsedPort,
         username: username.trim(),
         color,
+        syncSecret,
       };
       if (password) {
         mutation.password = password;
@@ -203,6 +205,25 @@ export function HostFormModal({
           disabled={busy}
           required={!initial}
         />
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={syncSecret}
+            disabled={busy}
+            onChange={(event) => setSyncSecret(event.target.checked)}
+          />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-ui font-medium text-fg">
+              Sync password to other devices
+            </span>
+            <span className="text-micro text-fg-subtle">
+              Off by default. When on, the encrypted password rides vault sync —
+              the sync server still cannot read it. SSH private keys never sync.
+            </span>
+          </span>
+        </label>
 
         <div className="mt-2 flex justify-end gap-2">
           <Button

@@ -2,10 +2,13 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use ssh_client_core::sync::{
     FileBackend, HttpBackend, SyncEngine, SyncReport, SyncStatus as CoreSyncStatus,
+    SyncedVaultHeader,
 };
 use tauri::Emitter;
 use tauri::State;
@@ -13,6 +16,13 @@ use tauri_plugin_dialog::DialogExt;
 use ts_rs::TS;
 
 use crate::AppState;
+
+/// Debounce window after vault mutations before an automatic sync.
+pub const BACKGROUND_SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
+/// Periodic sync while the vault stays unlocked.
+pub const BACKGROUND_SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// Generation counter so debounced syncs collapse into one.
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -284,6 +294,11 @@ pub async fn sync_pick_folder(app: tauri::AppHandle) -> Result<Option<String>, S
 
 #[tauri::command]
 pub async fn sync_now(state: State<'_, AppState>) -> Result<SyncReportDto, String> {
+    run_sync_now(&state).await
+}
+
+/// Best-effort sync used after unlock / mutations / interval / focus.
+pub async fn run_sync_now(state: &AppState) -> Result<SyncReportDto, String> {
     let engine = {
         let guard = state.sync_engine.lock().await;
         guard
@@ -296,6 +311,59 @@ pub async fn sync_now(state: State<'_, AppState>) -> Result<SyncReportDto, Strin
         .map_err(|e| e.to_string())?;
     let report = engine.sync_now().await.map_err(|e| e.to_string())?;
     Ok(SyncReportDto::from(&report))
+}
+
+/// Debounced background sync. Collapses bursts of mutations into one push.
+pub fn schedule_background_sync(app: tauri::AppHandle, state: &AppState) {
+    let generation = state.background_sync_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    let gen_slot = Arc::clone(&state.background_sync_gen);
+    let engine_slot = Arc::clone(&state.sync_engine);
+    let vault = Arc::clone(state.repo.vault());
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(BACKGROUND_SYNC_DEBOUNCE).await;
+        if gen_slot.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if !vault.is_unlocked().await.unwrap_or(false) {
+            return;
+        }
+        let engine = {
+            let guard = engine_slot.lock().await;
+            guard.clone()
+        };
+        let Some(engine) = engine else {
+            return;
+        };
+        match engine.sync_now().await {
+            Ok(report) => {
+                tracing::debug!(
+                    pulled = report.pulled,
+                    pushed = report.pushed,
+                    "background sync ok"
+                );
+                let _ = app.emit("sync-completed", SyncReportDto::from(&report));
+            }
+            Err(err) => tracing::debug!(%err, "background sync skipped"),
+        }
+    });
+}
+
+/// Publish a coordinated re-key after the master password changes.
+pub async fn publish_rekey_if_configured(
+    state: &AppState,
+    previous: &SyncedVaultHeader,
+) -> Result<(), String> {
+    let engine = {
+        let guard = state.sync_engine.lock().await;
+        guard.clone()
+    };
+    let Some(engine) = engine else {
+        return Ok(());
+    };
+    engine
+        .publish_password_rekey(previous)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn apply_settings(

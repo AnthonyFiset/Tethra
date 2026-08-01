@@ -97,6 +97,21 @@ jobs:
           fi
           echo "OK: no tauri/wry/tao in core dependency tree"
 
+  ios-portability:
+    name: ios-core-check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Core compiles for iOS
+        run: cargo check -p core --target aarch64-apple-ios
+
   ssh-integration:
     name: openssh-container
     runs-on: ubuntu-latest

@@ -59,10 +59,14 @@ impl From<HostRecord> for Host {
     }
 }
 
-/// Password identity payload. Private-key identities arrive in M4.
+/// Password identity payload. Private-key identities stay device-local.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordIdentityRecord {
     pub id: Uuid,
     pub label: String,
     pub password: String,
+    /// When true, the encrypted identity syncs like a host. Default off.
+    /// Does not apply to private keys (`PROJECT.md` §7).
+    #[serde(default)]
+    pub sync_secret: bool,
 }

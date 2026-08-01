@@ -19,6 +19,7 @@ import {
   listHosts,
   localHome,
   onHostKeyPrompt,
+  onSyncCompleted,
   onVaultLocked,
   onVaultStatus,
   openLocalTerminal,
@@ -27,6 +28,7 @@ import {
   resizeTerminal,
   respondHostKey,
   sendTerminalInput,
+  syncNow,
   vaultLock,
   vaultStatus,
   type HostKeyPrompt,
@@ -181,12 +183,53 @@ function Workspace({
     listHosts()
       .then(setHosts)
       .catch((reason: unknown) => setError(String(reason)));
-    let unlisten: (() => void) | undefined;
+    let unlistenPrompt: (() => void) | undefined;
+    let unlistenSync: (() => void) | undefined;
     onHostKeyPrompt(setPrompt).then((fn) => {
-      unlisten = fn;
+      unlistenPrompt = fn;
     });
-    return () => unlisten?.();
+    onSyncCompleted(() => {
+      void listHosts()
+        .then(setHosts)
+        .catch((reason: unknown) => setError(String(reason)));
+    }).then((fn) => {
+      unlistenSync = fn;
+    });
+    return () => {
+      unlistenPrompt?.();
+      unlistenSync?.();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!status.unlocked) return;
+
+    let timer: number | undefined;
+    function refreshFromSync(): void {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void syncNow()
+          .then(() => listHosts())
+          .then(setHosts)
+          .catch(() => undefined);
+      }, 500);
+    }
+
+    function onVisibility(): void {
+      if (document.visibilityState === "visible") refreshFromSync();
+    }
+    function onFocus(): void {
+      refreshFromSync();
+    }
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [status.unlocked]);
 
   useEffect(() => {
     if (!status.unlocked) {

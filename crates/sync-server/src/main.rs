@@ -59,8 +59,12 @@ enum Commands {
     Serve,
     /// Write and enable the systemd user unit.
     InstallService,
-    /// Disable and remove the systemd user unit.
+    /// Disable and remove the systemd user unit (and updates timer if present).
     UninstallService,
+    /// Install an hourly timer that runs `fetch-updates`.
+    InstallUpdatesTimer,
+    /// Disable and remove the updates timer.
+    UninstallUpdatesTimer,
     /// Mirror desktop release assets so clients can self-update from this host.
     FetchUpdates {
         /// Release tag to mirror. Defaults to the latest published release.
@@ -100,6 +104,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             init_tracing_interactive();
             service::uninstall()?;
             println!("Removed user service `tethra-sync`.");
+        }
+        Some(Commands::InstallUpdatesTimer) => {
+            init_tracing_interactive();
+            let _ = resolve_config(&cli, false)?;
+            service::install_updates_timer()?;
+            println!("Installed and enabled user timer `tethra-updates.timer`.");
+            println!("Check: systemctl --user status tethra-updates.timer");
+        }
+        Some(Commands::UninstallUpdatesTimer) => {
+            init_tracing_interactive();
+            service::uninstall_updates_timer()?;
+            println!("Removed user timer `tethra-updates.timer`.");
         }
         Some(Commands::FetchUpdates { ref tag, ref repo }) => {
             init_tracing_interactive();

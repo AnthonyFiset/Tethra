@@ -36,6 +36,8 @@ export interface HostMutation {
   port: number;
   username: string;
   password?: string;
+  /** Opt-in: sync the encrypted password identity to other devices. */
+  syncSecret?: boolean;
   color?: string;
 }
 
@@ -181,6 +183,14 @@ export function onVaultStatus(
 
 export function onVaultLocked(handler: () => void): Promise<UnlistenFn> {
   return listen("vault-locked", () => handler());
+}
+
+export function onSyncCompleted(
+  handler: (report: SyncReportDto) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncReportDto>("sync-completed", (event) =>
+    handler(event.payload),
+  );
 }
 
 export function localHome(): Promise<string> {

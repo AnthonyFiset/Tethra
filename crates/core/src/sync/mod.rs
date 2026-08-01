@@ -5,9 +5,11 @@
 //! on a Tailscale host). [`HttpBackend`] talks to the same row protocol over
 //! HTTP so a ThinkPad/Ubuntu box can host sync for Mac and Windows clients.
 //!
-//! Password identities stay `local_only` and never leave the device. The shared
-//! vault header (salt + password-wrapped vault key) is published so another
-//! device can unlock with the same master password.
+//! Password identities default to `local_only`; an opt-in `sync_secret` flag
+//! lets them sync under the same item encryption. The shared vault header
+//! (salt + password-wrapped vault key) is published so another device can
+//! unlock with the same master password. Coordinated re-key publishes a
+//! `rekey_from` attestation so peers adopt a new password wrap without reset.
 
 mod conflict;
 mod encode;
@@ -21,7 +23,7 @@ pub use encode::{item_row_from_sync, sync_item_from_row};
 pub use engine::{SyncEngine, SyncReport, SyncStatus};
 pub use file::FileBackend;
 pub use http::HttpBackend;
-pub use types::{SyncCursor, SyncItem, SyncedVaultHeader, TOMBSTONE_RETENTION_DAYS};
+pub use types::{RekeyFrom, SyncCursor, SyncItem, SyncedVaultHeader, TOMBSTONE_RETENTION_DAYS};
 
 use async_trait::async_trait;
 
