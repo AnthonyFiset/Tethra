@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Block pushes to main / version tags unless scripts/ci-check.sh passes.
+# Bypass once with: SKIP_CI_CHECK=1 git push
+set -euo pipefail
+
+if [[ "${SKIP_CI_CHECK:-}" == "1" ]]; then
+  echo "pre-push: SKIP_CI_CHECK=1 — skipping local CI mirror"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+need_check=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$local_sha" =~ ^0+$ ]] && continue
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master|refs/tags/v*)
+      need_check=1
+      echo "pre-push: ${remote_ref} requires scripts/ci-check.sh"
+      ;;
+  esac
+done
+
+if [[ "$need_check" -eq 0 ]]; then
+  exit 0
+fi
+
+exec "$ROOT/scripts/ci-check.sh"

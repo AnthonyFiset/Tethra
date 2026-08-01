@@ -35,10 +35,8 @@ fn wrap_inner(spec: &ShellSpec) -> std::io::Result<ShellSpec> {
     if name.contains("zsh") {
         let dir = write_zsh_zdotdir()?;
         env.push(("ZDOTDIR".into(), dir.to_string_lossy().into_owned()));
-        let mut args = Vec::new();
         // Always login+interactive so ~/.zprofile (Homebrew) loads.
-        args.push("-l".into());
-        args.push("-i".into());
+        let args = vec!["-l".into(), "-i".into()];
         return Ok(ShellSpec {
             program: spec.program.clone(),
             args,

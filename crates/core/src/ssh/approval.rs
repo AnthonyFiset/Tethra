@@ -8,13 +8,26 @@ use crate::{Error, Result};
 /// Action that must pass the approval gate before execution.
 #[derive(Debug, Clone)]
 pub enum Action {
-    OpenPty { host_id: Uuid },
-    Exec { host_id: Uuid, command: String },
-    Sftp { host_id: Uuid },
-    OpenLocalPty { program: String },
-    LocalExec { command: String },
+    OpenPty {
+        host_id: Uuid,
+    },
+    Exec {
+        host_id: Uuid,
+        command: String,
+    },
+    Sftp {
+        host_id: Uuid,
+    },
+    OpenLocalPty {
+        program: String,
+    },
+    LocalExec {
+        command: String,
+    },
     /// Assist wants to place a command in the shell input (never auto-executes).
-    AssistInsert { command: String },
+    AssistInsert {
+        command: String,
+    },
 }
 
 impl Action {

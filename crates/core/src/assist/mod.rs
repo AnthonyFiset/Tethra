@@ -39,7 +39,9 @@ pub async fn propose_command(
     let raw = provider.complete(system_propose(), &user).await?;
     let command = strip_command_fences(&raw);
     if command.is_empty() {
-        return Err(Error::InvalidArgument("model returned an empty command".into()));
+        return Err(Error::InvalidArgument(
+            "model returned an empty command".into(),
+        ));
     }
     gate.approve(&Action::AssistInsert {
         command: command.clone(),
@@ -58,7 +60,9 @@ pub async fn explain(
     let text = provider.complete(system_explain(), &user).await?;
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() {
-        return Err(Error::InvalidArgument("model returned an empty explanation".into()));
+        return Err(Error::InvalidArgument(
+            "model returned an empty explanation".into(),
+        ));
     }
     Ok(trimmed)
 }

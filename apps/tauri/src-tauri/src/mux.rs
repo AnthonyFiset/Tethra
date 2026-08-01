@@ -117,10 +117,7 @@ fn linux_tmux_install(has_brew: bool) -> (String, bool) {
         return ("brew install tmux".into(), true);
     }
     if look_up("apt-get").is_some() || look_up("apt").is_some() {
-        return (
-            "sudo apt-get install -y tmux".into(),
-            passwordless_sudo(),
-        );
+        return ("sudo apt-get install -y tmux".into(), passwordless_sudo());
     }
     if look_up("dnf").is_some() {
         return ("sudo dnf install -y tmux".into(), passwordless_sudo());
@@ -152,15 +149,7 @@ fn platform_from_uname(uname: &str) -> String {
 fn install_for(tool: &str, platform: &str, has_brew: bool) -> Option<(String, String, String)> {
     // (id, label, command)
     match (tool, platform) {
-        ("tmux", "macos") => Some((
-            "tmux".into(),
-            "tmux".into(),
-            if has_brew {
-                "brew install tmux".into()
-            } else {
-                "brew install tmux".into()
-            },
-        )),
+        ("tmux", "macos") => Some(("tmux".into(), "tmux".into(), "brew install tmux".into())),
         ("tmux", "linux") => {
             let (cmd, _) = linux_tmux_install(has_brew);
             Some(("tmux".into(), "tmux".into(), cmd))
@@ -170,10 +159,16 @@ fn install_for(tool: &str, platform: &str, has_brew: bool) -> Option<(String, St
             "tmux (WSL)".into(),
             "wsl -- sudo apt-get install -y tmux".into(),
         )),
-        ("zellij", "macos") => Some(("zellij".into(), "zellij".into(), "brew install zellij".into())),
-        ("zellij", "linux") if has_brew => {
-            Some(("zellij".into(), "zellij".into(), "brew install zellij".into()))
-        }
+        ("zellij", "macos") => Some((
+            "zellij".into(),
+            "zellij".into(),
+            "brew install zellij".into(),
+        )),
+        ("zellij", "linux") if has_brew => Some((
+            "zellij".into(),
+            "zellij".into(),
+            "brew install zellij".into(),
+        )),
         ("claude", _) => Some((
             "claude".into(),
             "Claude Code".into(),
@@ -285,15 +280,16 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
     let mut missing = Vec::new();
 
     // Persistence: need tmux or zellij.
-    if !has_tmux && !has_zellij {
-        if let Some((id, label, cmd)) = install_for("tmux", &platform, has_brew) {
-            missing.push(MissingToolDto {
-                id,
-                label,
-                reason: reason_for("tmux").into(),
-                install_command: cmd,
-            });
-        }
+    if !has_tmux
+        && !has_zellij
+        && let Some((id, label, cmd)) = install_for("tmux", &platform, has_brew)
+    {
+        missing.push(MissingToolDto {
+            id,
+            label,
+            reason: reason_for("tmux").into(),
+            install_command: cmd,
+        });
     }
 
     for tool in want_tools {
@@ -326,11 +322,7 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
 
     ToolsProbeDto {
         platform,
-        uname: if uname.is_empty() {
-            None
-        } else {
-            Some(uname)
-        },
+        uname: if uname.is_empty() { None } else { Some(uname) },
         has_tmux,
         has_zellij,
         has_brew,
@@ -525,7 +517,9 @@ pub async fn install_local_mux(state: State<'_, AppState>) -> Result<MuxEnsureRe
     } else if command.contains("pacman") {
         run_install("sudo", &["-n", "pacman", "-S", "--noconfirm", "tmux"])?;
     } else {
-        return Err(format!("refusing to auto-run unrecognized install: {command}"));
+        return Err(format!(
+            "refusing to auto-run unrecognized install: {command}"
+        ));
     }
 
     if let Some((kind, path)) = find_mux() {
@@ -582,9 +576,7 @@ pub async fn kill_mux_session(
             .map_err(redacted_error)?;
         Ok(())
     } else {
-        run_local_script(&script)
-            .await
-            .map(|_| ())
+        run_local_script(&script).await.map(|_| ())
     }
 }
 

@@ -680,7 +680,7 @@ impl VaultRepository {
                 has_key: !record.api_key.is_empty(),
             });
         }
-        out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        out.sort_by_key(|a| a.label.to_lowercase());
         Ok(out)
     }
 

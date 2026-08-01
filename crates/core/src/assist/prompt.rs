@@ -26,7 +26,9 @@ pub fn strip_command_fences(raw: &str) -> String {
         }
         text = lines.join("\n").trim().to_string();
     }
-    text.trim_matches(|c| c == '`' || c == '"' || c == '\'').trim().to_string()
+    text.trim_matches(|c| c == '`' || c == '"' || c == '\'')
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]

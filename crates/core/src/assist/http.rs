@@ -66,10 +66,7 @@ struct OpenAiCompatProvider {
 #[async_trait]
 impl AssistProvider for AnthropicProvider {
     async fn complete(&self, system: &str, user: &str) -> Result<String> {
-        let url = format!(
-            "{}/v1/messages",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let body = json!({
             "model": self.model,
             "max_tokens": 512,

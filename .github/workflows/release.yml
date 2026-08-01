@@ -7,9 +7,44 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  # Tag pushes used to race CI. Refuse to build installers until lint-test is green
+  # on this exact commit (same checks as scripts/ci-check.sh).
+  require-ci:
+    name: require-ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI success on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="${{ github.sha }}"
+          echo "Waiting for workflow CI to succeed on ${sha}"
+          for _ in $(seq 1 90); do
+            mapfile -t row < <(gh api \
+              "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=5" \
+              --jq '.workflow_runs[0] | [.status // "", .conclusion // "", .html_url // ""] | .[]')
+            status="${row[0]:-}"
+            conclusion="${row[1]:-}"
+            url="${row[2]:-}"
+            echo "CI status=${status:-none} conclusion=${conclusion:-none} ${url}"
+            if [[ "$conclusion" == "success" ]]; then
+              exit 0
+            fi
+            if [[ "$conclusion" == "failure" || "$conclusion" == "cancelled" || "$conclusion" == "timed_out" ]]; then
+              echo "CI did not pass — refusing to release. Fix main, retag, or move the tag."
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "Timed out waiting for CI"
+          exit 1
+
   publish:
+    needs: require-ci
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +110,7 @@ jobs:
 
   sync-server:
     name: publish-sync-server
+    needs: require-ci
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4

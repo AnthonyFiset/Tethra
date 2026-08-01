@@ -3,9 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ssh_client_core::assist::{self, AssistContext};
 use ssh_client_core::model::{AssistProviderKind, SecretString};
-use ssh_client_core::vault::{
-    ApiKeySummary as CoreApiKeySummary, CreateApiKeyRequest,
-};
+use ssh_client_core::vault::{ApiKeySummary as CoreApiKeySummary, CreateApiKeyRequest};
 use tauri::{AppHandle, State};
 use ts_rs::TS;
 
@@ -100,9 +98,7 @@ fn parse_provider(value: &str) -> Result<AssistProviderKind, String> {
 }
 
 #[tauri::command]
-pub async fn list_api_keys(
-    state: State<'_, AppState>,
-) -> Result<Vec<ApiKeySummaryDto>, String> {
+pub async fn list_api_keys(state: State<'_, AppState>) -> Result<Vec<ApiKeySummaryDto>, String> {
     let keys = state.repo.list_api_keys().await.map_err(redacted_error)?;
     Ok(keys.iter().map(ApiKeySummaryDto::from).collect())
 }
@@ -183,7 +179,11 @@ pub async fn assist_propose(
         return Err("prompt is required".into());
     }
     let key_id = parse_uuid(&api_key_id, "api key")?;
-    let key = state.repo.get_api_key(key_id).await.map_err(redacted_error)?;
+    let key = state
+        .repo
+        .get_api_key(key_id)
+        .await
+        .map_err(redacted_error)?;
     let provider = assist::provider_from_api_key(&key).map_err(redacted_error)?;
     let command = assist::propose_command(
         provider.as_ref(),
@@ -207,7 +207,11 @@ pub async fn assist_explain(
         return Err("prompt is required".into());
     }
     let key_id = parse_uuid(&api_key_id, "api key")?;
-    let key = state.repo.get_api_key(key_id).await.map_err(redacted_error)?;
+    let key = state
+        .repo
+        .get_api_key(key_id)
+        .await
+        .map_err(redacted_error)?;
     let provider = assist::provider_from_api_key(&key).map_err(redacted_error)?;
     let text = assist::explain(
         provider.as_ref(),
