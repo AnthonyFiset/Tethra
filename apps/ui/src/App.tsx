@@ -13,7 +13,7 @@ import { TooltipProvider } from "./components/ui/Tooltip";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
 import {
-  appVersion,
+  getAppVersion,
   closeSftp,
   closeTerminal,
   deleteHost,
@@ -219,7 +219,7 @@ function Workspace({
   zoomedIdRef.current = zoomedId;
 
   useEffect(() => {
-    void appVersion()
+    void getAppVersion()
       .then(setAppVersion)
       .catch(() => undefined);
   }, []);

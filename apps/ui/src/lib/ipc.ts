@@ -348,7 +348,7 @@ export function syncJoinHttp(
   });
 }
 
-export function appVersion(): Promise<string> {
+export function getAppVersion(): Promise<string> {
   return getVersion();
 }
 
