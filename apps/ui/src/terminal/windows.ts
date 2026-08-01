@@ -1,6 +1,9 @@
 /** Multi-window helpers. Sessions stay in Rust; windows only hold layout. */
 
-import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  createWebviewWindow,
+  currentWebviewLabel,
+} from "../lib/ipc";
 
 const CHANNEL = "tethra-workspace";
 
@@ -30,7 +33,7 @@ export type WorkspaceTransfer = {
 
 export function currentWindowLabel(): string {
   try {
-    return getCurrentWebviewWindow().label;
+    return currentWebviewLabel();
   } catch {
     return "main";
   }
@@ -47,7 +50,7 @@ export function workspaceBus(): BroadcastChannel {
 /** Open an empty secondary workspace window. */
 export async function openWorkspaceWindow(): Promise<string> {
   const label = `workspace-${crypto.randomUUID().slice(0, 8)}`;
-  const window = new WebviewWindow(label, {
+  await createWebviewWindow(label, {
     url: "/",
     title: "Tethra",
     width: 1000,
@@ -56,12 +59,6 @@ export async function openWorkspaceWindow(): Promise<string> {
     minHeight: 520,
     focus: true,
     backgroundColor: "#0D0D0D",
-  });
-  await new Promise<void>((resolve, reject) => {
-    window.once("tauri://created", () => resolve());
-    window.once("tauri://error", (event) =>
-      reject(new Error(String(event.payload))),
-    );
   });
   return label;
 }

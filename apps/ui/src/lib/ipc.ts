@@ -1,5 +1,10 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  WebviewWindow,
+  getCurrentWebviewWindow,
+} from "@tauri-apps/api/webviewWindow";
 import type { FileEntryDto } from "./generated/FileEntryDto";
 import type { HostKeyPrompt } from "./generated/HostKeyPrompt";
 import type { HostSummaryDto } from "./generated/HostSummaryDto";
@@ -340,6 +345,54 @@ export function syncJoinHttp(
     url,
     token,
     resetExisting,
+  });
+}
+
+export function appVersion(): Promise<string> {
+  return getVersion();
+}
+
+export function currentWebviewLabel(): string {
+  return getCurrentWebviewWindow().label;
+}
+
+export function onCurrentWebviewCloseRequested(
+  handler: (ctx: {
+    preventDefault: () => void;
+    destroy: () => Promise<void>;
+  }) => void | Promise<void>,
+): Promise<UnlistenFn> {
+  const win = getCurrentWebviewWindow();
+  return win.onCloseRequested(async (event) => {
+    await handler({
+      preventDefault: () => event.preventDefault(),
+      destroy: () => win.destroy(),
+    });
+  });
+}
+
+export type CreateWebviewWindowOptions = {
+  url: string;
+  title?: string;
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+  focus?: boolean;
+  backgroundColor?: string;
+};
+
+/** Create a secondary webview window and wait until it is ready. */
+export async function createWebviewWindow(
+  label: string,
+  options: CreateWebviewWindowOptions,
+): Promise<void> {
+  const window = new WebviewWindow(label, options);
+  await new Promise<void>((resolve, reject) => {
+    window.once("tauri://created", () => resolve());
+    window.once("tauri://error", (event) =>
+      reject(new Error(String(event.payload))),
+    );
   });
 }
 

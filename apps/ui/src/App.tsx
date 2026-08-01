@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CommandPalette } from "./components/CommandPalette";
 import { Logo } from "./components/Logo";
 import { Sidebar } from "./components/Sidebar";
@@ -15,11 +13,13 @@ import { TooltipProvider } from "./components/ui/Tooltip";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
 import {
+  appVersion,
   closeSftp,
   closeTerminal,
   deleteHost,
   listHosts,
   localHome,
+  onCurrentWebviewCloseRequested,
   onHostKeyPrompt,
   onSyncCompleted,
   onTerminalEvent,
@@ -219,7 +219,7 @@ function Workspace({
   zoomedIdRef.current = zoomedId;
 
   useEffect(() => {
-    void getVersion()
+    void appVersion()
       .then(setAppVersion)
       .catch(() => undefined);
   }, []);
@@ -394,37 +394,34 @@ function Workspace({
     if (isMainWindow()) return;
 
     let unlisten: (() => void) | undefined;
-    const win = getCurrentWebviewWindow();
 
-    void win
-      .onCloseRequested(async (event) => {
-        event.preventDefault();
+    void onCurrentWebviewCloseRequested(async ({ preventDefault, destroy }) => {
+      preventDefault();
 
-        const currentTabs = tabsRef.current;
-        const currentLayout = layoutRef.current;
-        const bus = workspaceBus();
-        bus.postMessage({
-          type: "reclaim",
-          fromLabel: currentWindowLabel(),
-          tabs: currentTabs as WorkspaceTab[],
-          layoutJson: currentLayout ? JSON.stringify(currentLayout) : null,
-          activeId: activeIdRef.current,
-          zoomedId: zoomedIdRef.current,
-        } satisfies WorkspaceTransfer);
-        bus.close();
+      const currentTabs = tabsRef.current;
+      const currentLayout = layoutRef.current;
+      const bus = workspaceBus();
+      bus.postMessage({
+        type: "reclaim",
+        fromLabel: currentWindowLabel(),
+        tabs: currentTabs as WorkspaceTab[],
+        layoutJson: currentLayout ? JSON.stringify(currentLayout) : null,
+        activeId: activeIdRef.current,
+        zoomedId: zoomedIdRef.current,
+      } satisfies WorkspaceTransfer);
+      bus.close();
 
-        for (const tab of currentTabs) {
-          if (tab.kind === "terminal" || tab.kind === "local") {
-            disposeTerminal(tab.sessionId);
-            outputHandlers.current.delete(tab.sessionId);
-          }
+      for (const tab of currentTabs) {
+        if (tab.kind === "terminal" || tab.kind === "local") {
+          disposeTerminal(tab.sessionId);
+          outputHandlers.current.delete(tab.sessionId);
         }
+      }
 
-        await win.destroy();
-      })
-      .then((fn) => {
-        unlisten = fn;
-      });
+      await destroy();
+    }).then((fn) => {
+      unlisten = fn;
+    });
 
     return () => {
       unlisten?.();
