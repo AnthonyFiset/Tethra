@@ -6,7 +6,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{Host, KnownHostKey, Project, ProjectLocation, RunningSession, ShellIntegration};
+use crate::model::{
+    Host, KnownHostKey, Project, ProjectLocation, RunningSession, ShellIntegration,
+};
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

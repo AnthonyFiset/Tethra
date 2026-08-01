@@ -95,9 +95,14 @@ impl From<&CoreHostSummary> for HostSummaryDto {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export, export_to = "../../../ui/src/lib/generated/")]
 enum ProjectLocationDto {
-    Local { path: String },
+    Local {
+        path: String,
+    },
     #[allow(non_snake_case)]
-    Remote { hostId: String, path: String },
+    Remote {
+        hostId: String,
+        path: String,
+    },
 }
 
 impl From<&ProjectLocation> for ProjectLocationDto {

@@ -407,7 +407,7 @@ impl VaultRepository {
             let record: ProjectRecord = serde_json::from_slice(&plaintext)?;
             out.push(ProjectSummary::from(&Project::from(record)));
         }
-        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        out.sort_by_key(|a| a.name.to_lowercase());
         Ok(out)
     }
 
@@ -536,7 +536,7 @@ impl VaultRepository {
                 started_on_device: record.started_on_device,
             });
         }
-        out.sort_by(|a, b| b.last_attached_at.cmp(&a.last_attached_at));
+        out.sort_by_key(|b| std::cmp::Reverse(b.last_attached_at));
         Ok(out)
     }
 
@@ -571,7 +571,9 @@ impl VaultRepository {
                 .await?
                 .into_iter()
                 .find(|s| s.id == existing.id)
-                .ok_or_else(|| Error::InvalidArgument("running session missing after update".into()));
+                .ok_or_else(|| {
+                    Error::InvalidArgument("running session missing after update".into())
+                });
         }
 
         let session = RunningSession::start(project_id, host_id, agent_id, started_on_device);
