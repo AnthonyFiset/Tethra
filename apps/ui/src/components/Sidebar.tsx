@@ -21,9 +21,14 @@ import type {
   RunningSessionSummaryDto,
 } from "../lib/ipc";
 import { cn } from "../lib/cn";
-import { HostAvatar } from "./HostAvatar";
+import { HostAvatar, DEFAULT_HOST_COLOR } from "./HostAvatar";
 import type { TabDescriptor } from "./TabBar";
 import { IconButton } from "./ui/Button";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "./ui/ContextMenu";
 import { Tooltip } from "./ui/Tooltip";
 
 interface SidebarProps {
@@ -138,10 +143,19 @@ export function Sidebar({
                   <button
                     onClick={() => onSelectTab(tab.sessionId)}
                     className={cn(
-                      "cursor-pointer rounded-md p-1 transition-colors hover:bg-hover",
+                      "relative cursor-pointer rounded-md p-1 transition-colors hover:bg-hover",
                       tab.sessionId === activeTabId && "bg-active",
                     )}
                   >
+                    {tab.sessionId === activeTabId && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full"
+                        style={{
+                          backgroundColor: tab.color ?? DEFAULT_HOST_COLOR,
+                        }}
+                      />
+                    )}
                     <span
                       className="grid h-7 w-7 place-items-center rounded-md bg-elevated"
                       style={{ color: tab.color ?? undefined }}
@@ -291,8 +305,15 @@ export function Sidebar({
                 <button
                   onClick={() => onConnect(host)}
                   disabled={connectingHostId === host.id}
-                  className="cursor-pointer rounded-md p-1 transition-colors hover:bg-hover disabled:opacity-45"
+                  className="relative cursor-pointer rounded-md p-1 transition-colors hover:bg-hover disabled:opacity-45"
                 >
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full"
+                    style={{
+                      backgroundColor: host.color ?? DEFAULT_HOST_COLOR,
+                    }}
+                  />
                   <HostAvatar label={host.label} color={host.color} />
                 </button>
               </Tooltip>
@@ -643,51 +664,77 @@ function HostRow({
   onDelete: (host: HostSummaryDto) => void;
 }): React.JSX.Element {
   return (
-    <div className="group relative flex items-center rounded-md transition-colors hover:bg-hover focus-within:bg-hover">
-      <button
-        onClick={() => onConnect(host)}
-        disabled={connecting}
-        title={`Connect to ${host.username}@${host.hostname}:${host.port}`}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left disabled:cursor-wait"
-      >
-        <HostAvatar label={host.label} color={host.color} />
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate text-ui font-medium text-fg">
-            {host.label}
+    <ContextMenu
+      content={
+        <>
+          <ContextMenuItem onSelect={() => onConnect(host)}>
+            Terminal
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onFiles(host)}>Files</ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => onEdit(host)}>Edit</ContextMenuItem>
+          <ContextMenuItem
+            onSelect={() => {
+              void navigator.clipboard.writeText(
+                `ssh ${host.username}@${host.hostname} -p ${host.port}`,
+              );
+            }}
+          >
+            Copy SSH command
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem destructive onSelect={() => onDelete(host)}>
+            Delete
+          </ContextMenuItem>
+        </>
+      }
+    >
+      <div className="group relative flex items-center rounded-md transition-colors hover:bg-hover focus-within:bg-hover">
+        <button
+          onClick={() => onConnect(host)}
+          disabled={connecting}
+          title={`Connect to ${host.username}@${host.hostname}:${host.port}`}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left disabled:cursor-wait"
+        >
+          <HostAvatar label={host.label} color={host.color} />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-ui font-medium text-fg">
+              {host.label}
+            </span>
+            <span className="truncate text-micro font-mono text-fg-subtle">
+              {connecting
+                ? "Connecting…"
+                : `${host.username}@${host.hostname}:${host.port}`}
+            </span>
           </span>
-          <span className="truncate text-micro text-fg-subtle">
-            {connecting
-              ? "Connecting…"
-              : `${host.username}@${host.hostname}:${host.port}`}
-          </span>
-        </span>
-      </button>
+        </button>
 
-      <div className="absolute right-1.5 flex items-center gap-0.5 rounded-md bg-hover pl-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <IconButton
-          label={`Browse files on ${host.label}`}
-          size="sm"
-          onClick={() => onFiles(host)}
-          disabled={openingFiles}
-        >
-          <FolderOpen size={13} />
-        </IconButton>
-        <IconButton
-          label={`Edit ${host.label}`}
-          size="sm"
-          onClick={() => onEdit(host)}
-        >
-          <Pencil size={13} />
-        </IconButton>
-        <IconButton
-          label={`Delete ${host.label}`}
-          size="sm"
-          onClick={() => onDelete(host)}
-          className="hover:text-danger"
-        >
-          <Trash2 size={13} />
-        </IconButton>
+        <div className="absolute right-1.5 flex items-center gap-0.5 rounded-md bg-hover pl-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <IconButton
+            label={`Browse files on ${host.label}`}
+            size="sm"
+            onClick={() => onFiles(host)}
+            disabled={openingFiles}
+          >
+            <FolderOpen size={13} />
+          </IconButton>
+          <IconButton
+            label={`Edit ${host.label}`}
+            size="sm"
+            onClick={() => onEdit(host)}
+          >
+            <Pencil size={13} />
+          </IconButton>
+          <IconButton
+            label={`Delete ${host.label}`}
+            size="sm"
+            onClick={() => onDelete(host)}
+            className="hover:text-danger"
+          >
+            <Trash2 size={13} />
+          </IconButton>
+        </div>
       </div>
-    </div>
+    </ContextMenu>
   );
 }

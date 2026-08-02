@@ -15,13 +15,18 @@ import { Button } from "./ui/Button";
 import { Dialog } from "./ui/Dialog";
 import { ErrorBanner, Field, inputClass } from "./ui/Field";
 
-interface AssistSettingsModalProps {
-  onClose: () => void;
+interface AssistSettingsPanelProps {
+  /** Hide the outer Close footer when embedded in Settings. */
+  embedded?: boolean;
+  onClose?: () => void;
+  onChanged?: () => void;
 }
 
-export function AssistSettingsModal({
+export function AssistSettingsPanel({
+  embedded,
   onClose,
-}: AssistSettingsModalProps): React.JSX.Element {
+  onChanged,
+}: AssistSettingsPanelProps): React.JSX.Element {
   const [keys, setKeys] = useState<ApiKeySummaryDto[]>([]);
   const [presets, setPresets] = useState<ProviderPresetDto[]>([]);
   const [editing, setEditing] = useState<ApiKeySummaryDto | "new">();
@@ -52,6 +57,7 @@ export function AssistSettingsModal({
     try {
       await deleteApiKey(id);
       await refresh();
+      onChanged?.();
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -60,21 +66,7 @@ export function AssistSettingsModal({
   }
 
   return (
-    <Dialog
-      open
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      kicker="Assist"
-      title="Providers"
-      description="Pick a provider, paste a key, Test to load live models. Keys stay encrypted in the vault."
-      width="md"
-      footer={
-        <Button variant="subtle" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
+    <>
       <div className="flex flex-col gap-3">
         {error && <ErrorBanner>{error}</ErrorBanner>}
 
@@ -142,6 +134,14 @@ export function AssistSettingsModal({
             </div>
           )}
         </ul>
+
+        {!embedded && onClose && (
+          <div className="flex justify-end border-t border-line pt-3">
+            <Button variant="subtle" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+        )}
       </div>
 
       {editing && presets.length > 0 && (
@@ -152,9 +152,33 @@ export function AssistSettingsModal({
           onSaved={async () => {
             setEditing(undefined);
             await refresh();
+            onChanged?.();
           }}
         />
       )}
+    </>
+  );
+}
+
+interface AssistSettingsModalProps {
+  onClose: () => void;
+}
+
+export function AssistSettingsModal({
+  onClose,
+}: AssistSettingsModalProps): React.JSX.Element {
+  return (
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      kicker="Assist"
+      title="Providers"
+      description="Pick a provider, paste a key, Test to load live models. Keys stay encrypted in the vault."
+      width="md"
+    >
+      <AssistSettingsPanel onClose={onClose} />
     </Dialog>
   );
 }

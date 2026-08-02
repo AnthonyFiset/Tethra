@@ -60,6 +60,7 @@ export async function openWorkspaceWindow(): Promise<string> {
     minHeight: 520,
     focus: true,
     backgroundColor: "#0D0D0D",
+    transparent: true,
   });
   return label;
 }

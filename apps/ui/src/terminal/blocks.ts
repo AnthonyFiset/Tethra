@@ -1,4 +1,5 @@
 import type { IDecoration, IMarker, Terminal } from "@xterm/xterm";
+import { writeClipboardText } from "../lib/ipc";
 import type { TerminalBlockPhase } from "../lib/generated/TerminalBlockPhase";
 
 const FAIL = "#e5544b";
@@ -203,13 +204,43 @@ function decorateFailed(
     };
 
     addBtn("Copy cmd", "Copy command", () => {
-      void navigator.clipboard.writeText(block.commandText || "");
+      void writeClipboardText(block.commandText || "");
     });
     addBtn("Copy out", "Copy output", () => {
-      void navigator.clipboard.writeText(block.outputText || "");
+      void writeClipboardText(block.outputText || "");
     });
     addBtn("Rerun", "Insert command for rerun", () => {
       if (block.commandText) tracker.onRerun?.(block.commandText);
+    });
+
+    // Right-click on the failed gutter — DOM menu (decoration is outside React).
+    element.style.pointerEvents = "auto";
+    element.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showBlockDomMenu(event.clientX, event.clientY, [
+        {
+          label: "Copy command",
+          run: () => void writeClipboardText(block.commandText || ""),
+        },
+        {
+          label: "Copy output",
+          run: () => void writeClipboardText(block.outputText || ""),
+        },
+        {
+          label: "Copy both",
+          run: () =>
+            void writeClipboardText(
+              [block.commandText, block.outputText].filter(Boolean).join("\n"),
+            ),
+        },
+        {
+          label: "Rerun",
+          run: () => {
+            if (block.commandText) tracker.onRerun?.(block.commandText);
+          },
+        },
+      ]);
     });
 
     element.appendChild(actions);
@@ -227,6 +258,45 @@ function disposeFinished(block: FinishedBlock | undefined): void {
   block.end.dispose();
 }
 
+function showBlockDomMenu(
+  x: number,
+  y: number,
+  items: Array<{ label: string; run: () => void }>,
+): void {
+  document.querySelector("[data-tethra-block-menu]")?.remove();
+  const menu = document.createElement("div");
+  menu.dataset.tethraBlockMenu = "1";
+  menu.className = "tethra-block-menu";
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  for (const item of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = item.label;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      menu.remove();
+      item.run();
+    });
+    menu.appendChild(btn);
+  }
+  const dismiss = () => {
+    menu.remove();
+    window.removeEventListener("mousedown", onDown, true);
+    window.removeEventListener("keydown", onKey, true);
+  };
+  const onDown = (event: MouseEvent) => {
+    if (!menu.contains(event.target as Node)) dismiss();
+  };
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === "Escape") dismiss();
+  };
+  document.body.appendChild(menu);
+  window.addEventListener("mousedown", onDown, true);
+  window.addEventListener("keydown", onKey, true);
+}
+
 export function disposeBlockTracker(sessionId: string): void {
   const tracker = trackers.get(sessionId);
   if (!tracker) return;
@@ -234,4 +304,15 @@ export function disposeBlockTracker(sessionId: string): void {
   tracker.open.commandStart?.dispose();
   tracker.open.outputStart?.dispose();
   trackers.delete(sessionId);
+}
+
+/** Most recent finished block with a command (for menu “Rerun Last Block”). */
+export function lastBlockCommand(sessionId: string): string | undefined {
+  const tracker = trackers.get(sessionId);
+  if (!tracker) return undefined;
+  for (let i = tracker.finished.length - 1; i >= 0; i--) {
+    const cmd = tracker.finished[i]?.commandText?.trim();
+    if (cmd) return cmd;
+  }
+  return undefined;
 }

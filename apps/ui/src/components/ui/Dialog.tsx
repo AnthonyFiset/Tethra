@@ -11,7 +11,7 @@ interface DialogProps {
   description?: ReactNode;
   /** Alert dialogs hide the close affordance so the choice stays explicit. */
   dismissible?: boolean;
-  width?: "sm" | "md" | "lg";
+  width?: "sm" | "md" | "lg" | "xl";
   children?: ReactNode;
   footer?: ReactNode;
   /**
@@ -19,12 +19,17 @@ interface DialogProps {
    * element (often the terminal). Prevents click-through injecting CSI/OSC.
    */
   preventCloseAutoFocus?: boolean;
+  /** Optional class on the content panel (e.g. flush padding for settings). */
+  contentClassName?: string;
+  /** Visually hide the title (kept for accessibility). */
+  titleSrOnly?: boolean;
 }
 
 const WIDTHS = {
   sm: "max-w-sm",
   md: "max-w-md",
   lg: "max-w-2xl",
+  xl: "max-w-4xl",
 };
 
 export function Dialog({
@@ -38,6 +43,8 @@ export function Dialog({
   children,
   footer,
   preventCloseAutoFocus = true,
+  contentClassName,
+  titleSrOnly = false,
 }: DialogProps): React.JSX.Element {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -57,6 +64,7 @@ export function Dialog({
             "fixed top-1/2 left-1/2 z-50 w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2",
             "rounded-panel border border-line-strong bg-elevated p-5 shadow-2xl shadow-black/60",
             WIDTHS[width],
+            contentClassName,
           )}
         >
           {kicker && (
@@ -64,22 +72,34 @@ export function Dialog({
               {kicker}
             </span>
           )}
-          <RadixDialog.Title className="m-0 text-[15px] font-semibold text-fg">
+          <RadixDialog.Title
+            className={cn(
+              "m-0 text-[15px] font-semibold text-fg",
+              titleSrOnly && "sr-only",
+            )}
+          >
             {title}
           </RadixDialog.Title>
-          {description && (
+          {description && !titleSrOnly && (
             <RadixDialog.Description className="mt-2 mb-0 text-ui text-fg-muted">
               {description}
             </RadixDialog.Description>
           )}
-          {children && <div className="mt-4">{children}</div>}
+          {description && titleSrOnly && (
+            <RadixDialog.Description className="sr-only">
+              {description}
+            </RadixDialog.Description>
+          )}
+          {children && (
+            <div className={cn(!titleSrOnly && "mt-4")}>{children}</div>
+          )}
           {footer && (
             <div className="mt-5 flex justify-end gap-2">{footer}</div>
           )}
           {dismissible && (
             <RadixDialog.Close
               aria-label="Close"
-              className="absolute top-4 right-4 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+              className="absolute top-4 right-4 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
             >
               <X size={14} />
             </RadixDialog.Close>

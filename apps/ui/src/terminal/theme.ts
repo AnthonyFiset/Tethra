@@ -24,7 +24,7 @@ export function themeFromAppTokens(): ITheme {
   const warning = cssVar("--color-warning", "#d29922");
 
   return {
-    background: base,
+    background: cssVar("--terminal-bg", base),
     foreground: fg,
     cursor: accent,
     cursorAccent: base,

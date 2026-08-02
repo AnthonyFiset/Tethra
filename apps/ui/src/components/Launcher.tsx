@@ -17,9 +17,14 @@ import type {
   RunningSessionSummaryDto,
 } from "../lib/ipc";
 import { cn } from "../lib/cn";
-import { HostAvatar } from "./HostAvatar";
+import { HostAvatar, DEFAULT_HOST_COLOR } from "./HostAvatar";
 import { Logo } from "./Logo";
 import { Button, IconButton } from "./ui/Button";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "./ui/ContextMenu";
 import { ErrorBanner, inputClass } from "./ui/Field";
 
 export type HostDraft = {
@@ -152,10 +157,10 @@ export function Launcher({
         <motion.header {...fade} className="flex flex-col gap-3">
           <Logo variant="lockup" size={28} />
           <div>
-            <h1 className="m-0 text-2xl font-semibold tracking-tight text-fg">
+            <h1 className="m-0 text-lg font-semibold tracking-tight text-fg">
               Resume where you left off
             </h1>
-            <p className="mt-1.5 mb-0 max-w-xl text-ui text-fg-muted">
+            <p className="mt-1 mb-0 max-w-xl text-ui text-fg-muted">
               Running agents stay alive in tmux. Open a host or project when
               you&apos;re ready to work.
             </p>
@@ -248,9 +253,21 @@ export function Launcher({
             </Button>
           </div>
           {sortedProjects.length === 0 ? (
-            <p className="m-0 text-ui text-fg-subtle">
-              No projects yet — open a folder on a host and launch an agent.
-            </p>
+            <div className="rounded-panel border border-dashed border-line bg-base/40 px-4 py-5">
+              <p className="m-0 text-ui text-fg-muted">
+                No projects yet. Create one to pin a folder and default agent on a
+                host.
+              </p>
+              <Button
+                className="mt-3"
+                size="sm"
+                variant="primary"
+                icon={<Plus size={13} />}
+                onClick={onAddProject}
+              >
+                New project
+              </Button>
+            </div>
           ) : (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {sortedProjects.map((project) => {
@@ -353,11 +370,23 @@ export function Launcher({
           </div>
 
           {filteredHosts.length === 0 ? (
-            <p className="m-0 text-ui text-fg-subtle">
-              {hosts.length === 0
-                ? "No hosts in the vault yet."
-                : "No hosts match that filter."}
-            </p>
+            <div className="rounded-panel border border-dashed border-line bg-base/40 px-4 py-5">
+              <p className="m-0 text-ui text-fg-muted">
+                {hosts.length === 0
+                  ? "No hosts in the vault yet."
+                  : "No hosts match that filter."}
+              </p>
+              {hosts.length === 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" variant="primary" onClick={onImport}>
+                    Import ~/.ssh/config
+                  </Button>
+                  <Button size="sm" variant="subtle" onClick={onAddHost}>
+                    Add host
+                  </Button>
+                </div>
+              )}
+            </div>
           ) : hostView === "grid" ? (
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {filteredHosts.map((host) => (
@@ -546,11 +575,51 @@ function HostCard({
   onDelete: () => void;
 }): React.JSX.Element {
   return (
-    <div
-      className="group relative flex flex-col gap-3 rounded-panel border border-line bg-elevated px-3.5 py-3"
-      style={{ borderTopColor: host.color ?? "#4C8DF6", borderTopWidth: 2 }}
+    <ContextMenu
+      content={
+        <>
+          <ContextMenuItem onSelect={onConnect}>Terminal</ContextMenuItem>
+          <ContextMenuItem onSelect={onFiles}>Files</ContextMenuItem>
+          <ContextMenuItem disabled={!hasAgentProject} onSelect={onAgent}>
+            Agent
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={onEdit}>Edit</ContextMenuItem>
+          <ContextMenuItem
+            onSelect={() => {
+              void navigator.clipboard.writeText(
+                `ssh ${host.username}@${host.hostname} -p ${host.port}`,
+              );
+            }}
+          >
+            Copy SSH command
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem destructive onSelect={onDelete}>
+            Delete
+          </ContextMenuItem>
+        </>
+      }
     >
-      <div className="flex items-center gap-2.5 pr-14">
+      <div
+        className="group relative flex cursor-pointer flex-col gap-2 overflow-hidden rounded-panel border border-line bg-elevated transition-colors hover:border-line-strong hover:bg-hover/40"
+        style={{
+          borderLeftWidth: 3,
+          borderLeftColor: host.color ?? DEFAULT_HOST_COLOR,
+        }}
+        onClick={() => {
+          if (!connecting) onConnect();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (!connecting) onConnect();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+      <div className="flex items-center gap-2.5 px-3.5 pt-3 pr-14">
         <HostAvatar label={host.label} color={host.color} size="md" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -565,11 +634,12 @@ function HostCard({
           </div>
           <div className="truncate font-mono text-micro text-fg-muted">
             {host.username}@{host.hostname}
+            {host.port !== 22 ? `:${host.port}` : ""}
           </div>
         </div>
       </div>
       {host.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1 px-3.5">
           {host.tags.map((tag) => (
             <span
               key={tag}
@@ -580,16 +650,16 @@ function HostCard({
           ))}
         </div>
       )}
-      <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" variant="primary" disabled={connecting} onClick={onConnect}>
-          {connecting ? "Connecting…" : "Terminal"}
-        </Button>
+      <div className="flex items-center gap-1 px-3.5 pb-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <Button
           size="sm"
           variant="subtle"
           icon={<FolderOpen size={13} />}
           disabled={openingFiles}
-          onClick={onFiles}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFiles();
+          }}
         >
           Files
         </Button>
@@ -597,7 +667,10 @@ function HostCard({
           size="sm"
           variant="subtle"
           disabled={!hasAgentProject}
-          onClick={onAgent}
+          onClick={(event) => {
+            event.stopPropagation();
+            onAgent();
+          }}
           title={
             hasAgentProject
               ? "Open latest project on this host"
@@ -606,21 +679,35 @@ function HostCard({
         >
           Agent
         </Button>
+        {connecting && (
+          <span className="ml-1 text-micro text-fg-subtle">Connecting…</span>
+        )}
       </div>
       <div className="absolute top-2 right-2 flex items-center gap-0.5 rounded-md bg-elevated/95 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <IconButton label={`Edit ${host.label}`} size="sm" onClick={onEdit}>
+        <IconButton
+          label={`Edit ${host.label}`}
+          size="sm"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit();
+          }}
+        >
           <Pencil size={13} />
         </IconButton>
         <IconButton
           label={`Delete ${host.label}`}
           size="sm"
-          onClick={onDelete}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
           className="hover:text-danger"
         >
           <Trash2 size={13} />
         </IconButton>
       </div>
-    </div>
+      </div>
+    </ContextMenu>
   );
 }
 

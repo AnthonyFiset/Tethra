@@ -110,6 +110,14 @@ export function vaultLock(): Promise<VaultStatusDto> {
   return invoke<VaultStatusDto>("vault_lock");
 }
 
+export function vaultGetIdleLockSecs(): Promise<number> {
+  return invoke<number>("vault_get_idle_lock_secs");
+}
+
+export function vaultSetIdleLockSecs(secs: number): Promise<number> {
+  return invoke<number>("vault_set_idle_lock_secs", { secs });
+}
+
 export function listHosts(): Promise<HostSummaryDto[]> {
   return invoke<HostSummaryDto[]>("list_hosts");
 }
@@ -421,6 +429,17 @@ export function onSyncCompleted(
   );
 }
 
+/** Native menu bar → UI (M12.5). Payload is a stable command id string. */
+export function onMenuCommand(
+  handler: (commandId: string) => void,
+): Promise<UnlistenFn> {
+  return listen<string>("menu-command", (event) => handler(event.payload));
+}
+
+export function openExternal(url: string): Promise<void> {
+  return invoke("open_external", { url });
+}
+
 export function localHome(): Promise<string> {
   return invoke<string>("local_home");
 }
@@ -601,6 +620,10 @@ export type CreateWebviewWindowOptions = {
   minHeight?: number;
   focus?: boolean;
   backgroundColor?: string;
+  /** Prefer false so activateWindowChrome can show after overlay titlebar. */
+  visible?: boolean;
+  /** Required for opt-in materials (Track B); opaque CSS is the default look. */
+  transparent?: boolean;
 };
 
 /** Create a secondary webview window and wait until it is ready. */
@@ -608,12 +631,112 @@ export async function createWebviewWindow(
   label: string,
   options: CreateWebviewWindowOptions,
 ): Promise<void> {
-  const window = new WebviewWindow(label, options);
+  const window = new WebviewWindow(label, {
+    ...options,
+    visible: options.visible ?? false,
+  });
   await new Promise<void>((resolve, reject) => {
     window.once("tauri://created", () => resolve());
     window.once("tauri://error", (event) =>
       reject(new Error(String(event.payload))),
     );
   });
+}
+
+/** Activate overlay titlebar (tauri-plugin-decoration), then show the window. */
+export async function activateWindowChrome(): Promise<void> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    return;
+  }
+
+  const win = getCurrentWebviewWindow();
+  let activated = false;
+  const FALLBACK_MS = 5_000;
+
+  const fallback = window.setTimeout(() => {
+    if (activated) return;
+    void invoke("restore_native_titlebar")
+      .catch(() => undefined)
+      .finally(() => {
+        void win.show().catch(() => undefined);
+      });
+  }, FALLBACK_MS);
+
+  try {
+    await invoke("activate_custom_titlebar");
+    activated = true;
+  } catch (error) {
+    console.warn("activate_custom_titlebar failed", error);
+    try {
+      await invoke("restore_native_titlebar");
+    } catch {
+      // ignore
+    }
+  } finally {
+    window.clearTimeout(fallback);
+    try {
+      await win.show();
+    } catch {
+      // already visible
+    }
+  }
+}
+
+export function platformSystemAccent(): Promise<string | null> {
+  return invoke<string | null>("platform_system_accent");
+}
+
+export type MaterialCapabilities = {
+  vibrancy: boolean;
+  mica: boolean;
+  acrylic: boolean;
+  note: string;
+};
+
+export type MaterialApplyResult = {
+  applied: string;
+  message: string | null;
+};
+
+export function windowMaterialCapabilities(): Promise<MaterialCapabilities> {
+  return invoke<MaterialCapabilities>("window_material_capabilities");
+}
+
+export function windowApplyMaterial(
+  kind: string,
+): Promise<MaterialApplyResult> {
+  return invoke<MaterialApplyResult>("window_apply_material", { kind });
+}
+
+/** Native clipboard via Tauri plugin, with navigator fallback outside the WebView. */
+export async function writeClipboardText(text: string): Promise<boolean> {
+  try {
+    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+    await writeText(text);
+    return true;
+  } catch (pluginError) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      console.error("clipboard write failed", pluginError);
+      return false;
+    }
+  }
+}
+
+export async function readClipboardText(): Promise<string> {
+  try {
+    const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+    const text = await readText();
+    return text ?? "";
+  } catch (pluginError) {
+    try {
+      return await navigator.clipboard.readText();
+    } catch {
+      console.error("clipboard read failed", pluginError);
+      return "";
+    }
+  }
 }
 

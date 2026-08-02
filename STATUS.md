@@ -1,7 +1,7 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated for **v0.2.6** (M10–M12 + polish
-audit). Strategy brief: [`HANDOFF.md`](HANDOFF.md).
+_Snapshot for handoff / reassessment. Last updated after **v0.2.7** (M12.5 chrome +
+clipboard/menu fixes). Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (v2 kept for M6.2–M9 history)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
@@ -12,7 +12,7 @@ architecture and hard rules; [`ROADMAP-v3.md`](ROADMAP-v3.md) for what to build
 next.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main`; latest shipped tag `v0.2.6`
+- **Branch:** `main`; latest shipped tag `v0.2.7` (M12.5 platform chrome)
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 
@@ -38,6 +38,7 @@ next.
 | **M10** | Launcher + workspace (Resume-first dashboard; sidebar only in Workspace) | **Done** — see `docs/M10.md` |
 | **M11** | Provider + agent catalogs (data, not compiled); paste-key / `GET /models` UX | **Done** — M11.1–11.3 (`docs/M11.md`); BYOK launch deferred |
 | **M12** | Terminal feel: OSC 133 blocks UI, scroll-jump, fonts, reattach scrollback | **Done** (core) — M12.1–12.4 (`docs/M12.md`); asciinema / ligatures / cross-device scrollback optional |
+| **M12.5** | Platform chrome, settings, materials | **Done** (v0.2.7) — A–D + clipboard/menu fixes (`docs/M12.5.md`) |
 | **M13** | Fleet: port forwarding, live jump hosts, snippets, `FleetExec` (was v2 M10) | Not started |
 | **M14** | Mobile: reattach/monitor agents (deferred; was v2 M11) | Deferred |
 
@@ -369,13 +370,13 @@ tethra-sync-server fetch-updates
 
 ## Suggested next step
 
-**M13 — Fleet** (port forward, live ProxyJump, snippets, `FleetExec`) unless you
-want optional **M12.5 asciinema** or ligature toggle first
-([`ROADMAP-v3.md`](ROADMAP-v3.md), [`docs/M12.md`](docs/M12.md)).
+**M13 Fleet** is next when ready — or deeper Track D polish.
+[`docs/M12.5.md`](docs/M12.5.md). Optional M12 leftovers:
+ligature toggle, asciinema, cross-device scrollback.
 
 Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 
-On the ThinkPad after v0.2.5 publishes:
+On the ThinkPad after a release publishes:
 `tethra-sync-server fetch-updates` (and `install-updates-timer` if not already).
 
 Open decisions (v3): public vs private repo; catalog hosting (ThinkPad-only vs

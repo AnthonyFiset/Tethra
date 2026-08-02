@@ -1,11 +1,11 @@
-# Tethra handoff — v0.2.6 / roadmap v3
+# Tethra handoff — v0.2.7 / roadmap v3
 
 _Paste this (plus [`ROADMAP-v3.md`](ROADMAP-v3.md) / [`PROJECT.md`](PROJECT.md) if needed) into another session. Longer engineering status: [`STATUS.md`](STATUS.md)._
 
-**As of:** 2026-08-01  
+**As of:** 2026-08-02  
 **Repo:** https://github.com/AnthonyFiset/Tethra (private)  
-**Branch / commit:** `main` @ `1ccd29b`  
-**Tag:** `v0.2.6` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
+**Branch / commit:** `main` @ _(tag commit — update after push)_  
+**Tag:** `v0.2.7` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (supersedes M10/M11 in v2; mobile deferred to end)
 
 ---
@@ -24,12 +24,27 @@ Tethra is an E2E-encrypted SSH/SFTP vault client that **hosts coding agents** ac
 | **M10** | Launcher and workspace | **Done** | Dashboard / Resume-first; sidebar Open tree; Launcher ↔ Workspace (⌘Esc) |
 | **M11** | Provider + agent catalogs | **Done** | M11.1–11.3; BYOK launch deferred |
 | **M12** | Terminal feel | **Mostly done** | M12.1–12.4 + polish audit; optional asciinema / ligatures; cross-device scrollback sync open |
+| **M12.5** | Platform chrome | **Done (v0.2.7)** | A–D + terminal clipboard/menu fixes — [`docs/M12.5.md`](docs/M12.5.md) |
 | **M13** | Fleet | **Next** | Port forward, live ProxyJump, snippets, `FleetExec` (was v2 M10) |
 | **M14** | Mobile | Deferred | Reattach/monitor agents; keep iOS `cargo check` green |
 
-**Build order:** M13 next (unless jump hosts block you today — then promote ProxyJump). Optional leftovers: ligature toggle, asciinema (M12.5), cross-device scrollback blob sync.
+**Build order:** **M13 Fleet** (promote ProxyJump if jump hosts block you today).
 
 ---
+
+## What shipped in v0.2.7
+
+### M12.5 platform chrome + clipboard hardening
+
+- `bundle.macOS.bundleName: "Tethra"` so Hide/Quit use the product name
+- Full macOS menu bar → `menu-command` → same App handlers; Windows keeps About/Quit only
+- **Track A:** sectioned Settings folds Sync / AI / Vault; terminal prefs; configurable vault idle auto-lock
+- **Track B:** Opaque default; Appearance → Vibrant / Custom / Acrylic; `window-vibrancy` (mac vibrancy, Win11 Mica); chrome CSS translucency; terminal viewport stays opaque; `macOSPrivateApi` for dmg
+- **Track C:** `ChromeStyle`, `tauri-plugin-decoration`, caption clearance, Settings full-page on win/linux, Windows system accent
+- **Track D (first pass):** host-color ambient, calmer host cards, empty-state CTAs, toolbar Lock separated, brand accent `#3D8EF0`
+- **Clipboard / menus (critical Mac fixes):** native clipboard plugin; Edit→Copy/Paste and ⌘C/⌘V target the PTY (not xterm’s hidden textarea); selection cache for menu-bar Copy; terminal right-click portal menu (not Radix) so every item fires; bubble-phase WebView contextmenu suppress so app menus open
+- Titlebar clicks: no full-width decoration drag overlay on macOS; dedicated drag spacers between controls
+- Docs: [`docs/M12.5.md`](docs/M12.5.md)
 
 ## What shipped in v0.2.6
 
@@ -100,7 +115,9 @@ Tab × = **detach** (tmux lives). Sidebar Kill = **kill mux** + tombstone Runnin
 
 **M13 — Fleet** ([`ROADMAP-v3.md`](ROADMAP-v3.md)) — port forwarding, live `ProxyJump`, snippets, `FleetExec`.
 
-Optional leftovers: ligature toggle, asciinema (M12.5), cross-device scrollback, BYOK launch injection, fuller agent seed (Cursor CLI, Goose, …) as data-only PRs.
+Continue **M13 Fleet** when chrome is good enough, or deeper Track D polish /
+materials tuning ([`docs/M12.5.md`](docs/M12.5.md)). Optional M12 leftovers: asciinema,
+cross-device scrollback, BYOK launch injection, fuller agent seed as data-only PRs.
 
 ---
 
@@ -129,4 +146,5 @@ npm run build --prefix apps/ui
 | [`docs/M10.md`](docs/M10.md) | M10 launcher / workspace |
 | [`docs/M11.md`](docs/M11.md) | M11 catalogs (BYOK deferred) |
 | [`docs/M12.md`](docs/M12.md) | M12 terminal feel |
+| [`docs/M12.5.md`](docs/M12.5.md) | Platform chrome (A–D spike; polish leftovers) |
 | [`docs/UPDATES.md`](docs/UPDATES.md) | Self-update / mirror |

@@ -14,6 +14,7 @@ import {
   Radio,
   RefreshCw,
   Rows2,
+  Settings,
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
@@ -23,6 +24,10 @@ import type {
   ProjectSummaryDto,
   RunningSessionSummaryDto,
 } from "../lib/ipc";
+import {
+  SETTINGS_PALETTE_ENTRIES,
+  type SettingsSectionId,
+} from "./SettingsModal";
 import { HostAvatar } from "./HostAvatar";
 
 interface CommandPaletteProps {
@@ -50,6 +55,7 @@ interface CommandPaletteProps {
   onAddHost: () => void;
   onImport: () => void;
   onSync: () => void;
+  onSettings: (section?: SettingsSectionId) => void;
   onAssistSettings: () => void;
   onLock: () => void;
   agentLabel?: (agentId: string | null | undefined) => string;
@@ -80,6 +86,7 @@ export function CommandPalette({
   onAddHost,
   onImport,
   onSync,
+  onSettings,
   onAssistSettings,
   onLock,
   agentLabel = (id) => id ?? "agent",
@@ -291,6 +298,14 @@ export function CommandPalette({
                   Assist providers
                 </Item>
                 <Item
+                  value="settings preferences options"
+                  icon={<Settings size={15} />}
+                  detail="⌘,"
+                  onSelect={() => run(() => onSettings("general"))}
+                >
+                  Settings
+                </Item>
+                <Item
                   value="lock vault security"
                   icon={<Lock size={15} />}
                   detail="Close remote sessions"
@@ -298,6 +313,22 @@ export function CommandPalette({
                 >
                   Lock vault
                 </Item>
+              </Group>
+
+              <Group heading="Settings">
+                {SETTINGS_PALETTE_ENTRIES.map((entry) => (
+                  <Item
+                    key={entry.id}
+                    value={entry.value}
+                    icon={<Settings size={15} />}
+                    detail="Open section"
+                    onSelect={() =>
+                      run(() => onSettings(entry.id as SettingsSectionId))
+                    }
+                  >
+                    {entry.label}
+                  </Item>
+                ))}
               </Group>
             </Command.List>
           </Command>

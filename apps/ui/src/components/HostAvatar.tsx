@@ -1,7 +1,7 @@
 import { Folder, TerminalSquare } from "lucide-react";
 import { cn } from "../lib/cn";
 
-export const DEFAULT_HOST_COLOR = "#4C8DF6";
+export const DEFAULT_HOST_COLOR = "#3D8EF0";
 
 interface HostAvatarProps {
   label: string;

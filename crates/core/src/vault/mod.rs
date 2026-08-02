@@ -10,7 +10,7 @@ mod repository;
 pub(crate) mod store;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -39,6 +39,9 @@ pub use store::{ItemKind, ItemRow, RECOVERY_SECRET_KEY as VAULT_RECOVERY_SECRET_
 /// Default idle auto-lock duration.
 pub const DEFAULT_IDLE_LOCK: Duration = Duration::from_secs(15 * 60);
 
+/// Sentinel: idle auto-lock disabled (`set_idle_timeout_secs(0)`).
+pub const IDLE_LOCK_DISABLED: Duration = Duration::MAX;
+
 /// Snapshot of vault availability without exposing secrets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultStatus {
@@ -61,7 +64,7 @@ pub struct Vault {
     secrets: Arc<dyn SecretStore>,
     db: Mutex<VaultDb>,
     state: Mutex<LockState>,
-    idle_timeout: Duration,
+    idle_timeout: StdMutex<Duration>,
 }
 
 impl Vault {
@@ -81,12 +84,43 @@ impl Vault {
             secrets,
             db: Mutex::new(db),
             state: Mutex::new(LockState::Locked),
-            idle_timeout,
+            idle_timeout: StdMutex::new(idle_timeout),
         })
     }
 
     pub fn db_path(&self) -> PathBuf {
         vault_db_path(self.paths.as_ref())
+    }
+
+    /// Current idle auto-lock timeout (`Duration::MAX` means disabled).
+    pub fn idle_timeout(&self) -> Duration {
+        *self
+            .idle_timeout
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Seconds until idle lock, or `0` when disabled.
+    pub fn idle_timeout_secs(&self) -> u64 {
+        let timeout = self.idle_timeout();
+        if timeout == IDLE_LOCK_DISABLED || timeout.as_secs() >= u64::from(u32::MAX) {
+            0
+        } else {
+            timeout.as_secs()
+        }
+    }
+
+    /// Set idle auto-lock. `0` disables; otherwise clamped to 60s…24h.
+    pub fn set_idle_timeout_secs(&self, secs: u64) {
+        let next = if secs == 0 {
+            IDLE_LOCK_DISABLED
+        } else {
+            Duration::from_secs(secs.clamp(60, 24 * 60 * 60))
+        };
+        *self
+            .idle_timeout
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
     }
 
     pub async fn status(&self) -> Result<VaultStatus> {
@@ -344,11 +378,13 @@ impl Vault {
     }
 
     async fn touch_idle(&self) -> Result<()> {
+        let timeout = self.idle_timeout();
+        if timeout == IDLE_LOCK_DISABLED {
+            return Ok(());
+        }
         let mut state = self.state.lock().await;
         let expired = match &*state {
-            LockState::Unlocked { last_activity, .. } => {
-                last_activity.elapsed() >= self.idle_timeout
-            }
+            LockState::Unlocked { last_activity, .. } => last_activity.elapsed() >= timeout,
             LockState::Locked => false,
         };
         if expired {
@@ -414,6 +450,18 @@ mod tests {
     fn recovery_secret_account_is_stable() {
         assert_eq!(RECOVERY_SECRET_KEY, "ssh-client.vault.recovery-key");
     }
+
+    #[test]
+    fn idle_timeout_secs_roundtrip_and_disable() {
+        let (_dir, vault) = test_vault();
+        assert_eq!(vault.idle_timeout_secs(), 3600);
+        vault.set_idle_timeout_secs(300);
+        assert_eq!(vault.idle_timeout_secs(), 300);
+        vault.set_idle_timeout_secs(0);
+        assert_eq!(vault.idle_timeout_secs(), 0);
+        assert_eq!(vault.idle_timeout(), IDLE_LOCK_DISABLED);
+    }
+
     use tempfile::tempdir;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {

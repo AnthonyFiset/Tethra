@@ -27,15 +27,18 @@ use tokio::sync::{Mutex, oneshot};
 use ts_rs::TS;
 use uuid::Uuid;
 
+mod accent;
 mod app_menu;
 mod assist;
 mod local_fs;
+mod materials;
 mod mux;
 mod output_pump;
 mod sftp;
 mod shell_integration;
 mod sync;
 mod updater;
+mod webview_chrome;
 
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 
@@ -521,6 +524,69 @@ async fn vault_lock(app: AppHandle, state: State<'_, AppState>) -> Result<VaultS
 }
 
 #[tauri::command]
+fn vault_get_idle_lock_secs(state: State<'_, AppState>) -> u64 {
+    state.repo.vault().idle_timeout_secs()
+}
+
+#[tauri::command]
+fn vault_set_idle_lock_secs(state: State<'_, AppState>, secs: u64) -> u64 {
+    state.repo.vault().set_idle_timeout_secs(secs);
+    state.repo.vault().idle_timeout_secs()
+}
+
+#[tauri::command]
+fn activate_custom_titlebar(window: tauri::WebviewWindow) -> Result<(), String> {
+    use tauri_plugin_decoration::WebviewWindowExt;
+
+    // macOS already uses Overlay + our React TitleBar. create_overlay_titlebar
+    // still injects a full-width drag strip that steals button clicks — only
+    // inset the native traffic lights. Windows/Linux need the overlay for
+    // caption buttons + Snap Layout.
+    #[cfg(target_os = "macos")]
+    {
+        window
+            .set_traffic_lights_inset(18.0, 20.0)
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window
+            .create_overlay_titlebar()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn restore_native_titlebar(window: tauri::WebviewWindow) -> Result<(), String> {
+    use tauri_plugin_decoration::WebviewWindowExt;
+    window
+        .restore_native_titlebar()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn platform_system_accent() -> Option<String> {
+    accent::system_accent_hex()
+}
+
+#[tauri::command]
+fn window_material_capabilities() -> materials::MaterialCapabilities {
+    materials::capabilities()
+}
+
+#[tauri::command]
+fn window_apply_material(
+    window: tauri::WebviewWindow,
+    kind: String,
+) -> Result<materials::MaterialApplyResult, String> {
+    materials::apply(&window, &kind)
+}
+
+#[tauri::command]
 async fn list_hosts(state: State<'_, AppState>) -> Result<Vec<HostSummaryDto>, String> {
     let hosts = state.repo.list_hosts().await.map_err(redacted_error)?;
     Ok(hosts.iter().map(HostSummaryDto::from).collect())
@@ -930,6 +996,36 @@ async fn respond_host_key(
     state.prompts.respond(prompt_id, accepted).await
 }
 
+/// Open a URL in the system browser (Help menu / release notes).
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("only http(s) URLs can be opened".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 async fn lock_vault(app: &AppHandle, state: &AppState) -> Result<VaultStatusDto, String> {
     // Close all SSH sessions before zeroizing vault keys.
     let sessions = {
@@ -981,9 +1077,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_decoration::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             app.set_menu(app_menu::build(app)?)?;
+            app_menu::wire_menu_events(app.handle());
+            webview_chrome::harden_all_webviews(app.handle());
             let paths = Arc::new(
                 platform_desktop::DesktopAppPaths::new()
                     .map_err(|e| std::io::Error::other(e.to_string()))?,
@@ -1188,6 +1288,13 @@ pub fn run() {
 
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(true) = event
+                && let Some(webview) = window.app_handle().get_webview_window(window.label())
+            {
+                webview_chrome::harden_webview(&webview);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             vault_status,
             vault_create,
@@ -1195,6 +1302,13 @@ pub fn run() {
             vault_recover,
             vault_change_password,
             vault_lock,
+            vault_get_idle_lock_secs,
+            vault_set_idle_lock_secs,
+            activate_custom_titlebar,
+            restore_native_titlebar,
+            platform_system_accent,
+            window_material_capabilities,
+            window_apply_material,
             list_hosts,
             list_projects,
             list_agents,
@@ -1231,6 +1345,7 @@ pub fn run() {
             mux::kill_mux_session,
             mux::prune_stale_running_sessions,
             respond_host_key,
+            open_external,
             sftp::local_home,
             sftp::local_list,
             sftp::local_mkdir,

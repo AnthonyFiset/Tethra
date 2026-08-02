@@ -5,6 +5,13 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { readClipboardText, writeClipboardText } from "../lib/ipc";
+import {
+  getTerminalCopyOnSelect,
+  getTerminalCursorBlink,
+  getTerminalFontSize,
+  getTerminalLigatures,
+} from "../lib/prefs";
 import { disposeBlockTracker, flushBlockPhases } from "./blocks";
 import {
   SCROLLBACK_LINE_CAP,
@@ -31,6 +38,8 @@ interface TerminalRecord {
 
 const terminals = new Map<string, TerminalRecord>();
 const encoder = new TextEncoder();
+/** Last non-empty selection per session (survives menu-bar focus/selection clear). */
+const lastSelections = new Map<string, string>();
 /** Drop xterm onData until this timestamp (ms) — blocks dialog click-through junk. */
 const inputSuppressedUntil = new Map<string, number>();
 /** Global gate — covers every session, including stale onData closures. */
@@ -108,7 +117,7 @@ export function createTerminal(
 
   const terminal = new Terminal({
     allowProposedApi: true,
-    cursorBlink: true,
+    cursorBlink: getTerminalCursorBlink(),
     cursorStyle: "bar",
     convertEol: false,
     // Bracketed paste stays enabled so shells that request it get it.
@@ -117,7 +126,7 @@ export function createTerminal(
     macOptionIsMeta: true,
     fontFamily:
       '"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace',
-    fontSize: 13,
+    fontSize: getTerminalFontSize(),
     lineHeight: 1.25,
     letterSpacing: 0,
     scrollback: 10_000,
@@ -127,6 +136,7 @@ export function createTerminal(
     scrollOnUserInput: true,
     theme: themeFromAppTokens(),
   });
+  applyFontFeatures(terminal);
   const fit = new FitAddon();
   terminal.loadAddon(fit);
 
@@ -155,6 +165,14 @@ export function createTerminal(
   terminal.onData((data) => {
     if (inputIsSuppressed(sessionId)) return;
     inputHandlers.get(sessionId)?.onInput(encoder.encode(data));
+  });
+  terminal.onSelectionChange(() => {
+    const text = terminal.getSelection();
+    // Keep last non-empty selection — macOS menu-bar clicks clear xterm
+    // selection before Edit→Copy runs.
+    if (text) lastSelections.set(sessionId, text);
+    if (!getTerminalCopyOnSelect()) return;
+    if (text) void writeClipboardText(text);
   });
   terminal.onResize(({ cols, rows }) => {
     const record = terminals.get(sessionId);
@@ -197,6 +215,7 @@ export function attachTerminal(
   } else {
     container.replaceChildren();
     record.terminal.open(container);
+    applyFontFeatures(record.terminal);
     try {
       record.webgl = new WebglAddon();
       record.terminal.loadAddon(record.webgl);
@@ -239,6 +258,33 @@ export function writeTerminal(
   });
 }
 
+/** Re-apply prefs from localStorage to every live terminal. */
+export function applyTerminalPrefs(): void {
+  const fontSize = getTerminalFontSize();
+  const cursorBlink = getTerminalCursorBlink();
+  for (const record of terminals.values()) {
+    record.terminal.options.fontSize = fontSize;
+    record.terminal.options.cursorBlink = cursorBlink;
+    applyFontFeatures(record.terminal);
+    if (record.terminal.element) {
+      try {
+        record.fit.fit();
+      } catch {
+        // hidden
+      }
+    }
+  }
+}
+
+function applyFontFeatures(terminal: Terminal): void {
+  const ligatures = getTerminalLigatures();
+  // xterm has no first-class ligature flag — use CSS on the host element when open.
+  const el = terminal.element;
+  if (el) {
+    el.style.fontVariantLigatures = ligatures ? "common-ligatures" : "none";
+  }
+}
+
 /** Re-apply the app token theme (e.g. after future theme switches). */
 export function refreshTerminalTheme(sessionId?: string): void {
   const theme = themeFromAppTokens();
@@ -264,12 +310,38 @@ export function getTerminalCwd(sessionId: string): string | undefined {
   return terminals.get(sessionId)?.cwd;
 }
 
+export function clearTerminal(sessionId: string): void {
+  terminals.get(sessionId)?.terminal.clear();
+}
+
+export function resetTerminal(sessionId: string): void {
+  terminals.get(sessionId)?.terminal.reset();
+}
+
+export function getTerminalSelection(sessionId: string): string {
+  return terminals.get(sessionId)?.terminal.getSelection() ?? "";
+}
+
+/** Live selection, or last non-empty selection if the menu bar cleared it. */
+export function getTerminalSelectionForCopy(sessionId: string): string {
+  const live = getTerminalSelection(sessionId);
+  if (live) return live;
+  return lastSelections.get(sessionId) ?? "";
+}
+
+export async function copyTerminalSelection(sessionId: string): Promise<boolean> {
+  const text = getTerminalSelectionForCopy(sessionId);
+  if (!text) return false;
+  return writeClipboardText(text);
+}
+
 export function disposeTerminal(sessionId: string): void {
   const record = terminals.get(sessionId);
   if (!record) return;
   window.clearTimeout(record.resizeTimer);
   inputSuppressedUntil.delete(sessionId);
   inputHandlers.delete(sessionId);
+  lastSelections.delete(sessionId);
   disposeBlockTracker(sessionId);
   record.syncFilter.reset();
   for (const disposable of record.disposables) {

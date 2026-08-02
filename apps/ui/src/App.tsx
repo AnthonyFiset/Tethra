@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AssistBar } from "./components/AssistBar";
-import { AssistSettingsModal } from "./components/AssistSettingsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import {
   Launcher,
   parseQuickConnect,
   type HostDraft,
 } from "./components/Launcher";
+import { HostAvatar, DEFAULT_HOST_COLOR } from "./components/HostAvatar";
 import { Logo } from "./components/Logo";
 import {
   ToolsHintDialog,
   shouldShowToolsHint,
 } from "./components/ToolsHintDialog";
+import {
+  SettingsModal,
+  type SettingsSectionId,
+} from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
-import { SyncSettingsModal } from "./components/SyncSettingsModal";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -23,6 +26,7 @@ import { ErrorBanner } from "./components/ui/Field";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
+import { getIdleLockSecs, getLandingPref } from "./lib/prefs";
 import {
   getAppVersion,
   closeSftp,
@@ -39,24 +43,30 @@ import {
   markProjectRunning,
   onCurrentWebviewCloseRequested,
   onHostKeyPrompt,
+  onMenuCommand,
   onSyncCompleted,
   onTerminalEvent,
   onVaultLocked,
   onVaultStatus,
+  openExternal,
   openLocalTerminal,
   openSftp,
   openTerminal,
   probeHostTools,
   pruneStaleRunningSessions,
+  readClipboardText,
   resizeTerminal,
   respondHostKey,
   sendTerminalInput,
   suppressPtyUserInput,
   syncNow,
   touchProjectOpened,
+  updateCheck,
   updateProject,
   vaultLock,
+  vaultSetIdleLockSecs,
   vaultStatus,
+  writeClipboardText,
   type AssistContextPayload,
   type AgentSpecDto,
   type HostKeyPrompt,
@@ -73,17 +83,24 @@ import { projectLaunchScript, sleep } from "./projects/launch";
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
   armClickShield,
+  clearTerminal,
+  copyTerminalSelection,
   createTerminal,
   disposeTerminal,
   focusTerminal,
   persistProjectScrollback,
+  resetTerminal,
   restoreProjectScrollback,
   suppressAllTerminalUserInput,
   writeTerminal,
   writeTerminalMessage,
 } from "./terminal/registry";
 import { clearScrollbackSnapshot } from "./terminal/scrollback";
-import { queueBlockPhase, setBlockRerunHandler } from "./terminal/blocks";
+import {
+  lastBlockCommand,
+  queueBlockPhase,
+  setBlockRerunHandler,
+} from "./terminal/blocks";
 import { SplitPanes } from "./terminal/SplitPanes";
 import { TerminalView } from "./terminal/TerminalView";
 import {
@@ -103,7 +120,6 @@ import {
   type WorkspaceTab,
   type WorkspaceTransfer,
 } from "./terminal/windows";
-import { ChangePasswordModal } from "./vault/ChangePasswordModal";
 import { VaultGate } from "./vault/VaultGate";
 
 interface Tab {
@@ -120,6 +136,9 @@ interface Tab {
   /** Vault project id when this tab was opened from a project. */
   projectId?: string;
 }
+
+/** Dedupe paste when macOS fires both keydown and Edit→Paste. */
+let lastTerminalPasteAt = 0;
 
 export default function App(): React.JSX.Element {
   const [status, setStatus] = useState<VaultStatusDto>();
@@ -254,10 +273,10 @@ function Workspace({
   const [pendingDelete, setPendingDelete] = useState<HostSummaryDto>();
   const [pendingDeleteProject, setPendingDeleteProject] =
     useState<ProjectSummaryDto>();
-  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [syncOpen, setSyncOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSectionId>("general");
   const [assistOpen, setAssistOpen] = useState(false);
-  const [assistSettingsOpen, setAssistSettingsOpen] = useState(false);
   const [assistKeysEpoch, setAssistKeysEpoch] = useState(0);
   const [muxHint, setMuxHint] = useState<{
     probe: ToolsProbeDto;
@@ -279,6 +298,7 @@ function Workspace({
   activeIdRef.current = activeId;
   const zoomedIdRef = useRef(zoomedId);
   zoomedIdRef.current = zoomedId;
+  const menuHandlerRef = useRef<(commandId: string) => void>(() => undefined);
 
   useEffect(() => {
     void getAppVersion()
@@ -398,6 +418,7 @@ function Workspace({
       })();
       setLayout(null);
       setZoomedId(undefined);
+      setAppMode("launcher");
       setTabs((current) => {
         const local = current.filter((tab) => tab.kind === "local");
         setActiveId((active) =>
@@ -412,6 +433,12 @@ function Workspace({
       setImportOpen(false);
       setPendingDelete(undefined);
       setPaletteOpen(false);
+      setSettingsOpen(false);
+    } else {
+      void vaultSetIdleLockSecs(getIdleLockSecs()).catch(() => undefined);
+      if (getLandingPref() === "workspace") {
+        setAppMode("workspace");
+      }
     }
   }, [status.unlocked]);
 
@@ -686,6 +713,11 @@ function Workspace({
     setDrawerOpen(false);
   }
 
+  function openSettings(section: SettingsSectionId = "general"): void {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }
+
   /** View change only — never kills PTYs or remote mux sessions. */
   function goLauncher(): void {
     setAppMode("launcher");
@@ -693,6 +725,227 @@ function Workspace({
     setAssistOpen(false);
     setZoomedId(undefined);
   }
+
+  function pasteIntoTerminal(sessionId: string, text: string): void {
+    // Force IPC path — do not route through xterm's hidden textarea.
+    // Debounce: macOS may deliver both the keydown and the Edit menu accelerator.
+    const now = Date.now();
+    if (now - lastTerminalPasteAt < 80) return;
+    lastTerminalPasteAt = now;
+    suppressPtyUserInput(1000);
+    void sendTerminalInput(sessionId, new TextEncoder().encode(text), {
+      force: true,
+    }).catch((reason: unknown) => setError(String(reason)));
+  }
+
+  function isEditableField(el: Element | null): boolean {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    // xterm keeps a hidden textarea for input — that is NOT a form field.
+    if (el.closest(".xterm")) return false;
+    return (
+      el instanceof HTMLInputElement ||
+      el instanceof HTMLTextAreaElement ||
+      el.isContentEditable
+    );
+  }
+
+  function handleMenuCommand(commandId: string): void {
+    const active = tabsRef.current.find(
+      (tab) => tab.sessionId === activeIdRef.current,
+    );
+    const terminalActive =
+      active && (active.kind === "terminal" || active.kind === "local");
+
+    switch (commandId) {
+      case "app.settings":
+        openSettings("general");
+        break;
+      case "app.lock":
+        void lockNow();
+        break;
+      case "app.check_updates":
+        void updateCheck()
+          .then((info) => {
+            if (info.available) {
+              setError(
+                `Update available: ${info.version ?? "new version"}. Use the update banner to install.`,
+              );
+            } else {
+              setError("You're on the latest version.");
+            }
+          })
+          .catch((reason: unknown) => setError(String(reason)));
+        break;
+      case "file.new_terminal":
+        if (active && active.kind !== "sftp" && active.hostId !== "local") {
+          const host = hosts.find((h) => h.id === active.hostId);
+          if (host) void connect(host);
+        } else if (hosts[0]) {
+          void connect(hosts[0]);
+        }
+        break;
+      case "file.new_local":
+        void openLocal();
+        break;
+      case "file.new_window":
+        openNewWindow();
+        break;
+      case "file.open_project":
+        goLauncher();
+        setPaletteOpen(true);
+        break;
+      case "file.import_ssh":
+        setImportOpen(true);
+        break;
+      case "file.close_tab":
+        if (activeIdRef.current) void closeTab(activeIdRef.current);
+        break;
+      case "edit.copy": {
+        const el = document.activeElement;
+        if (isEditableField(el)) {
+          const dom = window.getSelection()?.toString() ?? "";
+          if (dom) {
+            void writeClipboardText(dom).then((ok) => {
+              if (!ok) setError("Couldn't copy to the clipboard.");
+            });
+            break;
+          }
+        }
+        if (terminalActive && active) {
+          void copyTerminalSelection(active.sessionId).then((ok) => {
+            if (!ok) setError("Nothing to copy — select text in the terminal first.");
+          });
+        }
+        break;
+      }
+      case "edit.paste": {
+        const el = document.activeElement;
+        if (isEditableField(el)) {
+          void readClipboardText().then((text) => {
+            if (!text) {
+              setError("Clipboard is empty.");
+              return;
+            }
+            if (
+              el instanceof HTMLInputElement ||
+              el instanceof HTMLTextAreaElement
+            ) {
+              const start = el.selectionStart ?? el.value.length;
+              const end = el.selectionEnd ?? el.value.length;
+              el.setRangeText(text, start, end, "end");
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+            } else {
+              document.execCommand("insertText", false, text);
+            }
+          });
+          break;
+        }
+        if (terminalActive && active) {
+          void readClipboardText().then((text) => {
+            if (!text) {
+              setError("Clipboard is empty.");
+              return;
+            }
+            pasteIntoTerminal(active.sessionId, text);
+          });
+        }
+        break;
+      }
+      case "view.toggle_sidebar":
+        toggleSidebar();
+        break;
+      case "view.launcher":
+        goLauncher();
+        break;
+      case "view.split_right":
+        void splitPane("horizontal");
+        break;
+      case "view.split_down":
+        void splitPane("vertical");
+        break;
+      case "view.zoom_pane":
+        toggleZoom();
+        break;
+      case "terminal.clear":
+        if (terminalActive && active) clearTerminal(active.sessionId);
+        break;
+      case "terminal.reset":
+        if (terminalActive && active) resetTerminal(active.sessionId);
+        break;
+      case "terminal.assist":
+        if (terminalActive) setAssistOpen(true);
+        break;
+      case "terminal.rerun_last":
+        if (terminalActive && active) {
+          const cmd = lastBlockCommand(active.sessionId);
+          if (cmd) {
+            suppressPtyUserInput(1000);
+            suppressAllTerminalUserInput(1000);
+            armClickShield(400);
+            void sendTerminalInput(
+              active.sessionId,
+              new TextEncoder().encode(cmd),
+              { force: true },
+            ).catch((reason: unknown) => setError(String(reason)));
+          }
+        }
+        break;
+      case "go.palette":
+        setPaletteOpen(true);
+        break;
+      case "go.next_tab": {
+        const list = tabsRef.current;
+        if (list.length === 0) break;
+        const idx = list.findIndex(
+          (tab) => tab.sessionId === activeIdRef.current,
+        );
+        const next = list[(idx + 1) % list.length];
+        if (next) selectTab(next.sessionId);
+        break;
+      }
+      case "go.prev_tab": {
+        const list = tabsRef.current;
+        if (list.length === 0) break;
+        const idx = list.findIndex(
+          (tab) => tab.sessionId === activeIdRef.current,
+        );
+        const prev = list[(idx - 1 + list.length) % list.length];
+        if (prev) selectTab(prev.sessionId);
+        break;
+      }
+      case "help.docs":
+        void openExternal(
+          "https://github.com/AnthonyFiset/Tethra/blob/main/HANDOFF.md",
+        ).catch((reason: unknown) => setError(String(reason)));
+        break;
+      case "help.shortcuts":
+        setPaletteOpen(true);
+        break;
+      case "help.issue":
+        void openExternal(
+          "https://github.com/AnthonyFiset/Tethra/issues",
+        ).catch((reason: unknown) => setError(String(reason)));
+        break;
+      case "help.release_notes":
+        void openExternal(
+          "https://github.com/AnthonyFiset/Tethra/releases",
+        ).catch((reason: unknown) => setError(String(reason)));
+        break;
+      default:
+        break;
+    }
+  }
+  menuHandlerRef.current = handleMenuCommand;
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void onMenuCommand((commandId) => {
+      menuHandlerRef.current(commandId);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
 
   function selectTab(sessionId: string): void {
     activateSession(sessionId);
@@ -1374,9 +1627,56 @@ function Workspace({
         event.preventDefault();
         toggleSidebar();
       }
+      if (event.key.toLowerCase() === "c" && !event.shiftKey && status.unlocked) {
+        const tab = tabsRef.current.find(
+          (entry) => entry.sessionId === activeIdRef.current,
+        );
+        const inTerminal =
+          tab &&
+          (tab.kind === "terminal" || tab.kind === "local") &&
+          !isEditableField(document.activeElement);
+        if (inTerminal) {
+          event.preventDefault();
+          void copyTerminalSelection(tab.sessionId);
+          return;
+        }
+      }
+      if (event.key.toLowerCase() === "v" && !event.shiftKey && status.unlocked) {
+        const tab = tabsRef.current.find(
+          (entry) => entry.sessionId === activeIdRef.current,
+        );
+        const inTerminal =
+          tab &&
+          (tab.kind === "terminal" || tab.kind === "local") &&
+          !isEditableField(document.activeElement);
+        if (inTerminal) {
+          event.preventDefault();
+          void readClipboardText().then((text) => {
+            if (text) pasteIntoTerminal(tab.sessionId, text);
+          });
+          return;
+        }
+      }
       if (event.key.toLowerCase() === "k" && status.unlocked) {
         event.preventDefault();
-        setPaletteOpen(true);
+        if (event.shiftKey) {
+          const tab = tabsRef.current.find(
+            (entry) => entry.sessionId === activeIdRef.current,
+          );
+          if (tab && (tab.kind === "terminal" || tab.kind === "local")) {
+            clearTerminal(tab.sessionId);
+          }
+        } else {
+          setPaletteOpen(true);
+        }
+      }
+      if (event.key === "," && status.unlocked) {
+        event.preventDefault();
+        openSettings("general");
+      }
+      if (event.key.toLowerCase() === "w" && status.unlocked) {
+        event.preventDefault();
+        if (activeIdRef.current) void closeTab(activeIdRef.current);
       }
       if (event.key.toLowerCase() === "i" && status.unlocked) {
         const tab = tabsRef.current.find(
@@ -1454,9 +1754,10 @@ function Workspace({
         onToggleZoom={() => toggleZoom()}
         onNewWindow={() => openNewWindow()}
         onMoveToNewWindow={() => void moveActiveToNewWindow()}
-        onSync={() => setSyncOpen(true)}
-        onAssistSettings={() => setAssistSettingsOpen(true)}
-        onChangePassword={() => setChangePasswordOpen(true)}
+        onSync={() => openSettings("sync")}
+        onSettings={() => openSettings("general")}
+        onAssistSettings={() => openSettings("ai")}
+        onChangePassword={() => openSettings("vault")}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
         onGoLauncher={inWorkspace ? goLauncher : undefined}
@@ -1558,6 +1859,17 @@ function Workspace({
                   activeId={activeId}
                   onSelect={selectTab}
                   onClose={(sessionId) => void closeTab(sessionId)}
+                  onCloseOthers={(keepId) => {
+                    for (const tab of tabsRef.current) {
+                      if (tab.sessionId !== keepId) {
+                        void closeTab(tab.sessionId);
+                      }
+                    }
+                  }}
+                  onMoveToNewWindow={(sessionId) => {
+                    activateSession(sessionId);
+                    void moveActiveToNewWindow();
+                  }}
                 />
               )}
 
@@ -1570,7 +1882,7 @@ function Workspace({
                       context={context}
                       reloadToken={assistKeysEpoch}
                       onInsert={insertAssistCommand}
-                      onOpenSettings={() => setAssistSettingsOpen(true)}
+                      onOpenSettings={() => openSettings("ai")}
                       onClose={() => setAssistOpen(false)}
                     />
                   );
@@ -1625,7 +1937,17 @@ function Workspace({
                           sessionId={tab.sessionId}
                           active={focused}
                           visible
-                          color={tab.color ?? "#4C8DF6"}
+                          color={tab.color ?? DEFAULT_HOST_COLOR}
+                          onPaste={(text) =>
+                            pasteIntoTerminal(tab.sessionId, text)
+                          }
+                          onSplitRight={() => void splitPane("horizontal")}
+                          onSplitDown={() => void splitPane("vertical")}
+                          onClose={() => void closeTab(tab.sessionId)}
+                          onAssist={() => {
+                            activateSession(tab.sessionId);
+                            setAssistOpen(true);
+                          }}
                         />
                       );
                     }}
@@ -1683,10 +2005,46 @@ function Workspace({
           setEditor("new");
         }}
         onImport={() => setImportOpen(true)}
-        onSync={() => setSyncOpen(true)}
-        onAssistSettings={() => setAssistSettingsOpen(true)}
+        onSync={() => openSettings("sync")}
+        onSettings={(section) => openSettings(section ?? "general")}
+        onAssistSettings={() => openSettings("ai")}
         onLock={() => void lockNow()}
         agentLabel={(id) => agentDisplayName(agents, id)}
+      />
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        initialSection={settingsSection}
+        sidebarCollapsed={sidebarCollapsed}
+        onSidebarCollapsedChange={setSidebarCollapsed}
+        onHostsMayHaveChanged={() => {
+          void listHosts()
+            .then(setHosts)
+            .catch((reason: unknown) => setError(String(reason)));
+          void listProjects()
+            .then(setProjects)
+            .catch((reason: unknown) => setError(String(reason)));
+          void refreshRunningSessions().catch((reason: unknown) =>
+            setError(String(reason)),
+          );
+        }}
+        onVaultReplaced={() => {
+          setSettingsOpen(false);
+          setHosts([]);
+          setProjects([]);
+          setRunningSessions([]);
+          setTabs([]);
+          setActiveId(undefined);
+          setLayout(null);
+          setAppMode("launcher");
+          void vaultStatus()
+            .then(onStatus)
+            .catch((reason: unknown) => setError(String(reason)));
+        }}
+        onAssistChanged={() => setAssistKeysEpoch((n) => n + 1)}
+        agents={agents}
+        appVersion={appVersion}
       />
 
       <Dialog
@@ -1844,51 +2202,12 @@ function Workspace({
         />
       )}
 
-      {changePasswordOpen && (
-        <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />
-      )}
-
-      {assistSettingsOpen && (
-        <AssistSettingsModal
-          onClose={() => {
-            setAssistSettingsOpen(false);
-            setAssistKeysEpoch((n) => n + 1);
-          }}
-        />
-      )}
-
       {muxHint && (
         <ToolsHintDialog
           probe={muxHint.probe}
           sessionId={muxHint.sessionId}
           onInsert={insertToolCommand}
           onClose={() => setMuxHint(undefined)}
-        />
-      )}
-
-      {syncOpen && (
-        <SyncSettingsModal
-          onClose={() => setSyncOpen(false)}
-          onHostsMayHaveChanged={() => {
-            void listHosts()
-              .then(setHosts)
-              .catch((reason: unknown) => setError(String(reason)));
-            void listProjects()
-              .then(setProjects)
-              .catch((reason: unknown) => setError(String(reason)));
-            void refreshRunningSessions().catch((reason: unknown) =>
-              setError(String(reason)),
-            );
-          }}
-          onVaultReplaced={() => {
-            setSyncOpen(false);
-            setHosts([]);
-            setProjects([]);
-            setRunningSessions([]);
-            void vaultStatus()
-              .then(onStatus)
-              .catch((reason: unknown) => setError(String(reason)));
-          }}
         />
       )}
     </div>

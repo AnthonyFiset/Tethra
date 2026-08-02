@@ -13,10 +13,13 @@ import {
   RefreshCw,
   Rows2,
   Search,
+  Settings,
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
 import { cn } from "../lib/cn";
+import { useChrome } from "../lib/ChromeContext";
+import { modKeyLabel, shiftModLabel } from "../lib/chrome";
 import { Logo } from "./Logo";
 import { IconButton } from "./ui/Button";
 import { Tooltip } from "./ui/Tooltip";
@@ -42,6 +45,7 @@ interface TitleBarProps {
   onNewWindow: () => void;
   onMoveToNewWindow: () => void;
   onSync: () => void;
+  onSettings?: () => void;
   onAssistSettings: () => void;
   onChangePassword: () => void;
   onAbout: () => void;
@@ -71,6 +75,7 @@ export function TitleBar({
   onNewWindow,
   onMoveToNewWindow,
   onSync,
+  onSettings,
   onAssistSettings,
   onChangePassword,
   onAbout,
@@ -78,42 +83,55 @@ export function TitleBar({
   onGoLauncher,
   onGoWorkspace,
 }: TitleBarProps): React.JSX.Element {
+  const chrome = useChrome();
+  const mod = modKeyLabel(chrome);
+  const shiftMod = shiftModLabel(chrome);
+
   return (
-    // "deep" makes the whole strip draggable; Tauri still exempts buttons.
-    <header
-      data-tauri-drag-region="deep"
-      className="pl-traffic-lights flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface pr-3"
-    >
-      {showSidebarToggle && (
-        <Tooltip content="Toggle sidebar  ⌘B" side="bottom">
-          <IconButton label="Toggle sidebar" onClick={onToggleSidebar}>
-            <PanelLeft size={15} />
-          </IconButton>
-        </Tooltip>
-      )}
+    <header className="titlebar flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface">
+      <div className="relative z-10 flex shrink-0 items-center gap-2">
+        {showSidebarToggle && (
+          <Tooltip content={`Toggle sidebar  ${mod}B`} side="bottom">
+            <IconButton label="Toggle sidebar" onClick={onToggleSidebar}>
+              <PanelLeft size={15} />
+            </IconButton>
+          </Tooltip>
+        )}
 
-      {onGoLauncher && (
-        <Tooltip content="Launcher  ⌘Esc" side="bottom">
-          <IconButton label="Back to launcher" onClick={onGoLauncher}>
-            <LayoutGrid size={15} />
-          </IconButton>
-        </Tooltip>
-      )}
+        {onGoLauncher && (
+          <Tooltip content={`Launcher  ${mod}Esc`} side="bottom">
+            <IconButton label="Back to launcher" onClick={onGoLauncher}>
+              <LayoutGrid size={15} />
+            </IconButton>
+          </Tooltip>
+        )}
 
-      {onGoWorkspace && (
-        <Tooltip content="Workspace  ⌘Esc" side="bottom">
-          <IconButton label="Back to workspace" onClick={onGoWorkspace}>
-            <PanelsTopLeft size={15} />
-          </IconButton>
-        </Tooltip>
-      )}
+        {onGoWorkspace && (
+          <Tooltip content={`Workspace  ${mod}Esc`} side="bottom">
+            <IconButton label="Back to workspace" onClick={onGoWorkspace}>
+              <PanelsTopLeft size={15} />
+            </IconButton>
+          </Tooltip>
+        )}
 
-      <Logo variant="lockup" size={17} className="max-[520px]:[&>span]:hidden" />
+        <Logo
+          variant="lockup"
+          size={17}
+          className="max-[520px]:[&>span]:hidden"
+        />
+      </div>
+
+      {/* Dedicated drag strip — not an ancestor of buttons. */}
+      <div
+        data-tauri-drag-region
+        className="hidden h-full min-w-2 flex-1 max-md:block"
+      />
 
       <button
+        type="button"
         onClick={onOpenPalette}
         className={cn(
-          "mx-auto flex h-7 w-full max-w-80 cursor-pointer items-center gap-2 rounded-md border border-line bg-base px-2.5",
+          "relative z-10 mx-auto flex h-7 w-full max-w-80 cursor-pointer items-center gap-2 rounded-md border border-line bg-base px-2.5",
           "text-micro text-fg-subtle transition-colors hover:border-line-strong hover:text-fg-muted",
           "max-md:hidden",
         )}
@@ -121,14 +139,19 @@ export function TitleBar({
         <Search size={13} />
         <span>Search hosts and commands</span>
         <kbd className="ml-auto rounded border border-line px-1 py-px font-sans text-[10px] text-fg-subtle">
-          ⌘K
+          {mod}K
         </kbd>
       </button>
 
-      <div className="ml-auto flex items-center gap-1">
+      <div
+        data-tauri-drag-region
+        className="hidden h-full min-w-2 flex-1 md:block"
+      />
+
+      <div className="relative z-10 ml-auto flex shrink-0 items-center gap-1">
         {workspaceChrome && (
           <>
-            <Tooltip content="Split right" side="bottom">
+            <Tooltip content={`Split right  ${mod}\\`} side="bottom">
               <IconButton
                 label="Split right"
                 onClick={onSplitRight}
@@ -138,7 +161,7 @@ export function TitleBar({
                 <Columns2 size={15} />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Split down" side="bottom">
+            <Tooltip content={`Split down  ${shiftMod}\\`} side="bottom">
               <IconButton
                 label="Split down"
                 onClick={onSplitDown}
@@ -148,7 +171,14 @@ export function TitleBar({
                 <Rows2 size={15} />
               </IconButton>
             </Tooltip>
-            <Tooltip content={zoomed ? "Exit zoom  Esc" : "Zoom pane  ⌘⇧↵"} side="bottom">
+            <Tooltip
+              content={
+                zoomed
+                  ? "Exit zoom  Esc"
+                  : `Zoom pane  ${shiftMod}${chrome === "mac" ? "↩" : "Enter"}`
+              }
+              side="bottom"
+            >
               <IconButton
                 label={zoomed ? "Exit zoom" : "Zoom pane"}
                 onClick={onToggleZoom}
@@ -158,6 +188,10 @@ export function TitleBar({
                 <Maximize2 size={15} />
               </IconButton>
             </Tooltip>
+            <span
+              aria-hidden="true"
+              className="mx-0.5 hidden h-4 w-px bg-line-strong max-md:hidden sm:block"
+            />
           </>
         )}
 
@@ -171,7 +205,12 @@ export function TitleBar({
           </IconButton>
         </Tooltip>
 
-        <Tooltip content="Lock vault" side="bottom">
+        <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-line-strong" />
+
+        <Tooltip
+          content={`Lock vault  ${chrome === "mac" ? "⌃⌘L" : "Ctrl+Alt+L"}`}
+          side="bottom"
+        >
           <IconButton label="Lock vault" onClick={onLock}>
             <Lock size={15} />
           </IconButton>
@@ -187,16 +226,19 @@ export function TitleBar({
             <DropdownMenu.Content
               align="end"
               sideOffset={6}
-              className="z-100 min-w-52 rounded-md border border-line-strong bg-elevated p-1 shadow-xl shadow-black/60"
+              className="z-[2147483001] min-w-52 rounded-md border border-line-strong bg-elevated p-1 shadow-xl shadow-black/60"
             >
               <MenuItem icon={<Search size={14} />} onSelect={onOpenPalette}>
                 Command palette
-                <span className="ml-auto text-fg-subtle">⌘K</span>
+                <span className="ml-auto text-fg-subtle">{mod}K</span>
               </MenuItem>
               {onGoLauncher && (
-                <MenuItem icon={<LayoutGrid size={14} />} onSelect={onGoLauncher}>
+                <MenuItem
+                  icon={<LayoutGrid size={14} />}
+                  onSelect={onGoLauncher}
+                >
                   Launcher
-                  <span className="ml-auto text-fg-subtle">⌘Esc</span>
+                  <span className="ml-auto text-fg-subtle">{mod}Esc</span>
                 </MenuItem>
               )}
               {onGoWorkspace && (
@@ -205,7 +247,7 @@ export function TitleBar({
                   onSelect={onGoWorkspace}
                 >
                   Workspace
-                  <span className="ml-auto text-fg-subtle">⌘Esc</span>
+                  <span className="ml-auto text-fg-subtle">{mod}Esc</span>
                 </MenuItem>
               )}
               <MenuItem icon={<AppWindow size={14} />} onSelect={onNewWindow}>
@@ -220,10 +262,21 @@ export function TitleBar({
                 </MenuItem>
               )}
               <DropdownMenu.Separator className="my-1 h-px bg-line" />
+              {onSettings && (
+                <MenuItem icon={<Settings size={14} />} onSelect={onSettings}>
+                  Settings…
+                  <span className="ml-auto text-fg-subtle">
+                    {chrome === "mac" ? "⌘," : "Ctrl+,"}
+                  </span>
+                </MenuItem>
+              )}
               <MenuItem icon={<RefreshCw size={14} />} onSelect={onSync}>
                 Vault sync
               </MenuItem>
-              <MenuItem icon={<Sparkles size={14} />} onSelect={onAssistSettings}>
+              <MenuItem
+                icon={<Sparkles size={14} />}
+                onSelect={onAssistSettings}
+              >
                 Assist providers
               </MenuItem>
               <MenuItem

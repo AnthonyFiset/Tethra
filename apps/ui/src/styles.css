@@ -19,8 +19,8 @@
   --color-fg-muted: #a1a1a1;
   --color-fg-subtle: #6b6b6b;
 
-  --color-accent: #4c8df6;
-  --color-accent-hover: #6ba0f8;
+  --color-accent: #3d8ef0;
+  --color-accent-hover: #5aa0f5;
   --color-danger: #e5544b;
   --color-success: #3fb950;
   --color-warning: #d29922;
@@ -43,6 +43,7 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --terminal-bg: #0d0d0d;
   }
 
   html,
@@ -62,6 +63,11 @@
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+
+  /* Terminal viewport stays opaque under materials (WebGL-safe). */
+  [data-terminal-surface] {
+    background-color: var(--terminal-bg, #0d0d0d) !important;
   }
 
   /* The whole surface is a tool, not a document. */
@@ -103,11 +109,55 @@
 }
 
 @layer utilities {
-  /* Reserves the macOS traffic-light inset; other platforms keep normal padding. */
+  [data-chrome="win"] {
+    --font-sans:
+      "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  /*
+   * Titlebar clearance: prefer tauri-plugin-decoration CSS vars when active;
+   * fall back so mac traffic lights / win caption buttons never overlap content.
+   *
+   * The plugin injects a fixed full-width drag strip (z-index ~2e9) that would
+   * steal clicks from our TitleBar. Keep caption *controls* clickable; disable
+   * the overlay drag layer so our buttons and our own drag-region work.
+   */
+  [data-tauri-plugin-decoration-root]
+    [data-tauri-decoration-tb]
+    > [data-tauri-drag-region] {
+    pointer-events: none !important;
+  }
+
+  .titlebar {
+    position: relative;
+    z-index: 20;
+    padding-left: max(12px, var(--tauri-plugin-decoration-left-clearance, 0px));
+    padding-right: max(
+      12px,
+      var(--tauri-plugin-decoration-right-clearance, 0px)
+    );
+  }
+
+  [data-chrome="mac"] .titlebar {
+    padding-left: max(
+      78px,
+      var(--tauri-plugin-decoration-left-clearance, 78px)
+    );
+  }
+
+  [data-chrome="win"] .titlebar {
+    padding-right: max(
+      138px,
+      var(--tauri-plugin-decoration-right-clearance, 138px)
+    );
+  }
+
+  /* Legacy alias — prefer .titlebar */
   .pl-traffic-lights {
     padding-left: 12px;
   }
 
+  [data-chrome="mac"] .pl-traffic-lights,
   [data-platform="macos"] .pl-traffic-lights {
     padding-left: 78px;
   }
@@ -160,4 +210,53 @@
 .tethra-block-actions button:hover {
   color: var(--color-fg);
   border-color: var(--color-accent);
+}
+
+.tethra-block-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 10rem;
+  padding: 4px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 6px;
+  background: var(--color-elevated);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 50%);
+}
+
+.tethra-block-menu button {
+  appearance: none;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tethra-block-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tethra-block-menu button:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.tethra-menu-shortcut {
+  color: var(--color-fg-subtle);
+  font-size: 11px;
+}
+
+.tethra-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-line);
 }

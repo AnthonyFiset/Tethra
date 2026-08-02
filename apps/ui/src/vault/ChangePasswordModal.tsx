@@ -4,10 +4,6 @@ import { Button } from "../components/ui/Button";
 import { Dialog } from "../components/ui/Dialog";
 import { ErrorBanner, Field } from "../components/ui/Field";
 
-interface ChangePasswordModalProps {
-  onClose: () => void;
-}
-
 function takeValue(ref: RefObject<HTMLInputElement | null>): string {
   const input = ref.current;
   if (!input) return "";
@@ -16,9 +12,15 @@ function takeValue(ref: RefObject<HTMLInputElement | null>): string {
   return value;
 }
 
-export function ChangePasswordModal({
-  onClose,
-}: ChangePasswordModalProps): React.JSX.Element {
+interface ChangePasswordPanelProps {
+  onDone: () => void;
+  onCancel?: () => void;
+}
+
+export function ChangePasswordPanel({
+  onDone,
+  onCancel,
+}: ChangePasswordPanelProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const currentRef = useRef<HTMLInputElement>(null);
@@ -42,7 +44,7 @@ export function ChangePasswordModal({
         throw new Error("Passwords do not match.");
       }
       await vaultChangePassword(currentPassword, newPassword);
-      onClose();
+      onDone();
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -50,6 +52,67 @@ export function ChangePasswordModal({
     }
   }
 
+  return (
+    <form
+      onSubmit={(event) => void submit(event)}
+      className="flex flex-col gap-3"
+    >
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <p className="m-0 text-micro text-fg-muted">
+        Rewraps the vault key under a new password. Encrypted host rows are not
+        re-encrypted. Other devices adopt the new wrap on their next sync.
+      </p>
+      <Field
+        label="Current password"
+        inputRef={currentRef}
+        type="password"
+        autoComplete="current-password"
+        disabled={busy}
+        required
+        autoFocus
+      />
+      <Field
+        label="New password"
+        inputRef={nextRef}
+        type="password"
+        autoComplete="new-password"
+        disabled={busy}
+        required
+      />
+      <Field
+        label="Confirm new password"
+        inputRef={confirmRef}
+        type="password"
+        autoComplete="new-password"
+        disabled={busy}
+        required
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        {onCancel && (
+          <Button
+            type="button"
+            variant="subtle"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        )}
+        <Button variant="primary" disabled={busy}>
+          {busy ? "Saving…" : "Change password"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+interface ChangePasswordModalProps {
+  onClose: () => void;
+}
+
+export function ChangePasswordModal({
+  onClose,
+}: ChangePasswordModalProps): React.JSX.Element {
   return (
     <Dialog
       open
@@ -60,50 +123,7 @@ export function ChangePasswordModal({
       title="Change master password"
       description="Rewraps the vault key under a new password. Encrypted host rows are not re-encrypted. Other devices adopt the new wrap on their next sync — then unlock with this password."
     >
-      <form
-        onSubmit={(event) => void submit(event)}
-        className="flex flex-col gap-3"
-      >
-        {error && <ErrorBanner>{error}</ErrorBanner>}
-        <Field
-          label="Current password"
-          inputRef={currentRef}
-          type="password"
-          autoComplete="current-password"
-          disabled={busy}
-          required
-          autoFocus
-        />
-        <Field
-          label="New password"
-          inputRef={nextRef}
-          type="password"
-          autoComplete="new-password"
-          disabled={busy}
-          required
-        />
-        <Field
-          label="Confirm new password"
-          inputRef={confirmRef}
-          type="password"
-          autoComplete="new-password"
-          disabled={busy}
-          required
-        />
-        <div className="mt-2 flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="subtle"
-            disabled={busy}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button variant="primary" disabled={busy}>
-            {busy ? "Saving…" : "Change password"}
-          </Button>
-        </div>
-      </form>
+      <ChangePasswordPanel onDone={onClose} onCancel={onClose} />
     </Dialog>
   );
 }
