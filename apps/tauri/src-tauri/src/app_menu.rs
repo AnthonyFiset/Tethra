@@ -4,9 +4,9 @@
 //! Windows/Linux keep About + Quit only — commands live in the titlebar overflow
 //! and command palette (no fake macOS menu bar).
 
-use tauri::menu::{
-    AboutMetadataBuilder, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
-};
+use tauri::menu::{AboutMetadataBuilder, Menu, MenuBuilder, SubmenuBuilder};
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuItemBuilder, PredefinedMenuItem};
 use tauri::{App, AppHandle, Emitter, Runtime};
 
 /// Build the platform menu. Callers must register [`wire_menu_events`].
