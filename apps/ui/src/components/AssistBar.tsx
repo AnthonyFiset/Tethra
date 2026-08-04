@@ -6,6 +6,7 @@ import {
   type ApiKeySummaryDto,
   type AssistContextPayload,
 } from "../lib/ipc";
+import { armShellInjectGate } from "../terminal/inject";
 import { Button } from "./ui/Button";
 import { ErrorBanner, inputClass } from "./ui/Field";
 
@@ -168,7 +169,10 @@ export function AssistBar({
             {mode === "command" && result && (
               <Button
                 variant="primary"
-                onPointerDown={(event) => event.preventDefault()}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  armShellInjectGate();
+                }}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();

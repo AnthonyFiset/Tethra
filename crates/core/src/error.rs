@@ -9,7 +9,10 @@ pub enum Error {
     #[error("host not found: {0}")]
     HostNotFound(uuid::Uuid),
 
-    #[error("identity not found: {0}")]
+    #[error(
+        "password not available on this device — edit the host and re-enter it \
+(enable “Sync password to other devices” if you want it on every machine)"
+    )]
     IdentityNotFound(uuid::Uuid),
 
     #[error("authentication failed")]

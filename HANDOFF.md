@@ -1,11 +1,11 @@
-# Tethra handoff — v0.2.7 / roadmap v3
+# Tethra handoff — v0.2.8 / roadmap v3
 
 _Paste this (plus [`ROADMAP-v3.md`](ROADMAP-v3.md) / [`PROJECT.md`](PROJECT.md) if needed) into another session. Longer engineering status: [`STATUS.md`](STATUS.md)._
 
-**As of:** 2026-08-02  
+**As of:** 2026-08-04  
 **Repo:** https://github.com/AnthonyFiset/Tethra (private)  
-**Branch / commit:** `main` @ `cf67dcd`  
-**Tag:** `v0.2.7` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
+**Branch / commit:** `main` (tag `v0.2.8` after push)  
+**Tag:** `v0.2.8` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (supersedes M10/M11 in v2; mobile deferred to end)
 
 ---
@@ -31,6 +31,14 @@ Tethra is an E2E-encrypted SSH/SFTP vault client that **hosts coding agents** ac
 **Build order:** **M13 Fleet** (promote ProxyJump if jump hosts block you today).
 
 ---
+
+## What shipped in v0.2.8
+
+### Terminal insert hygiene + password-on-device UX
+
+- **Insert buttons (tools hint, Assist, block Rerun, menu rerun):** shared `injectShellText` path — suppress xterm `onData`, click shield, blur, double Ctrl-U, force PTY input so DA / OSC 10–11 color replies never prepend install commands (`1;2c…rgb:…npm install…`)
+- Always filter pure device-report chunks and strip known DA/OSC-rgb mash from terminal input
+- Clearer `IdentityNotFound` / host form banner when vault sync brought a host without a password on this device
 
 ## What shipped in v0.2.7
 

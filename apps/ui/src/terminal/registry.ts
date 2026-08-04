@@ -20,6 +20,11 @@ import {
 } from "./scrollback";
 import { SyncClearFilter } from "./syncFilter";
 import { themeFromAppTokens } from "./theme";
+import {
+  bindInjectGates,
+  looksLikeDeviceReport,
+  stripDeviceReports,
+} from "./inject";
 
 interface TerminalRecord {
   terminal: Terminal;
@@ -84,6 +89,17 @@ export function suppressAllTerminalUserInput(durationMs = 800): void {
   }
 }
 
+/** Blur all open xterms so focus leave/return reports fire under the insert gate. */
+export function blurAllTerminals(): void {
+  for (const record of terminals.values()) {
+    try {
+      record.terminal.blur();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 /**
  * Full-screen pointer shield so dialog close click-through cannot hit xterm.
  */
@@ -106,6 +122,12 @@ export function armClickShield(durationMs = 400): void {
   document.body.appendChild(el);
   window.setTimeout(() => el.remove(), durationMs);
 }
+
+bindInjectGates({
+  suppressAll: suppressAllTerminalUserInput,
+  armShield: armClickShield,
+  blurAll: blurAllTerminals,
+});
 
 export function createTerminal(
   sessionId: string,
@@ -163,8 +185,21 @@ export function createTerminal(
   );
 
   terminal.onData((data) => {
+    // Full suppress during UI inject (tools Insert, Assist, block Rerun…).
     if (inputIsSuppressed(sessionId)) return;
-    inputHandlers.get(sessionId)?.onInput(encoder.encode(data));
+
+    // Always drop pure DA / OSC color replies — never legitimate typing.
+    // These fire when the host (or xterm theme) queries cursor/color/DA and
+    // xterm answers via onData; bash runs them as `1;2c…rgb:…` commands.
+    if (looksLikeDeviceReport(data)) return;
+
+    // Always strip known report sequences even when mixed with real input
+    // (ESC forms or ESC-stripped mash glued to typed text).
+    const payload = stripDeviceReports(data);
+    if (!payload) return;
+    if (looksLikeDeviceReport(payload)) return;
+
+    inputHandlers.get(sessionId)?.onInput(encoder.encode(payload));
   });
   terminal.onSelectionChange(() => {
     const text = terminal.getSelection();

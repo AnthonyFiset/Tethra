@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { suppressPtyUserInput, type ToolsProbeDto } from "../lib/ipc";
+import type { ToolsProbeDto } from "../lib/ipc";
 import {
-  armClickShield,
-  suppressAllTerminalUserInput,
-} from "../terminal/registry";
+  armShellInjectGate,
+  sanitizeShellPayload,
+} from "../terminal/inject";
 import { Button } from "./ui/Button";
 import { Dialog } from "./ui/Dialog";
 import { ErrorBanner } from "./ui/Field";
@@ -35,15 +35,6 @@ interface ToolsHintDialogProps {
   onClose: () => void;
 }
 
-/** Keep only what should be typed into a shell — drop control / OSC leftovers. */
-function sanitizeShellCommand(command: string): string {
-  return command
-    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
-    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, "")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
-    .trim();
-}
-
 export function ToolsHintDialog({
   probe,
   sessionId,
@@ -64,7 +55,7 @@ export function ToolsHintDialog({
 
   async function copyCommand(id: string, command: string): Promise<void> {
     try {
-      await navigator.clipboard.writeText(sanitizeShellCommand(command));
+      await navigator.clipboard.writeText(sanitizeShellPayload(command).trim());
       setCopiedId(id);
       window.setTimeout(() => setCopiedId(undefined), 1500);
     } catch (reason) {
@@ -73,20 +64,19 @@ export function ToolsHintDialog({
   }
 
   /**
-   * Insert while the dialog still covers the terminal, then close behind a
-   * click shield. IPC-level suppress drops any leftover xterm onData.
+   * Insert while the dialog still covers the terminal, then close. Gates
+   * arm on pointerdown; injectShellText clears the line + drops DA/color
+   * replies. Delay dialog close one frame so Radix unmount doesn't race.
    */
   function queueInsert(command: string, run: boolean): void {
-    const clean = sanitizeShellCommand(command);
+    const clean = sanitizeShellPayload(command).replace(/^\n+|\n+$/g, "");
     if (!clean) {
       setError("Install command was empty after sanitizing.");
       return;
     }
-    suppressPtyUserInput(1000);
-    suppressAllTerminalUserInput(1000);
+    armShellInjectGate();
     onInsert(sessionId, clean, run);
-    armClickShield(500);
-    onClose();
+    requestAnimationFrame(() => onClose());
   }
 
   return (
@@ -143,7 +133,10 @@ export function ToolsHintDialog({
               <Button
                 size="sm"
                 variant="subtle"
-                onPointerDown={(event) => event.preventDefault()}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  armShellInjectGate();
+                }}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -155,7 +148,10 @@ export function ToolsHintDialog({
               <Button
                 size="sm"
                 variant="primary"
-                onPointerDown={(event) => event.preventDefault()}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  armShellInjectGate();
+                }}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();

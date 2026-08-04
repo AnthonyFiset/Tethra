@@ -410,6 +410,42 @@ mod tests {
         assert_eq!(hosts[0].label, "lab");
         assert!(!hosts[0].has_password); // identity stayed on device A
         assert!(!hosts[0].sync_secret);
+
+        let host = repo_b.get_host(created.id).await.unwrap();
+        let err = repo_b.credentials_for(&host).await.unwrap_err();
+        assert!(matches!(err, Error::IdentityNotFound(_)));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("password not available on this device"),
+            "unexpected message: {msg}"
+        );
+
+        // Peer can attach a local password (optionally with sync_secret).
+        let updated = repo_b
+            .update_host(
+                created.id,
+                CreateHostRequest {
+                    label: "lab".into(),
+                    hostname: "10.0.0.1".into(),
+                    port: 22,
+                    username: "anthony".into(),
+                    password: Some(SecretString::new("s3cret-on-b")),
+                    sync_secret: true,
+                    color: Some("#4C8DF6".into()),
+                    shell_integration: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(updated.has_password);
+        assert!(updated.sync_secret);
+        let host = repo_b.get_host(created.id).await.unwrap();
+        match repo_b.credentials_for(&host).await.unwrap() {
+            AuthMaterial::Password { ref password } => {
+                assert_eq!(password.expose(), "s3cret-on-b");
+            }
+            _ => panic!("expected password"),
+        }
     }
 
     #[tokio::test]

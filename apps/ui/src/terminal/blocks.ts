@@ -1,6 +1,7 @@
 import type { IDecoration, IMarker, Terminal } from "@xterm/xterm";
 import { writeClipboardText } from "../lib/ipc";
 import type { TerminalBlockPhase } from "../lib/generated/TerminalBlockPhase";
+import { armShellInjectGate } from "./inject";
 
 const FAIL = "#e5544b";
 
@@ -186,11 +187,21 @@ function decorateFailed(
     actions.className = "tethra-block-actions";
     actions.style.pointerEvents = "auto";
 
-    const addBtn = (label: string, title: string, onClick: () => void) => {
+    const addBtn = (
+      label: string,
+      title: string,
+      onClick: () => void,
+      opts?: { armInject?: boolean },
+    ) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = label;
       btn.title = title;
+      btn.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (opts?.armInject) armShellInjectGate();
+      });
       btn.addEventListener("mousedown", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -209,9 +220,14 @@ function decorateFailed(
     addBtn("Copy out", "Copy output", () => {
       void writeClipboardText(block.outputText || "");
     });
-    addBtn("Rerun", "Insert command for rerun", () => {
-      if (block.commandText) tracker.onRerun?.(block.commandText);
-    });
+    addBtn(
+      "Rerun",
+      "Insert command for rerun",
+      () => {
+        if (block.commandText) tracker.onRerun?.(block.commandText);
+      },
+      { armInject: true },
+    );
 
     // Right-click on the failed gutter — DOM menu (decoration is outside React).
     element.style.pointerEvents = "auto";

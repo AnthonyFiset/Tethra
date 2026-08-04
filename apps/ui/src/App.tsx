@@ -58,7 +58,6 @@ import {
   resizeTerminal,
   respondHostKey,
   sendTerminalInput,
-  suppressPtyUserInput,
   syncNow,
   touchProjectOpened,
   updateCheck,
@@ -82,7 +81,6 @@ import { agentDisplayName, resolveAgentForLaunch } from "./projects/agents";
 import { projectLaunchScript, sleep } from "./projects/launch";
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
-  armClickShield,
   clearTerminal,
   copyTerminalSelection,
   createTerminal,
@@ -91,10 +89,10 @@ import {
   persistProjectScrollback,
   resetTerminal,
   restoreProjectScrollback,
-  suppressAllTerminalUserInput,
   writeTerminal,
   writeTerminalMessage,
 } from "./terminal/registry";
+import { injectShellText } from "./terminal/inject";
 import { clearScrollbackSnapshot } from "./terminal/scrollback";
 import {
   lastBlockCommand,
@@ -651,15 +649,8 @@ function Workspace({
     if (!activeTab || (activeTab.kind !== "terminal" && activeTab.kind !== "local")) {
       return;
     }
-    suppressPtyUserInput(1000);
-    suppressAllTerminalUserInput(1000);
-    armClickShield(400);
     // Never append newline — user must press Enter to run.
-    void sendTerminalInput(
-      activeTab.sessionId,
-      new TextEncoder().encode(command),
-      { force: true },
-    ).catch((reason: unknown) => setError(String(reason)));
+    injectShellText(activeTab.sessionId, command, { run: false });
   }
 
   function wireTerminal(sessionId: string): void {
@@ -681,12 +672,7 @@ function Workspace({
       },
     });
     setBlockRerunHandler(sessionId, (command) => {
-      suppressPtyUserInput(1000);
-      suppressAllTerminalUserInput(1000);
-      armClickShield(400);
-      void sendTerminalInput(sessionId, new TextEncoder().encode(command), {
-        force: true,
-      }).catch((reason: unknown) => setError(String(reason)));
+      injectShellText(sessionId, command, { run: false });
     });
   }
 
@@ -727,15 +713,11 @@ function Workspace({
   }
 
   function pasteIntoTerminal(sessionId: string, text: string): void {
-    // Force IPC path — do not route through xterm's hidden textarea.
-    // Debounce: macOS may deliver both the keydown and the Edit menu accelerator.
+    // Debounce: macOS may deliver both the keydown and the Edit→Paste.
     const now = Date.now();
     if (now - lastTerminalPasteAt < 80) return;
     lastTerminalPasteAt = now;
-    suppressPtyUserInput(1000);
-    void sendTerminalInput(sessionId, new TextEncoder().encode(text), {
-      force: true,
-    }).catch((reason: unknown) => setError(String(reason)));
+    injectShellText(sessionId, text, { run: false, clearLine: false });
   }
 
   function isEditableField(el: Element | null): boolean {
@@ -878,16 +860,7 @@ function Workspace({
       case "terminal.rerun_last":
         if (terminalActive && active) {
           const cmd = lastBlockCommand(active.sessionId);
-          if (cmd) {
-            suppressPtyUserInput(1000);
-            suppressAllTerminalUserInput(1000);
-            armClickShield(400);
-            void sendTerminalInput(
-              active.sessionId,
-              new TextEncoder().encode(cmd),
-              { force: true },
-            ).catch((reason: unknown) => setError(String(reason)));
-          }
+          if (cmd) injectShellText(active.sessionId, cmd, { run: false });
         }
         break;
       case "go.palette":
@@ -1082,19 +1055,7 @@ function Workspace({
     command: string,
     run: boolean,
   ): void {
-    // Never forward control/OSC bytes — only the install command text.
-    const clean = command
-      .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
-      .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, "")
-      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
-      .trim();
-    if (!clean) return;
-    suppressPtyUserInput(1000);
-    suppressAllTerminalUserInput(1000);
-    const payload = run ? `${clean}\n` : clean;
-    void sendTerminalInput(sessionId, new TextEncoder().encode(payload), {
-      force: true,
-    }).catch((reason: unknown) => setError(String(reason)));
+    injectShellText(sessionId, command, { run });
   }
 
   async function openProject(project: ProjectSummaryDto): Promise<void> {

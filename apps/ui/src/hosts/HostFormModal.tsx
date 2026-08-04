@@ -101,6 +101,10 @@ export function HostFormModal({
         mutation.password = password;
       } else if (!initial) {
         throw new Error("Password is required for a new host.");
+      } else if (!initial.hasPassword) {
+        throw new Error(
+          "This device has no password for the host. Enter one to connect (and enable Sync password if you want other devices to receive it).",
+        );
       }
 
       const saved = initial
@@ -130,6 +134,13 @@ export function HostFormModal({
         className="flex flex-col gap-3"
       >
         {error && <ErrorBanner>{error}</ErrorBanner>}
+        {initial && !initial.hasPassword && (
+          <ErrorBanner>
+            Password isn’t stored on this device yet (vault syncs hosts, not
+            passwords, unless Sync password is on). Enter it below to connect
+            from here.
+          </ErrorBanner>
+        )}
 
         <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
           <HostAvatar label={label || "?"} color={color} />
@@ -221,7 +232,7 @@ export function HostFormModal({
           type="password"
           autoComplete="new-password"
           disabled={busy}
-          required={!initial}
+          required={!initial || !initial.hasPassword}
         />
 
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
