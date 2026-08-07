@@ -1,7 +1,7 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after **v0.2.9** (Enter key
-regression fix). Strategy brief: [`HANDOFF.md`](HANDOFF.md).
+_Snapshot for handoff / reassessment. Last updated **2026-08-07** after **v0.2.9**.
+Strategy brief (give this to the next agent): [`HANDOFF.md`](HANDOFF.md).
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (v2 kept for M6.2–M9 history)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
@@ -29,7 +29,7 @@ next.
 | **M5** | Dual-pane SFTP browser, file management, drag/drop, transfer queue with pause/resume | Done |
 | **M5.5** | Stable identity, local terminal, host colors, branding, sidebar rail, command palette, native polish | Done |
 | **M5.6** | UI overhaul: Tailwind v4 design tokens, Radix primitives, icon rail, native menu, window drag fix | Done |
-| **M6** | Sync — `FileBackend`, `HttpBackend`, ThinkPad sync server, release installers | Done |
+| **M6** | Sync — `FileBackend`, `HttpBackend`, self-hosted sync server, release installers | Done |
 | **M6.1** | Sync hardening: in-app vault join/reset, tag-driven versions, self-update via sync host, CI cleanup | Done |
 | **M6.2** | Sync you don't think about: `sync_secret`, background sync, coordinated re-key, iOS CI, auto-mirror | Done |
 | **M7** | Real terminal: conformance (alt screen, truecolor, paste, OSC 52/7, mouse), OSC 133 blocks, splits / multi-window | Done |
@@ -227,7 +227,7 @@ See [`docs/M6.2.md`](docs/M6.2.md).
 - Hosts sync; password identities stay device-local
 
 ### Sync server — [`crates/sync-server`](crates/sync-server)
-- `tethra-sync-server` for Ubuntu/ThinkPad over Tailscale, setup wizard + status
+- `tethra-sync-server` for always-on Linux over Tailscale, setup wizard + status
   TUI + systemd user unit; optional `--token` / `TETHRA_SYNC_TOKEN`
 
 ### Desktop + UI
@@ -376,8 +376,8 @@ ligature toggle, asciinema, cross-device scrollback.
 
 Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 
-On the ThinkPad after a release publishes:
+On the sync host after a release publishes:
 `tethra-sync-server fetch-updates` (and `install-updates-timer` if not already).
 
-Open decisions (v3): public vs private repo; catalog hosting (ThinkPad-only vs
+Open decisions (v3): public vs private repo; catalog hosting (sync-host-only vs
 public URL).

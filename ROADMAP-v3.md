@@ -94,7 +94,7 @@ vault, which always win.
 
 You already have `tethra-sync-server` mirroring release assets. Serving
 `GET /catalogs/agents` and `GET /catalogs/providers` is a few dozen lines and
-means Antigravity replacing Gemini CLI is a JSON edit on the ThinkPad, not a
+means Antigravity replacing Gemini CLI is a JSON edit on the sync host, not a
 tagged release, a CI run, and an update prompt on three machines.
 
 If the repo goes public later, the catalog becomes a PR target — the single
@@ -304,7 +304,7 @@ signing, and unsigned installers mean Gatekeeper and SmartScreen warnings for
 anyone else. It also gates the catalog-as-PR-target benefit in §A. Not urgent for
 three machines and you — but M11 is the milestone that makes strangers want it.
 
-**Catalog hosting.** If catalogs ship from your ThinkPad, only your devices get
+**Catalog hosting.** If catalogs ship only from your sync host, only your devices get
 updates. If they ship from a public URL (GitHub raw, a gist, a tiny static host),
 anyone running Tethra gets Antigravity support the day you add the entry. Costs
 nothing extra and it's the difference between a personal tool and a product.

@@ -38,7 +38,7 @@ export function VaultGate({
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [enableRecovery, setEnableRecovery] = useState(true);
-  const [joinUrl, setJoinUrl] = useState("http://thinkpad:8787");
+  const [joinUrl, setJoinUrl] = useState("");
   const [joinToken, setJoinToken] = useState("");
   const [needsReset, setNeedsReset] = useState(false);
 
@@ -172,7 +172,7 @@ export function VaultGate({
               label="Sync server URL"
               value={joinUrl}
               onChange={(event) => setJoinUrl(event.target.value)}
-              placeholder="http://thinkpad:8787"
+              placeholder="http://sync.example:8787"
               autoFocus
               disabled={busy}
               required

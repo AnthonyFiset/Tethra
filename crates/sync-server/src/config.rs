@@ -16,7 +16,7 @@ pub struct Config {
     /// Bind address, e.g. `0.0.0.0:8787`.
     pub listen: String,
     pub token: String,
-    /// Hint shown to clients / TUI, e.g. `http://thinkpad:8787`.
+    /// Hint shown to clients / TUI, e.g. `http://sync.example:8787`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_url: Option<String>,
 }
@@ -152,7 +152,7 @@ mod tests {
             data_dir: PathBuf::from("/tmp/tethra-sync"),
             listen: "0.0.0.0:8787".into(),
             token: "secret".into(),
-            client_url: Some("http://thinkpad:8787".into()),
+            client_url: Some("http://sync.example:8787".into()),
         };
         save(&path, &config).unwrap();
         let loaded = load(&path).unwrap();

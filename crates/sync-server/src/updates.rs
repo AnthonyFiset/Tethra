@@ -114,10 +114,10 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        localize_urls(&mut manifest, "http://thinkpad:8787/");
+        localize_urls(&mut manifest, "http://sync.example:8787/");
         assert_eq!(
             manifest.platforms["darwin-aarch64"].url,
-            "http://thinkpad:8787/updates/download/Tethra.app.tar.gz"
+            "http://sync.example:8787/updates/download/Tethra.app.tar.gz"
         );
     }
 

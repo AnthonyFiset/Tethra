@@ -1,9 +1,9 @@
 //! Self-update against the same server that hosts vault sync.
 //!
 //! Updates are minisign-verified by the updater plugin, so the transport only
-//! needs to be reachable — on a tailnet that is the ThinkPad sync server the
-//! user already configured. Deriving the endpoint from the sync settings keeps
-//! update delivery zero-config.
+//! needs to be reachable — typically the same always-on sync host the user
+//! already configured on their tailnet. Deriving the endpoint from the sync
+//! settings keeps update delivery zero-config.
 
 use serde::Serialize;
 use tauri::State;
@@ -132,13 +132,13 @@ mod tests {
     fn endpoint_is_derived_from_sync_server() {
         let settings = SyncSettings {
             backend: SyncBackendConfig::Http {
-                url: "http://thinkpad:8787/".into(),
+                url: "http://sync.example:8787/".into(),
                 token: None,
             },
         };
         assert_eq!(
             endpoint_for(&settings).unwrap(),
-            "http://thinkpad:8787/updates/{{target}}/{{arch}}/{{current_version}}"
+            "http://sync.example:8787/updates/{{target}}/{{arch}}/{{current_version}}"
         );
     }
 

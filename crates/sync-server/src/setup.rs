@@ -213,7 +213,7 @@ pub fn tailscale_dns_name() -> Option<String> {
         return None;
     }
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    // Self.DNSName is like "thinkpad.tailnet.ts.net."
+    // Self.DNSName is like "sync-host.tailnet.ts.net."
     let dns = json
         .pointer("/Self/DNSName")
         .and_then(|v| v.as_str())

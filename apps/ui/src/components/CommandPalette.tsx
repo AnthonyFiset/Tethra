@@ -282,7 +282,7 @@ export function CommandPalette({
                   Import SSH config
                 </Item>
                 <Item
-                  value="vault sync folder http thinkpad"
+                  value="vault sync folder http sync server"
                   icon={<RefreshCw size={15} />}
                   detail="Share hosts across devices"
                   onSelect={() => run(onSync)}

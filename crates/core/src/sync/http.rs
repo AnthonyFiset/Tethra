@@ -1,7 +1,7 @@
 //! HTTP client for the self-hosted sync server.
 //!
-//! Intended for a ThinkPad/Ubuntu host reachable over Tailscale:
-//! `http://thinkpad:8787`. Optional bearer token authenticates writes when
+//! Intended for an always-on Linux host reachable over Tailscale (or LAN):
+//! `http://sync.example:8787`. Optional bearer token authenticates writes when
 //! the server is started with `--token`.
 
 use async_trait::async_trait;

@@ -28,7 +28,7 @@ export function SyncSettingsPanel({
 }: SyncSettingsPanelProps): React.JSX.Element {
   const [status, setStatus] = useState<SyncStatusDto>();
   const [mode, setMode] = useState<"file" | "http">("http");
-  const [httpUrl, setHttpUrl] = useState("http://thinkpad:8787");
+  const [httpUrl, setHttpUrl] = useState("");
   const [httpToken, setHttpToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -199,7 +199,7 @@ export function SyncSettingsPanel({
             label="Server URL"
             value={httpUrl}
             onChange={(event) => setHttpUrl(event.target.value)}
-            placeholder="http://thinkpad:8787"
+            placeholder="http://sync.example:8787"
             disabled={busy}
           />
           <label className="flex flex-col gap-1.5">

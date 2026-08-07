@@ -3,7 +3,7 @@
 //! [`LocalOnly`] ships as the default. [`FileBackend`] stores opaque ciphertext
 //! rows in a user-chosen directory (Dropbox, OneDrive, Syncthing, or a folder
 //! on a Tailscale host). [`HttpBackend`] talks to the same row protocol over
-//! HTTP so a ThinkPad/Ubuntu box can host sync for Mac and Windows clients.
+//! HTTP so an always-on Linux box can host sync for Mac and Windows clients.
 //!
 //! Password identities default to `local_only`; an opt-in `sync_secret` flag
 //! lets them sync under the same item encryption. The shared vault header
