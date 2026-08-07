@@ -1,11 +1,11 @@
-# Tethra handoff — v0.2.8 / roadmap v3
+# Tethra handoff — v0.2.9 / roadmap v3
 
 _Paste this (plus [`ROADMAP-v3.md`](ROADMAP-v3.md) / [`PROJECT.md`](PROJECT.md) if needed) into another session. Longer engineering status: [`STATUS.md`](STATUS.md)._
 
-**As of:** 2026-08-04  
+**As of:** 2026-08-07  
 **Repo:** https://github.com/AnthonyFiset/Tethra (private)  
-**Branch / commit:** `main` @ `1096f36`  
-**Tag:** `v0.2.8` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
+**Branch / commit:** `main` (tag `v0.2.9` after push)  
+**Tag:** `v0.2.9` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (supersedes M10/M11 in v2; mobile deferred to end)
 
 ---
@@ -31,6 +31,12 @@ Tethra is an E2E-encrypted SSH/SFTP vault client that **hosts coding agents** ac
 **Build order:** **M13 Fleet** (promote ProxyJump if jump hosts block you today).
 
 ---
+
+## What shipped in v0.2.9
+
+### Enter / control keys restored after insert filter
+
+- `looksLikeDeviceReport` no longer treats lone C0 keystrokes (Enter `\r`, Tab, Ctrl-C, …) as device reports — v0.2.8 dropped them because stripping whitespace left an empty string
 
 ## What shipped in v0.2.8
 

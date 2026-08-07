@@ -1,7 +1,7 @@
 # Tethra — Project Status
 
-_Snapshot for handoff / reassessment. Last updated after **v0.2.8** (terminal insert
-hygiene + password-on-device UX). Strategy brief: [`HANDOFF.md`](HANDOFF.md).
+_Snapshot for handoff / reassessment. Last updated after **v0.2.9** (Enter key
+regression fix). Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (v2 kept for M6.2–M9 history)._
 
 Tethra is a free, open-source, cross-platform SSH/SFTP client with an
@@ -12,7 +12,7 @@ architecture and hard rules; [`ROADMAP-v3.md`](ROADMAP-v3.md) for what to build
 next.
 
 - **Repo:** https://github.com/AnthonyFiset/Tethra (private)
-- **Branch:** `main`; latest shipped tag `v0.2.8` (insert hygiene; v0.2.7 = M12.5)
+- **Branch:** `main`; latest shipped tag `v0.2.9` (Enter fix; v0.2.8 insert hygiene)
 - **Stack:** Tauri v2, Rust 2024, React + TypeScript + Vite, Tailwind v4 + Radix + cmdk + lucide, `russh` / `russh-sftp`, `rusqlite`, Argon2id + XChaCha20-Poly1305
 - **Toolchain:** Node 22 in CI (see `.nvmrc`); Tailwind's `@tailwindcss/oxide` native binary is skipped on older Node, which silently produces a stylesheet with no utility classes (CI guards against this)
 

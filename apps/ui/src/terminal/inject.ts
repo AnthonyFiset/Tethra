@@ -68,10 +68,20 @@ export function stripDeviceReports(data: string): string {
 /**
  * True when this chunk is only terminal device reports — DA replies and
  * OSC 10–12 color query responses — not user typing.
+ *
+ * Important: Enter (`\r`), Tab, Ctrl-C, and other lone C0 keystrokes must
+ * never match. Stripping whitespace/C0 from `\r` leaves `""`, which used to
+ * be treated as a report and silently dropped Enter.
  */
 export function looksLikeDeviceReport(data: string): boolean {
   if (!data) return false;
-  const rest = stripDeviceReports(data).replace(/[\s\u0000-\u001f]/g, "");
+
+  const withoutReports = stripDeviceReports(data);
+  // Nothing report-shaped was removed — whatever remains (Enter, letters, …)
+  // is user input even if it has no printable characters.
+  if (withoutReports === data) return false;
+
+  const rest = withoutReports.replace(/[\s\u0000-\u001f\u007f]/g, "");
   if (rest.length === 0) return true;
   // Tiny leftover residue that is still not a shell command
   if (rest.length <= 8 && /^[\d;c?>/]+$/.test(rest)) return true;
