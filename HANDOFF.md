@@ -4,7 +4,7 @@ _Paste this (plus [`ROADMAP-v3.md`](ROADMAP-v3.md) / [`PROJECT.md`](PROJECT.md) 
 
 **As of:** 2026-08-07  
 **Repo:** https://github.com/AnthonyFiset/Tethra (private)  
-**Branch / commit:** `main` (tag `v0.2.9` after push)  
+**Branch / commit:** `main` @ `401cdc6`  
 **Tag:** `v0.2.9` (publish GitHub draft when Release CI is green → `tethra-sync-server fetch-updates`)  
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (supersedes M10/M11 in v2; mobile deferred to end)
 
