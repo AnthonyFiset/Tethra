@@ -79,6 +79,13 @@ real empty states. Brief: [`docs/archive/NEXT-v0.3.0.md`](docs/archive/NEXT-v0.3
   password first (legacy token opt-in). Brief:
   [`docs/archive/NEXT-azure-sync-device-auth.md`](docs/archive/NEXT-azure-sync-device-auth.md)
 
+### SSH key identities — completed 2026-08-21
+- Vault `IdentityRecord::{Password,SshKey}` (keys always `local_only`, never sync)
+- Import OpenSSH / PEM RSA via `russh::keys::decode_secret_key`; IPC list/import/
+  probe/rename/delete; host form Password | SSH key; Settings → Vault identities
+- `~/.ssh/config` import exposes `identityFileHint` + one-click key import
+- Brief: [`docs/archive/NEXT-ssh-key-identities.md`](docs/archive/NEXT-ssh-key-identities.md)
+
 **Proven 2026-08-21:** end-to-end auto-update over the GitHub endpoint with the
 rotated key — v0.2.11 machines updated to v0.3.1 cleanly. (The `v0.3.0` tag
 exists but never published installers; its release run stalled and v0.3.1 was

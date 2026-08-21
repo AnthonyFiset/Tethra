@@ -19,6 +19,9 @@ pub struct SshConfigHost {
     pub username: String,
     pub proxy_jump: Option<String>,
     pub has_identity_file: bool,
+    /// First IdentityFile path from the config (tilde not expanded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_file_hint: Option<String>,
 }
 
 /// Import preview plus compatibility warnings.
@@ -67,17 +70,19 @@ pub fn parse_ssh_config(contents: &str) -> Result<SshConfigPreview> {
             );
         }
 
+        let identity_files = config.host_config.identity_file.clone().unwrap_or_default();
+        let identity_file_hint = identity_files
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .find(|path| !path.trim().is_empty());
         hosts.push(SshConfigHost {
             alias,
             hostname: config.host().to_owned(),
             port: config.port(),
             username: config.user(),
             proxy_jump,
-            has_identity_file: config
-                .host_config
-                .identity_file
-                .as_ref()
-                .is_some_and(|files| !files.is_empty()),
+            has_identity_file: identity_file_hint.is_some(),
+            identity_file_hint,
         });
     }
 

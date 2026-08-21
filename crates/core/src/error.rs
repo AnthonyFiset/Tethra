@@ -10,8 +10,7 @@ pub enum Error {
     HostNotFound(uuid::Uuid),
 
     #[error(
-        "password not available on this device — edit the host and re-enter it \
-(enable “Sync password to other devices” if you want it on every machine)"
+        "credentials not available on this device — edit the host and add a password or SSH key"
     )]
     IdentityNotFound(uuid::Uuid),
 

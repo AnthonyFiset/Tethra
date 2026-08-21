@@ -456,17 +456,58 @@ async fn run_pty_loop(
 }
 
 fn load_private_key(key: &SecretBytes, passphrase: Option<&SecretString>) -> Result<PrivateKey> {
-    let mut parsed =
-        PrivateKey::from_openssh(key.expose()).map_err(|e| Error::InvalidKey(e.to_string()))?;
+    parse_private_key_bytes(key.expose(), passphrase.map(SecretString::expose))
+}
 
-    if parsed.is_encrypted() {
-        let pass = passphrase.ok_or_else(|| {
-            Error::InvalidKey("private key is encrypted; passphrase required".into())
-        })?;
-        parsed = parsed
-            .decrypt(pass.expose())
-            .map_err(|e| Error::InvalidKey(e.to_string()))?;
+/// Parse OpenSSH or PEM (RSA/PKCS#8) private key bytes. Used by connect and import.
+pub fn parse_private_key_bytes(key_bytes: &[u8], passphrase: Option<&str>) -> Result<PrivateKey> {
+    let text = std::str::from_utf8(key_bytes).map_err(|_| {
+        Error::InvalidKey("private key is not UTF-8 text (expected OpenSSH or PEM)".into())
+    })?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidKey("private key file is empty".into()));
     }
 
-    Ok(parsed)
+    match russh::keys::decode_secret_key(trimmed, passphrase) {
+        Ok(key) => Ok(key),
+        Err(err) => {
+            let hint = if trimmed.contains("BEGIN OPENSSH PRIVATE KEY") {
+                "OpenSSH private key"
+            } else if trimmed.contains("BEGIN RSA PRIVATE KEY") {
+                "PEM RSA private key"
+            } else if trimmed.contains("BEGIN ENCRYPTED PRIVATE KEY") {
+                "encrypted PKCS#8 private key"
+            } else if trimmed.contains("BEGIN PRIVATE KEY") {
+                "PKCS#8 private key"
+            } else if trimmed.contains("BEGIN EC PRIVATE KEY") {
+                "PEM EC private key"
+            } else if trimmed.contains("PuTTY-User-Key-File") {
+                "PuTTY PPK private key"
+            } else {
+                "unrecognized private key format"
+            };
+            let needs_pass = passphrase.is_none()
+                && (trimmed.contains("ENCRYPTED")
+                    || trimmed.contains("Proc-Type: 4,ENCRYPTED")
+                    || err.to_string().to_lowercase().contains("password")
+                    || err.to_string().to_lowercase().contains("passphrase")
+                    || err.to_string().to_lowercase().contains("encrypted"));
+            if needs_pass {
+                return Err(Error::InvalidKey(
+                    "private key is encrypted; passphrase required".into(),
+                ));
+            }
+            Err(Error::InvalidKey(format!("could not read {hint}: {err}")))
+        }
+    }
+}
+
+/// True when the key material looks encrypted and needs a passphrase.
+pub fn private_key_appears_encrypted(key_bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(key_bytes) else {
+        return false;
+    };
+    let upper = text.to_ascii_uppercase();
+    upper.contains("ENCRYPTED") || upper.contains("PROC-TYPE: 4,ENCRYPTED")
 }

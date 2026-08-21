@@ -28,11 +28,12 @@ use crate::{Error, Result};
 pub use crypto::EncryptedBlob;
 pub use kdf::{Argon2Params, DerivedKeys, derive_keys};
 pub use records::{
-    ApiKeyRecord, HostRecord, PasswordIdentityRecord, ProjectRecord, RunningSessionRecord,
+    ApiKeyRecord, HostRecord, IdentityRecord, PasswordIdentityRecord, ProjectRecord,
+    RunningSessionRecord, SshKeyIdentityRecord,
 };
 pub use repository::{
     ApiKeySummary, CreateApiKeyRequest, CreateHostRequest, CreateProjectRequest, HostSummary,
-    ProjectSummary, RunningSessionSummary, VaultRepository,
+    IdentityDeleteResult, IdentitySummary, ProjectSummary, RunningSessionSummary, VaultRepository,
 };
 pub use store::{ItemKind, ItemRow, RECOVERY_SECRET_KEY as VAULT_RECOVERY_SECRET_KEY};
 

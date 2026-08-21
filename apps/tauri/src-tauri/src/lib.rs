@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -19,10 +20,12 @@ use ssh_client_core::ssh_config::{
 };
 use ssh_client_core::vault::{
     CreateHostRequest, CreateProjectRequest, HostSummary as CoreHostSummary,
+    IdentityDeleteResult as CoreIdentityDeleteResult, IdentitySummary as CoreIdentitySummary,
     ProjectSummary as CoreProjectSummary, RunningSessionSummary as CoreRunningSessionSummary,
     Vault, VaultRepository, VaultStatus,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::{Mutex, oneshot};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -72,6 +75,9 @@ struct HostSummaryDto {
     port: u16,
     username: String,
     has_password: bool,
+    identity_id: Option<String>,
+    /// `password` | `sshKey` | `none`
+    auth_kind: String,
     sync_secret: bool,
     color: Option<String>,
     tags: Vec<String>,
@@ -88,6 +94,8 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             port: host.port,
             username: host.username.clone(),
             has_password: host.has_password,
+            identity_id: host.identity_id.map(|id| id.to_string()),
+            auth_kind: host.auth_kind.clone(),
             sync_secret: host.sync_secret,
             color: host.color.clone(),
             tags: host.tags.clone(),
@@ -95,6 +103,73 @@ impl From<&CoreHostSummary> for HostSummaryDto {
                 != ssh_client_core::model::ShellIntegration::Disabled,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct IdentitySummaryDto {
+    id: String,
+    label: String,
+    kind: String,
+    fingerprint: Option<String>,
+    usage_count: u32,
+    created_at: Option<String>,
+    sync_secret: bool,
+}
+
+impl From<&CoreIdentitySummary> for IdentitySummaryDto {
+    fn from(identity: &CoreIdentitySummary) -> Self {
+        Self {
+            id: identity.id.to_string(),
+            label: identity.label.clone(),
+            kind: identity.kind.clone(),
+            fingerprint: identity.fingerprint.clone(),
+            usage_count: identity.usage_count,
+            created_at: identity.created_at.map(|ts| ts.to_rfc3339()),
+            sync_secret: identity.sync_secret,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct DependentHostDto {
+    id: String,
+    label: String,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct IdentityDeleteResultDto {
+    deleted: bool,
+    dependent_hosts: Vec<DependentHostDto>,
+}
+
+impl From<&CoreIdentityDeleteResult> for IdentityDeleteResultDto {
+    fn from(result: &CoreIdentityDeleteResult) -> Self {
+        Self {
+            deleted: result.deleted,
+            dependent_hosts: result
+                .dependent_hosts
+                .iter()
+                .map(|(id, label)| DependentHostDto {
+                    id: id.to_string(),
+                    label: label.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct IdentityProbeDto {
+    encrypted: bool,
+    fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -271,6 +346,7 @@ struct SshConfigHostDto {
     username: String,
     proxy_jump: Option<String>,
     has_identity_file: bool,
+    identity_file_hint: Option<String>,
 }
 
 impl From<&CoreSshConfigHost> for SshConfigHostDto {
@@ -282,6 +358,7 @@ impl From<&CoreSshConfigHost> for SshConfigHostDto {
             username: host.username.clone(),
             proxy_jump: host.proxy_jump.clone(),
             has_identity_file: host.has_identity_file,
+            identity_file_hint: host.identity_file_hint.clone(),
         }
     }
 }
@@ -357,6 +434,8 @@ struct HostMutation {
     port: u16,
     username: String,
     password: Option<String>,
+    #[serde(default)]
+    identity_id: Option<String>,
     #[serde(default)]
     sync_secret: Option<bool>,
     color: Option<String>,
@@ -812,6 +891,7 @@ async fn create_host(
     state: State<'_, AppState>,
     host: HostMutation,
 ) -> Result<HostSummaryDto, String> {
+    let identity_id = parse_optional_uuid(host.identity_id.as_deref(), "identity")?;
     let created = state
         .repo
         .create_host(CreateHostRequest {
@@ -820,6 +900,7 @@ async fn create_host(
             port: host.port,
             username: host.username,
             password: host.password.map(SecretString::new),
+            identity_id,
             sync_secret: host.sync_secret.unwrap_or(false),
             color: host.color,
             shell_integration: if host.shell_integration.unwrap_or(true) {
@@ -842,6 +923,7 @@ async fn update_host(
     host: HostMutation,
 ) -> Result<HostSummaryDto, String> {
     let host_id = parse_uuid(&id, "host")?;
+    let identity_id = parse_optional_uuid(host.identity_id.as_deref(), "identity")?;
     let updated = state
         .repo
         .update_host(
@@ -852,6 +934,7 @@ async fn update_host(
                 port: host.port,
                 username: host.username,
                 password: host.password.map(SecretString::new),
+                identity_id,
                 sync_secret: host.sync_secret.unwrap_or(false),
                 color: host.color,
                 shell_integration: if host.shell_integration.unwrap_or(true) {
@@ -865,6 +948,138 @@ async fn update_host(
         .map_err(redacted_error)?;
     sync::schedule_background_sync(app, &state);
     Ok(HostSummaryDto::from(&updated))
+}
+
+#[tauri::command]
+async fn identity_list(state: State<'_, AppState>) -> Result<Vec<IdentitySummaryDto>, String> {
+    ensure_vault_unlocked(&state).await?;
+    let identities = state.repo.list_identities().await.map_err(redacted_error)?;
+    Ok(identities.iter().map(IdentitySummaryDto::from).collect())
+}
+
+#[tauri::command]
+async fn identity_pick_key_file(app: AppHandle) -> Result<Option<String>, String> {
+    let ssh_dir = platform_desktop::home_dir()
+        .ok()
+        .map(|home| home.join(".ssh"))
+        .filter(|path| path.is_dir());
+    let (tx, rx) = oneshot::channel();
+    let mut dialog = app.dialog().file();
+    if let Some(dir) = ssh_dir {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_file(move |file| {
+        let path = file
+            .and_then(|p| p.into_path().ok())
+            .map(|p| p.display().to_string());
+        let _ = tx.send(path);
+    });
+    rx.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn identity_probe(path: String) -> Result<IdentityProbeDto, String> {
+    let key_bytes = std::fs::read(expand_tilde(&path)).map_err(|e| e.to_string())?;
+    let (encrypted, fingerprint) =
+        VaultRepository::probe_ssh_key_file(&key_bytes).map_err(redacted_error)?;
+    Ok(IdentityProbeDto {
+        encrypted,
+        fingerprint,
+    })
+}
+
+#[tauri::command]
+async fn identity_import(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    label: Option<String>,
+    passphrase: Option<String>,
+    remember_passphrase: bool,
+    sync_secret: Option<bool>,
+) -> Result<IdentitySummaryDto, String> {
+    ensure_vault_unlocked(&state).await?;
+    let expanded = expand_tilde(&path);
+    let key_bytes = std::fs::read(&expanded).map_err(|e| e.to_string())?;
+    let label = label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            expanded
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("SSH key")
+                .to_string()
+        });
+    let imported = state
+        .repo
+        .import_ssh_key_identity(
+            label,
+            &key_bytes,
+            passphrase.as_deref(),
+            remember_passphrase,
+            sync_secret.unwrap_or(false),
+        )
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(IdentitySummaryDto::from(&imported))
+}
+
+#[tauri::command]
+async fn identity_rename(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    label: String,
+) -> Result<IdentitySummaryDto, String> {
+    ensure_vault_unlocked(&state).await?;
+    let identity_id = parse_uuid(&id, "identity")?;
+    let renamed = state
+        .repo
+        .rename_identity(identity_id, label)
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(IdentitySummaryDto::from(&renamed))
+}
+
+#[tauri::command]
+async fn identity_set_sync_secret(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    sync_secret: bool,
+) -> Result<IdentitySummaryDto, String> {
+    ensure_vault_unlocked(&state).await?;
+    let identity_id = parse_uuid(&id, "identity")?;
+    let updated = state
+        .repo
+        .set_identity_sync_secret(identity_id, sync_secret)
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(IdentitySummaryDto::from(&updated))
+}
+
+#[tauri::command]
+async fn identity_delete(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    force: bool,
+) -> Result<IdentityDeleteResultDto, String> {
+    ensure_vault_unlocked(&state).await?;
+    let identity_id = parse_uuid(&id, "identity")?;
+    let result = state
+        .repo
+        .delete_identity(identity_id, force)
+        .await
+        .map_err(redacted_error)?;
+    if result.deleted {
+        sync::schedule_background_sync(app, &state);
+    }
+    Ok(IdentityDeleteResultDto::from(&result))
 }
 
 #[tauri::command]
@@ -1105,6 +1320,25 @@ pub(crate) fn parse_uuid(value: &str, kind: &str) -> Result<Uuid, String> {
     Uuid::parse_str(value).map_err(|_| format!("invalid {kind} id"))
 }
 
+fn parse_optional_uuid(value: Option<&str>, kind: &str) -> Result<Option<Uuid>, String> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Ok(Some(parse_uuid(value, kind)?)),
+        None => Ok(None),
+    }
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        return platform_desktop::home_dir().unwrap_or_else(|_| PathBuf::from(path));
+    }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = platform_desktop::home_dir()
+    {
+        return home.join(rest);
+    }
+    PathBuf::from(path)
+}
+
 pub(crate) fn redacted_error(error: ssh_client_core::Error) -> String {
     match error {
         ssh_client_core::Error::AuthenticationFailed => "authentication failed".to_string(),
@@ -1118,6 +1352,7 @@ pub(crate) fn redacted_error(error: ssh_client_core::Error) -> String {
             "host key changed; connection refused".to_string()
         }
         ssh_client_core::Error::HostKeyRejected => "host key was not accepted".to_string(),
+        ssh_client_core::Error::InvalidKey(msg) => format!("invalid private key: {msg}"),
         _ => error.to_string(),
     }
 }
@@ -1396,6 +1631,13 @@ pub fn run() {
             create_host,
             update_host,
             delete_host,
+            identity_list,
+            identity_pick_key_file,
+            identity_probe,
+            identity_import,
+            identity_rename,
+            identity_set_sync_secret,
+            identity_delete,
             open_terminal,
             open_local_terminal,
             terminal_input,
@@ -1448,6 +1690,10 @@ mod tests {
     fn export_bindings() {
         let cfg = ts_rs::Config::default();
         HostSummaryDto::export_all(&cfg).unwrap();
+        IdentitySummaryDto::export_all(&cfg).unwrap();
+        DependentHostDto::export_all(&cfg).unwrap();
+        IdentityDeleteResultDto::export_all(&cfg).unwrap();
+        IdentityProbeDto::export_all(&cfg).unwrap();
         ProjectSummaryDto::export_all(&cfg).unwrap();
         ProjectLocationDto::export_all(&cfg).unwrap();
         AgentSpecDto::export_all(&cfg).unwrap();
@@ -1508,6 +1754,8 @@ mod tests {
             port: 22,
             username: "user".into(),
             has_password: true,
+            identity_id: None,
+            auth_kind: "password".into(),
             sync_secret: false,
             color: Some("#70A5F5".into()),
             tags: vec!["lab".into()],

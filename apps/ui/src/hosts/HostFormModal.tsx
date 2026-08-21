@@ -1,14 +1,19 @@
-import { useRef, useState, type FormEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import {
   createHost,
+  identityImport,
+  identityPickKeyFile,
+  identityProbe,
+  listIdentities,
   updateHost,
   type HostMutation,
   type HostSummaryDto,
+  type IdentitySummaryDto,
 } from "../lib/ipc";
 import { HostAvatar } from "../components/HostAvatar";
 import { Button } from "../components/ui/Button";
 import { Dialog } from "../components/ui/Dialog";
-import { ErrorBanner, Field } from "../components/ui/Field";
+import { ErrorBanner, Field, inputClass } from "../components/ui/Field";
 import { cn } from "../lib/cn";
 
 const SWATCHES = [
@@ -21,6 +26,8 @@ const SWATCHES = [
   "#98C379",
   "#8B8B8B",
 ];
+
+type AuthMode = "password" | "sshKey";
 
 interface HostFormModalProps {
   initial?: HostSummaryDto;
@@ -66,7 +73,72 @@ export function HostFormModal({
   const [shellIntegration, setShellIntegration] = useState(
     initial?.shellIntegration ?? true,
   );
+  const [authMode, setAuthMode] = useState<AuthMode>(
+    initial?.authKind === "sshKey" ? "sshKey" : "password",
+  );
+  const [identities, setIdentities] = useState<IdentitySummaryDto[]>([]);
+  const [identityId, setIdentityId] = useState(initial?.identityId ?? "");
+  const [importPath, setImportPath] = useState<string>();
+  const [importEncrypted, setImportEncrypted] = useState(false);
+  const [importFingerprint, setImportFingerprint] = useState<string>();
+  const [rememberPassphrase, setRememberPassphrase] = useState(false);
+  const [importSyncSecret, setImportSyncSecret] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const keyPassphraseRef = useRef<HTMLInputElement>(null);
+
+  const sshKeys = identities.filter((identity) => identity.kind === "sshKey");
+
+  useEffect(() => {
+    void listIdentities()
+      .then(setIdentities)
+      .catch((reason: unknown) => setError(String(reason)));
+  }, []);
+
+  async function importKey(): Promise<void> {
+    setError(undefined);
+    setBusy(true);
+    try {
+      const path = await identityPickKeyFile();
+      if (!path) return;
+      const probe = await identityProbe(path);
+      setImportPath(path);
+      setImportEncrypted(probe.encrypted);
+      setImportFingerprint(probe.fingerprint ?? undefined);
+      if (keyPassphraseRef.current) keyPassphraseRef.current.value = "";
+      setRememberPassphrase(false);
+      setImportSyncSecret(false);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmImport(): Promise<void> {
+    if (!importPath) return;
+    setError(undefined);
+    setBusy(true);
+    try {
+      const passphrase = importEncrypted ? takeValue(keyPassphraseRef) : undefined;
+      const imported = await identityImport({
+        path: importPath,
+        passphrase: passphrase || undefined,
+        rememberPassphrase: importEncrypted ? rememberPassphrase : false,
+        syncSecret: importSyncSecret,
+      });
+      setIdentities(await listIdentities());
+      setIdentityId(imported.id);
+      setImportPath(undefined);
+      setImportEncrypted(false);
+      setImportFingerprint(undefined);
+      setRememberPassphrase(false);
+      setImportSyncSecret(false);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -94,13 +166,21 @@ export function HostFormModal({
         port: parsedPort,
         username: username.trim(),
         color,
-        syncSecret,
+        syncSecret: authMode === "password" ? syncSecret : false,
         shellIntegration,
       };
-      if (password) {
+
+      if (authMode === "sshKey") {
+        if (!identityId) {
+          throw new Error("Select or import an SSH key.");
+        }
+        mutation.identityId = identityId;
+      } else if (password) {
         mutation.password = password;
       } else if (!initial) {
         throw new Error("Password is required for a new host.");
+      } else if (initial.authKind === "sshKey") {
+        throw new Error("Enter a password to switch this host to password auth.");
       } else if (!initial.hasPassword) {
         throw new Error(
           "This device has no password for the host. Enter one to connect (and enable Sync password if you want other devices to receive it).",
@@ -119,6 +199,9 @@ export function HostFormModal({
     }
   }
 
+  const needsPassword =
+    authMode === "password" && (!initial || !initial.hasPassword);
+
   return (
     <Dialog
       open
@@ -127,20 +210,30 @@ export function HostFormModal({
       }}
       kicker="Host"
       title={initial ? "Edit host" : "Add host"}
-      description="Metadata and the optional password identity are encrypted in the vault. Passwords never linger in React state."
+      description="Metadata and auth identities are encrypted in the vault. Secrets never linger in React state."
     >
       <form
         onSubmit={(event) => void submit(event)}
         className="flex flex-col gap-3"
       >
         {error && <ErrorBanner>{error}</ErrorBanner>}
-        {initial && !initial.hasPassword && (
+        {authMode === "password" && initial && !initial.hasPassword && (
           <ErrorBanner>
             Password isn’t stored on this device yet (vault syncs hosts, not
             passwords, unless Sync password is on). Enter it below to connect
             from here.
           </ErrorBanner>
         )}
+        {authMode === "sshKey" &&
+          initial &&
+          initial.identityId &&
+          !sshKeys.some((key) => key.id === initial.identityId) && (
+            <ErrorBanner>
+              This device has no SSH key for this host. Import the key below to
+              connect (or turn on “Sync this key” on another device so it
+              arrives automatically).
+            </ErrorBanner>
+          )}
 
         <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
           <HostAvatar label={label || "?"} color={color} />
@@ -224,16 +317,186 @@ export function HostFormModal({
           </div>
         </div>
 
-        <Field
-          label={
-            initial?.hasPassword ? "Password (leave blank to keep)" : "Password"
-          }
-          inputRef={passwordRef}
-          type="password"
-          autoComplete="new-password"
-          disabled={busy}
-          required={!initial || !initial.hasPassword}
-        />
+        <div className="flex flex-col gap-1.5">
+          <span className="text-micro font-medium text-fg-muted">
+            Authentication
+          </span>
+          <div className="flex gap-1 rounded-md border border-line bg-base p-1">
+            {(
+              [
+                ["password", "Password"],
+                ["sshKey", "SSH key"],
+              ] as const
+            ).map(([mode, title]) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={busy}
+                aria-pressed={authMode === mode}
+                onClick={() => setAuthMode(mode)}
+                className={cn(
+                  "flex-1 cursor-pointer rounded px-2 py-1.5 text-ui transition-colors",
+                  authMode === mode
+                    ? "bg-hover font-medium text-fg"
+                    : "text-fg-muted hover:text-fg",
+                )}
+              >
+                {title}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {authMode === "password" ? (
+          <>
+            <Field
+              label={
+                initial?.hasPassword
+                  ? "Password (leave blank to keep)"
+                  : "Password"
+              }
+              inputRef={passwordRef}
+              type="password"
+              autoComplete="new-password"
+              disabled={busy}
+              required={needsPassword}
+            />
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={syncSecret}
+                disabled={busy}
+                onChange={(event) => setSyncSecret(event.target.checked)}
+              />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-ui font-medium text-fg">
+                  Sync password to other devices
+                </span>
+                <span className="text-micro text-fg-subtle">
+                  Off by default. When on, the encrypted password rides vault
+                  sync — the sync server still cannot read it. SSH keys sync
+                  only if you turn it on per key.
+                </span>
+              </span>
+            </label>
+          </>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-micro font-medium text-fg-muted">
+                SSH key identity
+              </span>
+              <div className="flex gap-2">
+                <select
+                  className={cn(inputClass, "flex-1")}
+                  value={identityId}
+                  disabled={busy}
+                  required
+                  onChange={(event) => setIdentityId(event.target.value)}
+                >
+                  <option value="">Select a key…</option>
+                  {sshKeys.map((identity) => (
+                    <option key={identity.id} value={identity.id}>
+                      {identity.label}
+                      {identity.fingerprint
+                        ? ` · ${identity.fingerprint.slice(0, 18)}…`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="subtle"
+                  disabled={busy}
+                  onClick={() => void importKey()}
+                >
+                  Import key…
+                </Button>
+              </div>
+            </label>
+
+            {importPath && (
+              <div className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-2.5">
+                <p className="m-0 text-micro text-fg-muted">
+                  Importing{" "}
+                  <span className="font-mono text-fg">{importPath}</span>
+                  {importFingerprint ? ` · ${importFingerprint}` : ""}
+                </p>
+                {importEncrypted && (
+                  <>
+                    <Field
+                      label="Passphrase"
+                      inputRef={keyPassphraseRef}
+                      type="password"
+                      autoComplete="off"
+                      disabled={busy}
+                      required
+                    />
+                    <label className="flex cursor-pointer items-center gap-2 text-micro text-fg-muted">
+                      <input
+                        type="checkbox"
+                        checked={rememberPassphrase}
+                        disabled={busy}
+                        onChange={(event) =>
+                          setRememberPassphrase(event.target.checked)
+                        }
+                      />
+                      Remember passphrase in vault
+                    </label>
+                  </>
+                )}
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={importSyncSecret}
+                    disabled={busy}
+                    onChange={(event) =>
+                      setImportSyncSecret(event.target.checked)
+                    }
+                  />
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-ui font-medium text-fg">
+                      Sync this key to other devices
+                    </span>
+                    <span className="text-micro text-fg-subtle">
+                      Off by default. When on, the encrypted key rides vault
+                      sync — the sync server still cannot read it.
+                    </span>
+                  </span>
+                </label>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="subtle"
+                    disabled={busy}
+                    onClick={() => {
+                      setImportPath(undefined);
+                      setImportEncrypted(false);
+                      setImportFingerprint(undefined);
+                      setImportSyncSecret(false);
+                      if (keyPassphraseRef.current) {
+                        keyPassphraseRef.current.value = "";
+                      }
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={busy}
+                    onClick={() => void confirmImport()}
+                  >
+                    Import
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
           <input
@@ -250,25 +513,6 @@ export function HostFormModal({
             <span className="text-micro text-fg-subtle">
               Wraps the remote shell to report command blocks and working
               directory. Turn off for exotic shells that reject the wrapper.
-            </span>
-          </span>
-        </label>
-
-        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={syncSecret}
-            disabled={busy}
-            onChange={(event) => setSyncSecret(event.target.checked)}
-          />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-ui font-medium text-fg">
-              Sync password to other devices
-            </span>
-            <span className="text-micro text-fg-subtle">
-              Off by default. When on, the encrypted password rides vault sync —
-              the sync server still cannot read it. SSH private keys never sync.
             </span>
           </span>
         </label>

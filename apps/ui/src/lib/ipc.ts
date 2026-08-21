@@ -12,6 +12,9 @@ import type { AssistProposeResultDto } from "./generated/AssistProposeResultDto"
 import type { FileEntryDto } from "./generated/FileEntryDto";
 import type { HostKeyPrompt } from "./generated/HostKeyPrompt";
 import type { HostSummaryDto } from "./generated/HostSummaryDto";
+import type { IdentityDeleteResultDto } from "./generated/IdentityDeleteResultDto";
+import type { IdentityProbeDto } from "./generated/IdentityProbeDto";
+import type { IdentitySummaryDto } from "./generated/IdentitySummaryDto";
 import type { MuxEnsureResultDto } from "./generated/MuxEnsureResultDto";
 import type { MissingToolDto } from "./generated/MissingToolDto";
 import type { ProjectLocationDto } from "./generated/ProjectLocationDto";
@@ -41,6 +44,9 @@ export type {
   FileEntryDto,
   HostKeyPrompt,
   HostSummaryDto,
+  IdentityDeleteResultDto,
+  IdentityProbeDto,
+  IdentitySummaryDto,
   MissingToolDto,
   MuxEnsureResultDto,
   ProjectLocationDto,
@@ -68,6 +74,8 @@ export interface HostMutation {
   port: number;
   username: string;
   password?: string;
+  /** Attach an existing vault identity (password or SSH key). */
+  identityId?: string;
   /** Opt-in: sync the encrypted password identity to other devices. */
   syncSecret?: boolean;
   color?: string;
@@ -146,6 +154,58 @@ export function updateHost(
 
 export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
+}
+
+export function listIdentities(): Promise<IdentitySummaryDto[]> {
+  return invoke<IdentitySummaryDto[]>("identity_list");
+}
+
+export function identityPickKeyFile(): Promise<string | null> {
+  return invoke<string | null>("identity_pick_key_file");
+}
+
+export function identityProbe(path: string): Promise<IdentityProbeDto> {
+  return invoke<IdentityProbeDto>("identity_probe", { path });
+}
+
+export function identityImport(args: {
+  path: string;
+  label?: string;
+  passphrase?: string;
+  rememberPassphrase?: boolean;
+  syncSecret?: boolean;
+}): Promise<IdentitySummaryDto> {
+  return invoke<IdentitySummaryDto>("identity_import", {
+    path: args.path,
+    label: args.label ?? null,
+    passphrase: args.passphrase ?? null,
+    rememberPassphrase: args.rememberPassphrase ?? false,
+    syncSecret: args.syncSecret ?? false,
+  });
+}
+
+export function identityRename(
+  id: string,
+  label: string,
+): Promise<IdentitySummaryDto> {
+  return invoke<IdentitySummaryDto>("identity_rename", { id, label });
+}
+
+export function identitySetSyncSecret(
+  id: string,
+  syncSecret: boolean,
+): Promise<IdentitySummaryDto> {
+  return invoke<IdentitySummaryDto>("identity_set_sync_secret", {
+    id,
+    syncSecret,
+  });
+}
+
+export function identityDelete(
+  id: string,
+  force: boolean,
+): Promise<IdentityDeleteResultDto> {
+  return invoke<IdentityDeleteResultDto>("identity_delete", { id, force });
 }
 
 export interface ProjectMutation {

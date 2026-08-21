@@ -380,6 +380,7 @@ mod tests {
                 port: 22,
                 username: "anthony".into(),
                 password: Some(SecretString::new("s3cret")),
+                identity_id: None,
                 sync_secret: false,
                 color: Some("#4C8DF6".into()),
                 shell_integration: Default::default(),
@@ -416,7 +417,7 @@ mod tests {
         assert!(matches!(err, Error::IdentityNotFound(_)));
         let msg = err.to_string();
         assert!(
-            msg.contains("password not available on this device"),
+            msg.contains("credentials not available on this device"),
             "unexpected message: {msg}"
         );
 
@@ -430,6 +431,7 @@ mod tests {
                     port: 22,
                     username: "anthony".into(),
                     password: Some(SecretString::new("s3cret-on-b")),
+                    identity_id: None,
                     sync_secret: true,
                     color: Some("#4C8DF6".into()),
                     shell_integration: Default::default(),
@@ -467,6 +469,7 @@ mod tests {
                 port: 22,
                 username: "anthony".into(),
                 password: Some(SecretString::new("s3cret")),
+                identity_id: None,
                 sync_secret: true,
                 color: None,
                 shell_integration: Default::default(),
@@ -507,6 +510,85 @@ mod tests {
                 assert_eq!(password.expose(), "s3cret");
             }
             _ => panic!("expected password"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_secret_ssh_key_reaches_second_device() {
+        let root = tempdir().unwrap();
+        let sync_dir = root.path().join("sync");
+        std::fs::create_dir_all(&sync_dir).unwrap();
+
+        let key_path = root.path().join("id_ed25519");
+        let status = std::process::Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-f"])
+            .arg(&key_path)
+            .args(["-N", "", "-q"])
+            .status()
+            .expect("ssh-keygen");
+        assert!(status.success());
+        let key_bytes = std::fs::read(&key_path).unwrap();
+
+        let device_a = vault_at(&root.path().join("a")).await;
+        device_a
+            .create(&SecretString::new("shared-password"), false)
+            .await
+            .unwrap();
+        let repo_a = VaultRepository::new(Arc::clone(&device_a));
+        let identity = repo_a
+            .import_ssh_key_identity("cloud".into(), &key_bytes, None, false, true)
+            .await
+            .unwrap();
+        assert!(identity.sync_secret);
+        let created = repo_a
+            .create_host(CreateHostRequest {
+                label: "tethra-vm".into(),
+                hostname: "10.0.0.9".into(),
+                port: 22,
+                username: "anthony".into(),
+                password: None,
+                identity_id: Some(identity.id),
+                sync_secret: false,
+                color: None,
+                shell_integration: Default::default(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.auth_kind, "sshKey");
+        assert!(created.sync_secret);
+
+        let engine_a = SyncEngine::new(
+            Arc::clone(&device_a),
+            Arc::new(FileBackend::new(&sync_dir)),
+            "file",
+        );
+        let report = engine_a.sync_now().await.unwrap();
+        assert_eq!(report.pushed, 2); // host + key identity
+
+        let device_b = vault_at(&root.path().join("b")).await;
+        let engine_b = SyncEngine::new(
+            Arc::clone(&device_b),
+            Arc::new(FileBackend::new(&sync_dir)),
+            "file",
+        );
+        assert!(engine_b.bootstrap_from_backend_if_needed().await.unwrap());
+        device_b
+            .unlock(&SecretString::new("shared-password"))
+            .await
+            .unwrap();
+        engine_b.sync_now().await.unwrap();
+
+        let repo_b = VaultRepository::new(device_b);
+        let hosts = repo_b.list_hosts().await.unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].auth_kind, "sshKey");
+        assert!(hosts[0].sync_secret);
+        let host = repo_b.get_host(created.id).await.unwrap();
+        match repo_b.credentials_for(&host).await.unwrap() {
+            AuthMaterial::PrivateKey { ref key, .. } => {
+                assert!(!key.expose().is_empty());
+            }
+            _ => panic!("expected private key on device B"),
         }
     }
 

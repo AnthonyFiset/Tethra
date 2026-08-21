@@ -5,11 +5,12 @@
 //! on a Tailscale host). [`HttpBackend`] talks to the same row protocol over
 //! HTTP so an always-on Linux box can host sync for Mac and Windows clients.
 //!
-//! Password identities default to `local_only`; an opt-in `sync_secret` flag
-//! lets them sync under the same item encryption. The shared vault header
-//! (salt + password-wrapped vault key) is published so another device can
-//! unlock with the same master password. Coordinated re-key publishes a
-//! `rekey_from` attestation so peers adopt a new password wrap without reset.
+//! Password and SSH-key identities default to `local_only`; an opt-in
+//! `sync_secret` flag lets them sync under the same item encryption. The shared
+//! vault header (salt + password-wrapped vault key) is published so another
+//! device can unlock with the same master password. Coordinated re-key
+//! publishes a `rekey_from` attestation so peers adopt a new password wrap
+//! without reset.
 
 mod conflict;
 mod encode;

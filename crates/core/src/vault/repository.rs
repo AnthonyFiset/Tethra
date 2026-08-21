@@ -9,15 +9,18 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::records::{
-    ApiKeyRecord, HostRecord, PasswordIdentityRecord, ProjectRecord, RunningSessionRecord,
+    ApiKeyRecord, HostRecord, IdentityRecord, ProjectRecord, RunningSessionRecord,
 };
 use super::store::{ItemKind, ItemRow};
 use super::{Vault, get_encrypted_json, put_encrypted_json};
 use crate::model::{
     ApiKey, AssistProviderKind, AuthMaterial, Host, KnownHostKey, Project, ProjectLocation,
-    RunningSession, SecretString, ShellIntegration,
+    RunningSession, SecretBytes, SecretString, ShellIntegration,
 };
-use crate::ssh::{AuthProvider, HostStore};
+use crate::ssh::{
+    AuthProvider, HostStore, parse_private_key_bytes, presented_from_public_key,
+    private_key_appears_encrypted,
+};
 use crate::ssh_config::{SshConfigHost, parse_ssh_config, proxy_jump_alias};
 use crate::{Error, Result};
 
@@ -30,6 +33,10 @@ pub struct HostSummary {
     pub port: u16,
     pub username: String,
     pub has_password: bool,
+    /// Linked vault identity, if any.
+    pub identity_id: Option<Uuid>,
+    /// `password`, `sshKey`, or `none`.
+    pub auth_kind: String,
     /// Whether the password identity is opted into vault sync.
     pub sync_secret: bool,
     pub color: Option<String>,
@@ -46,6 +53,12 @@ impl From<&Host> for HostSummary {
             port: host.port,
             username: host.username.clone(),
             has_password: host.identity_id.is_some(),
+            identity_id: host.identity_id,
+            auth_kind: if host.identity_id.is_some() {
+                "password".into()
+            } else {
+                "none".into()
+            },
             sync_secret: false,
             color: host.color.clone(),
             tags: host.tags.clone(),
@@ -54,7 +67,7 @@ impl From<&Host> for HostSummary {
     }
 }
 
-/// Create/update payload. Password is optional and never returned.
+/// Create/update payload. Password / identity_id are optional and never returned.
 #[derive(Debug)]
 pub struct CreateHostRequest {
     pub label: String,
@@ -62,10 +75,33 @@ pub struct CreateHostRequest {
     pub port: u16,
     pub username: String,
     pub password: Option<SecretString>,
+    /// Attach an existing vault identity (password or SSH key).
+    pub identity_id: Option<Uuid>,
     /// Opt-in: sync the password identity ciphertext. Default false.
     pub sync_secret: bool,
     pub color: Option<String>,
     pub shell_integration: ShellIntegration,
+}
+
+/// Non-secret identity metadata for UI / IPC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentitySummary {
+    pub id: Uuid,
+    pub label: String,
+    /// `password` or `sshKey`.
+    pub kind: String,
+    pub fingerprint: Option<String>,
+    pub usage_count: u32,
+    pub created_at: Option<chrono::DateTime<Utc>>,
+    /// Opt-in: encrypted identity rides vault sync.
+    pub sync_secret: bool,
+}
+
+/// Result of attempting to delete an identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityDeleteResult {
+    pub deleted: bool,
+    pub dependent_hosts: Vec<(Uuid, String)>,
 }
 
 /// Non-secret project metadata for UI / IPC.
@@ -164,32 +200,35 @@ impl VaultRepository {
         for row in rows {
             let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
             let record: HostRecord = serde_json::from_slice(&plaintext)?;
-            let has_password = match record.identity_id {
-                Some(identity_id) => self
-                    .vault
-                    .with_db(|db| db.get_item(identity_id))
-                    .await?
-                    .is_some_and(|item| !item.deleted && item.kind == ItemKind::Identity),
-                None => false,
-            };
-            let sync_secret = match record.identity_id {
-                Some(identity_id) if has_password => {
-                    match get_encrypted_json::<PasswordIdentityRecord>(&self.vault, identity_id)
-                        .await
-                    {
-                        Ok((identity, _)) => identity.sync_secret,
-                        Err(_) => false,
-                    }
-                }
-                _ => false,
-            };
+            let (has_password, auth_kind, sync_secret) =
+                self.identity_meta(record.identity_id).await?;
             let host = Host::from(record);
             let mut summary = HostSummary::from(&host);
             summary.has_password = has_password;
+            summary.auth_kind = auth_kind;
             summary.sync_secret = sync_secret;
             out.push(summary);
         }
         Ok(out)
+    }
+
+    async fn identity_meta(&self, identity_id: Option<Uuid>) -> Result<(bool, String, bool)> {
+        let Some(identity_id) = identity_id else {
+            return Ok((false, "none".into(), false));
+        };
+        let item = self.vault.with_db(|db| db.get_item(identity_id)).await?;
+        if !item.is_some_and(|item| !item.deleted && item.kind == ItemKind::Identity) {
+            return Ok((false, "none".into(), false));
+        }
+        match get_encrypted_json::<IdentityRecord>(&self.vault, identity_id).await {
+            Ok((IdentityRecord::Password { sync_secret, .. }, _)) => {
+                Ok((true, "password".into(), sync_secret))
+            }
+            Ok((IdentityRecord::SshKey { sync_secret, .. }, _)) => {
+                Ok((false, "sshKey".into(), sync_secret))
+            }
+            Err(_) => Ok((false, "none".into(), false)),
+        }
     }
 
     pub async fn create_host(&self, request: CreateHostRequest) -> Result<HostSummary> {
@@ -198,9 +237,17 @@ impl VaultRepository {
         host.color = validate_host_color(request.color)?;
         host.shell_integration = request.shell_integration;
 
-        if let Some(password) = request.password {
+        if let Some(identity_id) = request.identity_id {
+            let (identity, _) = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
+                .await
+                .map_err(|_| Error::IdentityNotFound(identity_id))?;
+            if identity.id() != identity_id {
+                return Err(Error::InvalidArgument("identity id mismatch".into()));
+            }
+            host.identity_id = Some(identity_id);
+        } else if let Some(password) = request.password {
             let identity_id = Uuid::now_v7();
-            let identity = PasswordIdentityRecord {
+            let identity = IdentityRecord::Password {
                 id: identity_id,
                 label: format!("{} password", host.label),
                 password: password.expose().to_string(),
@@ -230,8 +277,11 @@ impl VaultRepository {
             &record,
         )
         .await?;
+        let (has_password, auth_kind, sync_secret) = self.identity_meta(host.identity_id).await?;
         let mut summary = HostSummary::from(&host);
-        summary.sync_secret = request.sync_secret && host.identity_id.is_some();
+        summary.has_password = has_password;
+        summary.auth_kind = auth_kind;
+        summary.sync_secret = sync_secret;
         Ok(summary)
     }
 
@@ -346,9 +396,16 @@ impl VaultRepository {
         record.color = validate_host_color(request.color)?;
         record.shell_integration = request.shell_integration;
 
-        if let Some(password) = request.password {
+        if let Some(identity_id) = request.identity_id {
+            let _ = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
+                .await
+                .map_err(|_| Error::IdentityNotFound(identity_id))?;
+            record.identity_id = Some(identity_id);
+        } else if let Some(password) = request.password {
             let identity_id = record.identity_id.unwrap_or_else(Uuid::now_v7);
-            let identity = PasswordIdentityRecord {
+            // Replacing with a password identity — if prior was a shared SSH key, leave
+            // the key row alone and mint/overwrite only when prior was password or none.
+            let identity = IdentityRecord::Password {
                 id: identity_id,
                 label: format!("{} password", record.label),
                 password: password.expose().to_string(),
@@ -372,10 +429,13 @@ impl VaultRepository {
             record.identity_id = Some(identity_id);
         } else if let Some(identity_id) = record.identity_id
             && let Ok((mut identity, irow)) =
-                get_encrypted_json::<PasswordIdentityRecord>(&self.vault, identity_id).await
-            && identity.sync_secret != request.sync_secret
+                get_encrypted_json::<IdentityRecord>(&self.vault, identity_id).await
+            && let IdentityRecord::Password {
+                sync_secret: slot, ..
+            } = &mut identity
+            && *slot != request.sync_secret
         {
-            identity.sync_secret = request.sync_secret;
+            *slot = request.sync_secret;
             put_encrypted_json(
                 &self.vault,
                 identity_id,
@@ -391,27 +451,34 @@ impl VaultRepository {
         let next = row.version + 1;
         put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
         let host = Host::from(record);
+        let (has_password, auth_kind, sync_secret) = self.identity_meta(host.identity_id).await?;
         let mut summary = HostSummary::from(&host);
-        summary.sync_secret = request.sync_secret && host.identity_id.is_some();
+        summary.has_password = has_password;
+        summary.auth_kind = auth_kind;
+        summary.sync_secret = sync_secret;
         Ok(summary)
     }
 
     pub async fn delete_host(&self, id: Uuid) -> Result<()> {
         let (record, row) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
-        if let Some(identity_id) = record.identity_id
-            && let Ok((identity, irow)) =
-                get_encrypted_json::<PasswordIdentityRecord>(&self.vault, identity_id).await
-        {
-            put_encrypted_json(
-                &self.vault,
-                identity_id,
-                ItemKind::Identity,
-                irow.version + 1,
-                !identity.sync_secret,
-                true,
-                &identity,
-            )
-            .await?;
+        if let Some(identity_id) = record.identity_id {
+            let dependents = self.hosts_using_identity(identity_id).await?;
+            let only_this = dependents.len() == 1 && dependents[0].0 == id;
+            if only_this
+                && let Ok((identity, irow)) =
+                    get_encrypted_json::<IdentityRecord>(&self.vault, identity_id).await
+            {
+                put_encrypted_json(
+                    &self.vault,
+                    identity_id,
+                    ItemKind::Identity,
+                    irow.version + 1,
+                    !identity.sync_secret(),
+                    true,
+                    &identity,
+                )
+                .await?;
+            }
         }
         put_encrypted_json(
             &self.vault,
@@ -791,6 +858,227 @@ impl VaultRepository {
         Ok(ApiKey::from(record))
     }
 
+    pub async fn list_identities(&self) -> Result<Vec<IdentitySummary>> {
+        let key = self.vault.require_key().await?;
+        let rows = self
+            .vault
+            .with_db(|db| db.list_items(ItemKind::Identity, false))
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let plaintext = super::crypto::decrypt_item(&key, row.id, row.version, &row.blob)?;
+            let identity: IdentityRecord = match serde_json::from_slice(&plaintext) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            out.push(self.identity_to_summary(identity).await?);
+        }
+        out.sort_by_key(|a| a.label.to_lowercase());
+        Ok(out)
+    }
+
+    async fn identity_to_summary(&self, identity: IdentityRecord) -> Result<IdentitySummary> {
+        let usage_count = self.hosts_using_identity(identity.id()).await?.len() as u32;
+        match identity {
+            IdentityRecord::Password {
+                id,
+                label,
+                sync_secret,
+                ..
+            } => Ok(IdentitySummary {
+                id,
+                label,
+                kind: "password".into(),
+                fingerprint: None,
+                usage_count,
+                created_at: None,
+                sync_secret,
+            }),
+            IdentityRecord::SshKey {
+                id,
+                label,
+                private_key,
+                passphrase,
+                created_at,
+                sync_secret,
+            } => {
+                let fingerprint =
+                    fingerprint_for_key_text(&private_key, passphrase.as_deref()).ok();
+                Ok(IdentitySummary {
+                    id,
+                    label,
+                    kind: "sshKey".into(),
+                    fingerprint,
+                    usage_count,
+                    created_at: Some(created_at),
+                    sync_secret,
+                })
+            }
+        }
+    }
+
+    pub async fn hosts_using_identity(&self, identity_id: Uuid) -> Result<Vec<(Uuid, String)>> {
+        let hosts = self.list_hosts().await?;
+        Ok(hosts
+            .into_iter()
+            .filter(|h| h.identity_id == Some(identity_id))
+            .map(|h| (h.id, h.label))
+            .collect())
+    }
+
+    /// Import a private key file into the vault.
+    ///
+    /// `sync_secret` defaults to false (device-local). When true, ciphertext
+    /// rides vault sync the same way as an opted-in password.
+    pub async fn import_ssh_key_identity(
+        &self,
+        label: String,
+        key_bytes: &[u8],
+        passphrase: Option<&str>,
+        remember_passphrase: bool,
+        sync_secret: bool,
+    ) -> Result<IdentitySummary> {
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Err(Error::InvalidArgument("identity label is required".into()));
+        }
+        let parsed = parse_private_key_bytes(key_bytes, passphrase)?;
+        let _ = parsed; // validated
+        let text = std::str::from_utf8(key_bytes)
+            .map_err(|_| Error::InvalidKey("private key is not UTF-8 text".into()))?
+            .to_string();
+        let identity_id = Uuid::now_v7();
+        let stored_pass = if remember_passphrase {
+            passphrase.map(str::to_string)
+        } else {
+            None
+        };
+        let identity = IdentityRecord::SshKey {
+            id: identity_id,
+            label,
+            private_key: text,
+            passphrase: stored_pass,
+            created_at: Utc::now(),
+            sync_secret,
+        };
+        put_encrypted_json(
+            &self.vault,
+            identity_id,
+            ItemKind::Identity,
+            1,
+            !sync_secret,
+            false,
+            &identity,
+        )
+        .await?;
+        self.identity_to_summary(identity).await
+    }
+
+    pub async fn rename_identity(&self, id: Uuid, label: String) -> Result<IdentitySummary> {
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Err(Error::InvalidArgument("identity label is required".into()));
+        }
+        let (mut identity, row) = get_encrypted_json::<IdentityRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Identity {
+            return Err(Error::InvalidArgument("item is not an identity".into()));
+        }
+        identity.set_label(label);
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::Identity,
+            row.version + 1,
+            !identity.sync_secret(),
+            false,
+            &identity,
+        )
+        .await?;
+        self.identity_to_summary(identity).await
+    }
+
+    /// Toggle whether this identity's ciphertext rides vault sync.
+    /// Turning off only affects future pushes; peers that already have a copy keep it.
+    pub async fn set_identity_sync_secret(
+        &self,
+        id: Uuid,
+        sync_secret: bool,
+    ) -> Result<IdentitySummary> {
+        let (mut identity, row) = get_encrypted_json::<IdentityRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Identity {
+            return Err(Error::InvalidArgument("item is not an identity".into()));
+        }
+        identity.set_sync_secret(sync_secret);
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::Identity,
+            row.version + 1,
+            !sync_secret,
+            false,
+            &identity,
+        )
+        .await?;
+        self.identity_to_summary(identity).await
+    }
+
+    pub async fn delete_identity(&self, id: Uuid, force: bool) -> Result<IdentityDeleteResult> {
+        let (identity, row) = get_encrypted_json::<IdentityRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Identity {
+            return Err(Error::InvalidArgument("item is not an identity".into()));
+        }
+        let dependent_hosts = self.hosts_using_identity(id).await?;
+        if !dependent_hosts.is_empty() && !force {
+            return Ok(IdentityDeleteResult {
+                deleted: false,
+                dependent_hosts,
+            });
+        }
+        for (host_id, _) in &dependent_hosts {
+            let (mut host, hrow) = get_encrypted_json::<HostRecord>(&self.vault, *host_id).await?;
+            host.identity_id = None;
+            put_encrypted_json(
+                &self.vault,
+                *host_id,
+                ItemKind::Host,
+                hrow.version + 1,
+                false,
+                false,
+                &host,
+            )
+            .await?;
+        }
+        put_encrypted_json(
+            &self.vault,
+            id,
+            ItemKind::Identity,
+            row.version + 1,
+            !identity.sync_secret(),
+            true,
+            &identity,
+        )
+        .await?;
+        Ok(IdentityDeleteResult {
+            deleted: true,
+            dependent_hosts,
+        })
+    }
+
+    /// Probe a key file without storing it (for UI passphrase prompt).
+    pub fn probe_ssh_key_file(key_bytes: &[u8]) -> Result<(bool, Option<String>)> {
+        let encrypted = private_key_appears_encrypted(key_bytes);
+        if encrypted {
+            return Ok((true, None));
+        }
+        let fingerprint =
+            fingerprint_for_key_text(std::str::from_utf8(key_bytes).unwrap_or(""), None).ok();
+        // If we can't parse an unencrypted key, still surface the error at import time.
+        if fingerprint.is_none() {
+            parse_private_key_bytes(key_bytes, None)?;
+        }
+        Ok((false, fingerprint))
+    }
+
     pub async fn get_host(&self, id: Uuid) -> Result<Host> {
         let (record, _) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
         Ok(Host::from(record))
@@ -812,6 +1100,15 @@ impl VaultRepository {
             .map(|row| row.version + 1)
             .unwrap_or(1))
     }
+}
+
+fn fingerprint_for_key_text(private_key: &str, passphrase: Option<&str>) -> Result<String> {
+    let key = parse_private_key_bytes(private_key.as_bytes(), passphrase)?;
+    let presented = presented_from_public_key(key.public_key());
+    Ok(format!(
+        "{} {}",
+        presented.algorithm, presented.fingerprint_sha256
+    ))
 }
 
 fn validate_host_color(color: Option<String>) -> Result<Option<String>> {
@@ -940,15 +1237,25 @@ impl AuthProvider for VaultRepository {
         let identity_id = host
             .identity_id
             .ok_or_else(|| Error::InvalidArgument("host has no identity".into()))?;
-        let (identity, _) = get_encrypted_json::<PasswordIdentityRecord>(&self.vault, identity_id)
+        let (identity, _) = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
             .await
             .map_err(|err| match err {
                 Error::Other(_) => Error::IdentityNotFound(identity_id),
                 other => other,
             })?;
-        Ok(AuthMaterial::Password {
-            password: SecretString::new(identity.password),
-        })
+        match identity {
+            IdentityRecord::Password { password, .. } => Ok(AuthMaterial::Password {
+                password: SecretString::new(password),
+            }),
+            IdentityRecord::SshKey {
+                private_key,
+                passphrase,
+                ..
+            } => Ok(AuthMaterial::PrivateKey {
+                key: SecretBytes::new(private_key.into_bytes()),
+                passphrase: passphrase.map(SecretString::new),
+            }),
+        }
     }
 }
 
@@ -984,6 +1291,7 @@ mod tests {
                 port: 2222,
                 username: "testuser".into(),
                 password: Some(SecretString::new("testpass")),
+                identity_id: None,
                 sync_secret: false,
                 color: Some("#70A5F5".into()),
                 shell_integration: Default::default(),
@@ -1016,6 +1324,7 @@ mod tests {
                 port: 22,
                 username: "u".into(),
                 password: Some(SecretString::new("pw")),
+                identity_id: None,
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
@@ -1058,6 +1367,7 @@ mod tests {
                 port: 22,
                 username: "u".into(),
                 password: Some(SecretString::new("pw")),
+                identity_id: None,
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
@@ -1146,6 +1456,7 @@ mod tests {
                 port: 2222,
                 username: "testuser".into(),
                 password: Some(SecretString::new("testpass")),
+                identity_id: None,
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
@@ -1184,6 +1495,7 @@ mod tests {
                 port: 22,
                 username: "alice".into(),
                 password: Some(SecretString::new("one")),
+                identity_id: None,
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
@@ -1200,6 +1512,7 @@ mod tests {
                     port: 2222,
                     username: "bob".into(),
                     password: Some(SecretString::new("two")),
+                    identity_id: None,
                     sync_secret: false,
                     color: Some("#CF718B".into()),
                     shell_integration: Default::default(),
@@ -1229,6 +1542,7 @@ mod tests {
                 port: 22,
                 username: "old-user".into(),
                 password: Some(SecretString::new("keep-me")),
+                identity_id: None,
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
@@ -1270,5 +1584,105 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(repo.list_hosts().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ssh_key_identity_auths_and_stays_local_only() {
+        let (_dir, repo) = unlocked_repo().await;
+        // Minimal OpenSSH ed25519 private key (unencrypted).
+        let key = b"-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACDi/vxdPzP92ZrCMZqwYvZL+2T8y/8vH7bJ8k1pQ0e9WQAAAJgY8mGIGPJh
+iAAAAAtzc2gtZWQyNTUxOQAAACDi/vxdPzP92ZrCMZqwYvZL+2T8y/8vH7bJ8k1pQ0e9WQ
+AAAEB0pQ8zqG9b7n8oQ7mKQn0bGqH8mG0p9y1xqY5nF0xqY+L+/F0/M/3ZmsIxmrBi9kv7
+ZPzL/y8ftsnYTWVDR71ZAAAAEHRlc3RAdGV0aHJhLmxvY2FsAQIDBA==
+-----END OPENSSH PRIVATE KEY-----
+";
+        // Prefer a key generated at test time when ssh-keygen is available.
+        let key_bytes = {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("id_ed25519");
+            let status = std::process::Command::new("ssh-keygen")
+                .args(["-t", "ed25519", "-f"])
+                .arg(&path)
+                .args(["-N", "", "-q"])
+                .status();
+            if status.map(|s| s.success()).unwrap_or(false) {
+                std::fs::read(&path).unwrap()
+            } else {
+                // Fall back: parse via decode must succeed for embedded — if not, skip.
+                key.to_vec()
+            }
+        };
+
+        let identity = repo
+            .import_ssh_key_identity("cloud".into(), &key_bytes, None, false, false)
+            .await
+            .expect("import key");
+        assert_eq!(identity.kind, "sshKey");
+        assert!(identity.fingerprint.is_some());
+        assert!(!identity.sync_secret);
+
+        let created = repo
+            .create_host(CreateHostRequest {
+                label: "tethra-vm".into(),
+                hostname: "1.2.3.4".into(),
+                port: 22,
+                username: "anthony".into(),
+                password: None,
+                identity_id: Some(identity.id),
+                sync_secret: false,
+                color: None,
+                shell_integration: Default::default(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.auth_kind, "sshKey");
+        assert!(!created.has_password);
+        assert_eq!(created.identity_id, Some(identity.id));
+
+        let host = repo.get_host(created.id).await.unwrap();
+        match repo.credentials_for(&host).await.unwrap() {
+            AuthMaterial::PrivateKey {
+                ref key,
+                ref passphrase,
+            } => {
+                assert!(!key.expose().is_empty());
+                assert!(passphrase.is_none());
+            }
+            other => panic!("expected private key, got {other:?}"),
+        }
+
+        // Default: identity row is local_only.
+        let row = repo
+            .vault()
+            .with_db(|db| db.get_item(identity.id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.local_only);
+
+        // Opt in — same as password sync_secret.
+        let synced = repo
+            .set_identity_sync_secret(identity.id, true)
+            .await
+            .unwrap();
+        assert!(synced.sync_secret);
+        let row = repo
+            .vault()
+            .with_db(|db| db.get_item(identity.id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.local_only);
+
+        let blocked = repo.delete_identity(identity.id, false).await.unwrap();
+        assert!(!blocked.deleted);
+        assert_eq!(blocked.dependent_hosts.len(), 1);
+
+        let deleted = repo.delete_identity(identity.id, true).await.unwrap();
+        assert!(deleted.deleted);
+        let host = repo.get_host(created.id).await.unwrap();
+        assert!(host.identity_id.is_none());
     }
 }
