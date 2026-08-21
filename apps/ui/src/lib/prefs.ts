@@ -16,6 +16,9 @@ const KEYS = {
   scrollback: "tethra.terminal.scrollback",
   copyOnSelect: "tethra.terminal.copyOnSelect",
   bell: "tethra.terminal.bell",
+  notifyWaiting: "tethra.notify.waiting",
+  notifyDone: "tethra.notify.done",
+  notifyFailed: "tethra.notify.failed",
   idleLockSecs: "tethra.vault.idleLockSecs",
   material: "tethra.chrome.material",
   chromeOpacity: "tethra.chrome.opacity",
@@ -37,6 +40,9 @@ export const DEFAULTS = {
   scrollback: 10_000,
   copyOnSelect: false,
   bell: false,
+  notifyWaiting: true,
+  notifyDone: false,
+  notifyFailed: true,
   /** 15 minutes — matches core DEFAULT_IDLE_LOCK. */
   idleLockSecs: 15 * 60,
   material: "opaque" as MaterialPref,
@@ -174,6 +180,36 @@ export function getTerminalBell(): boolean {
 
 export function setTerminalBell(on: boolean): void {
   writeString(KEYS.bell, on ? "1" : "0");
+}
+
+function readBool(key: string, fallback: boolean): boolean {
+  const raw = readString(key);
+  if (raw === null || raw === undefined) return fallback;
+  return raw === "1" || raw === "true";
+}
+
+export function getNotifyWaiting(): boolean {
+  return readBool(KEYS.notifyWaiting, DEFAULTS.notifyWaiting);
+}
+
+export function setNotifyWaiting(on: boolean): void {
+  writeString(KEYS.notifyWaiting, on ? "1" : "0");
+}
+
+export function getNotifyDone(): boolean {
+  return readBool(KEYS.notifyDone, DEFAULTS.notifyDone);
+}
+
+export function setNotifyDone(on: boolean): void {
+  writeString(KEYS.notifyDone, on ? "1" : "0");
+}
+
+export function getNotifyFailed(): boolean {
+  return readBool(KEYS.notifyFailed, DEFAULTS.notifyFailed);
+}
+
+export function setNotifyFailed(on: boolean): void {
+  writeString(KEYS.notifyFailed, on ? "1" : "0");
 }
 
 export function getDefaultShell(): string {

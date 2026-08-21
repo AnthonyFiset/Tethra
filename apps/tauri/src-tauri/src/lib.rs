@@ -391,6 +391,17 @@ struct HostKeyPrompt {
 }
 
 #[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+#[allow(dead_code)] // Variants are constructed from the UI / serde wire format.
+pub(crate) enum AgentAttentionState {
+    Running,
+    Waiting,
+    Done,
+    Failed,
+}
+
+#[derive(Clone, Serialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export, export_to = "../../../ui/src/lib/generated/")]
 pub(crate) enum TerminalEvent {
@@ -403,6 +414,13 @@ pub(crate) enum TerminalEvent {
     Block {
         phase: TerminalBlockPhase,
         exit_code: Option<i32>,
+    },
+    /// Agent attention / lifecycle hint (BEL, OSC notify, silence, or command end).
+    Attention {
+        state: AgentAttentionState,
+        message: Option<String>,
+        /// bel | osc | silence | exit | tmux
+        source: String,
     },
     Closed,
 }
@@ -1370,6 +1388,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_decoration::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             app.set_menu(app_menu::build(app)?)?;
@@ -1650,6 +1669,8 @@ pub fn run() {
             mux::terminal_session_alive,
             mux::kill_mux_session,
             mux::prune_stale_running_sessions,
+            mux::poll_session_watches,
+            mux::set_dock_badge,
             respond_host_key,
             open_external,
             sftp::local_home,
@@ -1699,6 +1720,7 @@ mod tests {
         AgentSpecDto::export_all(&cfg).unwrap();
         ByokEnvHandleDto::export_all(&cfg).unwrap();
         RunningSessionSummaryDto::export_all(&cfg).unwrap();
+        AgentAttentionState::export_all(&cfg).unwrap();
         assist::export_bindings(&cfg);
         mux::export_bindings(&cfg);
         VaultStatusDto::export_all(&cfg).unwrap();

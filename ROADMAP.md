@@ -106,9 +106,10 @@ stamped on the same tree.)
 | Launcher promises Running, doesn't show it | ✅ Running section first | v0.3.0 |
 | Azure OpenAI preset missing | ✅ Catalog + `api-key` auth | v0.3.0 |
 | Host color underused; card weight; type hierarchy | ✅ Ambient rail / hairline / hierarchy | v0.3.0 |
+| Agent notifications (BEL / tmux hooks) | ✅ Shipped — attached + detached watch | v0.3.2 |
+| Click-through agent installs (native / Node first) | ✅ Shipped | v0.3.2 |
 | Unsigned installers (Gatekeeper/SmartScreen) | Adoption blocker | v0.4.0 |
 | No port forwarding | Table stakes | v0.4.0 |
-| Agent notifications (BEL / tmux hooks) | Highest-value wedge | v0.4.0 |
 | SFTP no recursive folder transfer | Table stakes | v0.4.0 |
 | No terminal search (⌘F) | Table stakes | v0.4.0 |
 | **No SSH agent forwarding** | 🐛 High — see §3.2 | v0.4.0+ |
@@ -120,7 +121,15 @@ stamped on the same tree.)
 
 ## Part 3 — The next big features, specced
 
-### 3.1 Agent notifications — **the highest-value thing left**
+### 3.1 Agent notifications — ✅ shipped in v0.3.2
+
+Prototype landed: attached BEL / OSC 9 / OSC 777 / silence / OSC 133 exit;
+detached via tmux `monitor-bell` / `monitor-silence` + alert hooks writing
+`~/.tethra/alerts` and a 5s poll; desktop notifications, Running chips, dock
+badge; Settings → Agents toggles (waiting/failed on, done off).
+
+Remaining polish (later): per-agent overrides, quiet hours, Windows overlay
+badge. Spec notes below kept for that work.
 
 Agents run for tens of minutes and then *wait for input*. Today you have to go
 look. This is what makes persistence **useful** rather than merely true, and

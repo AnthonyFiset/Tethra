@@ -5,7 +5,10 @@
     "command": "claude",
     "args": [],
     "install": {
-      "default": "npm install -g @anthropic-ai/claude-code"
+      "macos": "curl -fsSL https://claude.ai/install.sh | bash",
+      "linux": "curl -fsSL https://claude.ai/install.sh | bash",
+      "windows": "irm https://claude.ai/install.ps1 | iex",
+      "default": "curl -fsSL https://claude.ai/install.sh | bash"
     },
     "detect_args": ["--version"],
     "persistent_default": true,
@@ -20,7 +23,10 @@
     "command": "codex",
     "args": [],
     "install": {
-      "default": "npm install -g @openai/codex"
+      "macos": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+      "linux": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+      "windows": "npm install -g @openai/codex",
+      "default": "curl -fsSL https://chatgpt.com/codex/install.sh | sh"
     },
     "detect_args": ["--version"],
     "persistent_default": true,

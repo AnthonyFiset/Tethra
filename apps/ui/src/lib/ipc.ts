@@ -397,6 +397,17 @@ export function pruneStaleRunningSessions(): Promise<number> {
   return invoke<number>("prune_stale_running_sessions");
 }
 
+export function pollSessionWatches(
+  hostId: string,
+  muxSessions: string[],
+): Promise<import("./generated/SessionWatchDto").SessionWatchDto[]> {
+  return invoke("poll_session_watches", { hostId, muxSessions });
+}
+
+export function setDockBadge(count: number): Promise<void> {
+  return invoke("set_dock_badge", { count });
+}
+
 export function openTerminal(
   hostId: string,
   cols: number,

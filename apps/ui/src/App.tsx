@@ -28,6 +28,13 @@ import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
 import { getIdleLockSecs, getLandingPref } from "./lib/prefs";
 import {
+  mergeAttention,
+  type SessionAttention,
+} from "./lib/sessionAttention";
+import { maybeNotifyAttention } from "./lib/agentNotify";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { onAction } from "@tauri-apps/plugin-notification";
+import {
   getAppVersion,
   closeSftp,
   closeTerminal,
@@ -48,6 +55,8 @@ import {
   onTerminalEvent,
   onVaultLocked,
   onVaultStatus,
+  pollSessionWatches,
+  setDockBadge,
   openExternal,
   openLocalTerminal,
   openSftp,
@@ -245,6 +254,14 @@ function Workspace({
   const [runningSessions, setRunningSessions] = useState<
     RunningSessionSummaryDto[]
   >([]);
+  /** Ephemeral attention keyed by running-session id. */
+  const [sessionAttention, setSessionAttention] = useState<
+    Record<string, SessionAttention>
+  >({});
+  /** PTY session id → running session id (while attached). */
+  const ptyToRunning = useRef(new Map<string, string>());
+  const runningSessionsRef = useRef(runningSessions);
+  runningSessionsRef.current = runningSessions;
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [appMode, setAppMode] = useState<"launcher" | "workspace">("launcher");
   const [activeId, setActiveId] = useState<string>();
@@ -566,6 +583,34 @@ function Workspace({
     const pending: TerminalEvent[] = [];
     let ready = !options?.restoreProjectId;
 
+    function applyPtyAttention(
+      ptyId: string,
+      next: SessionAttention,
+      source: string,
+    ): void {
+      const runningId = ptyToRunning.current.get(ptyId);
+      if (!runningId) return;
+      setSessionAttention((current) => {
+        const merged = mergeAttention(current[runningId], next, source);
+        if (
+          current[runningId]?.state === merged.state &&
+          current[runningId]?.message === merged.message
+        ) {
+          return current;
+        }
+        const session = runningSessionsRef.current.find((s) => s.id === runningId);
+        if (merged.state !== current[runningId]?.state && merged.state !== "running") {
+          void maybeNotifyAttention({
+            state: merged.state,
+            title: session?.projectName ?? "Agent",
+            body: merged.message,
+            runningSessionId: runningId,
+          });
+        }
+        return { ...current, [runningId]: merged };
+      });
+    }
+
     const handle = (event: TerminalEvent) => {
       if (event.kind === "data") {
         const bytes = decodeBase64(event.data);
@@ -592,7 +637,27 @@ function Workspace({
         if (typeof exitCode === "number") {
           lastExitCodes.current.set(sessionId, exitCode);
         }
-      } else {
+        if (event.phase === "commandEnd" && typeof exitCode === "number") {
+          applyPtyAttention(sessionId, {
+            state: exitCode === 0 ? "done" : "failed",
+            message: undefined,
+          }, "exit");
+        } else if (
+          event.phase === "commandStart" ||
+          event.phase === "outputStart"
+        ) {
+          applyPtyAttention(sessionId, { state: "running" }, "activity");
+        }
+      } else if (event.kind === "attention") {
+        applyPtyAttention(
+          sessionId,
+          {
+            state: event.state,
+            message: event.message ?? undefined,
+          },
+          event.source,
+        );
+      } else if (event.kind === "closed") {
         setTabs((current) =>
           current.map((tab) =>
             tab.sessionId === sessionId ? { ...tab, connected: false } : tab,
@@ -1214,6 +1279,11 @@ function Workspace({
           hostId,
           agent.id,
         );
+        ptyToRunning.current.set(sessionId, marked.id);
+        setSessionAttention((current) => ({
+          ...current,
+          [marked.id]: current[marked.id] ?? { state: "running" },
+        }));
         setRunningSessions((current) => {
           const index = current.findIndex((item) => item.id === marked.id);
           if (index === -1) return [marked, ...current];
@@ -1250,6 +1320,119 @@ function Workspace({
     }
   }
 
+  useEffect(() => {
+    if (!status.unlocked) return;
+    let cancelled = false;
+    let unlisten: { unregister: () => Promise<void> } | undefined;
+    void onAction((notification) => {
+      const extra = notification.extra as
+        | { runningSessionId?: string }
+        | undefined;
+      const id = extra?.runningSessionId;
+      if (!id) return;
+      const session = runningSessionsRef.current.find((s) => s.id === id);
+      if (!session) return;
+      void getCurrentWindow()
+        .setFocus()
+        .catch(() => undefined);
+      void reattachSession(session);
+    }).then((listener) => {
+      if (cancelled) {
+        void listener.unregister();
+        return;
+      }
+      unlisten = listener;
+    });
+    return () => {
+      cancelled = true;
+      void unlisten?.unregister();
+    };
+    // reattachSession closes over projects — refresh when unlocked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status.unlocked, projects]);
+    const badge = runningSessions.filter((session) => {
+      const state = sessionAttention[session.id]?.state;
+      return state === "waiting" || state === "failed";
+    }).length;
+    void setDockBadge(badge).catch(() => undefined);
+  }, [status.unlocked, runningSessions, sessionAttention]);
+
+  useEffect(() => {
+    if (!status.unlocked || runningSessions.length === 0) return;
+
+    let cancelled = false;
+    async function poll(): Promise<void> {
+      const byHost = new Map<string, string[]>();
+      for (const session of runningSessionsRef.current) {
+        const list = byHost.get(session.hostId) ?? [];
+        list.push(session.muxSession);
+        byHost.set(session.hostId, list);
+      }
+      for (const [hostId, muxSessions] of byHost) {
+        if (cancelled) return;
+        const watches = await pollSessionWatches(hostId, muxSessions).catch(
+          () => [],
+        );
+        if (cancelled || watches.length === 0) continue;
+        setSessionAttention((current) => {
+          let next = current;
+          for (const watch of watches) {
+            const session = runningSessionsRef.current.find(
+              (s) => s.muxSession === watch.muxSession && s.hostId === hostId,
+            );
+            if (!session) continue;
+            // Skip detached poll while this session is actively attached —
+            // attached BEL/OSC path owns the signal.
+            const attached = [...ptyToRunning.current.entries()].some(
+              ([, runningId]) => runningId === session.id,
+            );
+            if (attached) continue;
+            if (!watch.watchSupported) {
+              const merged = mergeAttention(
+                next[session.id],
+                {
+                  state: next[session.id]?.state ?? "running",
+                  noWatch: true,
+                  message: watch.message ?? undefined,
+                },
+                "tmux",
+              );
+              if (next === current) next = { ...current };
+              next[session.id] = merged;
+              continue;
+            }
+            if (watch.alert === "waiting") {
+              const prev = next[session.id];
+              const merged = mergeAttention(
+                prev,
+                { state: "waiting", noWatch: false },
+                "tmux",
+              );
+              if (prev?.state !== "waiting") {
+                void maybeNotifyAttention({
+                  state: "waiting",
+                  title: session.projectName,
+                  body: "Detached session needs attention",
+                  runningSessionId: session.id,
+                });
+              }
+              if (next === current) next = { ...current };
+              next[session.id] = merged;
+            }
+          }
+          return next;
+        });
+      }
+    }
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [status.unlocked, runningSessions]);
+
   async function killRunningSession(
     session: RunningSessionSummaryDto,
   ): Promise<void> {
@@ -1257,6 +1440,15 @@ function Workspace({
     setRunningSessions((current) =>
       current.filter((item) => item.id !== session.id),
     );
+    setSessionAttention((current) => {
+      if (!(session.id in current)) return current;
+      const next = { ...current };
+      delete next[session.id];
+      return next;
+    });
+    for (const [ptyId, runningId] of [...ptyToRunning.current.entries()]) {
+      if (runningId === session.id) ptyToRunning.current.delete(ptyId);
+    }
     try {
       const openTab = tabsRef.current.find(
         (tab) => tab.projectId === session.projectId,
@@ -1429,6 +1621,7 @@ function Workspace({
     outputHandlers.current.delete(sessionId);
     transcripts.current.delete(sessionId);
     lastExitCodes.current.delete(sessionId);
+    ptyToRunning.current.delete(sessionId);
     if (tab?.kind === "terminal" || tab?.kind === "local") {
       if (tab.projectId) {
         await persistProjectScrollback(sessionId, tab.projectId);
@@ -1754,6 +1947,7 @@ function Workspace({
             hosts={hosts}
             projects={projects}
             runningSessions={runningSessions}
+            sessionAttention={sessionAttention}
             openTabs={tabs}
             activeTabId={activeId}
             collapsed={sidebarCollapsed}
@@ -1799,6 +1993,7 @@ function Workspace({
               hosts={hosts}
               projects={projects}
               runningSessions={runningSessions}
+              sessionAttention={sessionAttention}
               openHostIds={openHostIds}
               error={error}
               connectingHostId={connectingHostId}

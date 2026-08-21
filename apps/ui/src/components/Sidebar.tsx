@@ -21,6 +21,11 @@ import type {
   RunningSessionSummaryDto,
 } from "../lib/ipc";
 import { cn } from "../lib/cn";
+import {
+  attentionChipClass,
+  attentionLabel,
+  type SessionAttention,
+} from "../lib/sessionAttention";
 import { HostAvatar, DEFAULT_HOST_COLOR } from "./HostAvatar";
 import type { TabDescriptor } from "./TabBar";
 import { IconButton } from "./ui/Button";
@@ -35,6 +40,7 @@ interface SidebarProps {
   hosts: HostSummaryDto[];
   projects: ProjectSummaryDto[];
   runningSessions: RunningSessionSummaryDto[];
+  sessionAttention?: Record<string, SessionAttention>;
   /** Open tabs in this window (Workspace session tree). */
   openTabs: TabDescriptor[];
   activeTabId?: string;
@@ -68,6 +74,7 @@ export function Sidebar({
   hosts,
   projects,
   runningSessions,
+  sessionAttention,
   openTabs,
   activeTabId,
   collapsed,
@@ -217,6 +224,7 @@ export function Sidebar({
                 <RunningRow
                   key={session.id}
                   session={session}
+                  attention={sessionAttention?.[session.id]}
                   opening={openingProjectId === session.projectId}
                   onReattach={onReattach}
                   onEnd={onEndSession}
@@ -526,18 +534,21 @@ function OpenTabRow({
 
 function RunningRow({
   session,
+  attention,
   opening,
   onReattach,
   onEnd,
   agentLabel,
 }: {
   session: RunningSessionSummaryDto;
+  attention?: SessionAttention;
   opening: boolean;
   onReattach: (session: RunningSessionSummaryDto) => void;
   onEnd: (session: RunningSessionSummaryDto) => void;
   agentLabel: (agentId: string | null | undefined) => string;
 }): React.JSX.Element {
   const agent = agentLabel(session.agentId);
+  const state = attention?.state ?? "running";
   return (
     <div className="group relative flex items-center rounded-md transition-colors hover:bg-hover focus-within:bg-hover">
       <button
@@ -550,8 +561,20 @@ function RunningRow({
           <Radio size={14} />
         </span>
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-ui font-medium text-fg">
-            {session.projectName}
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-ui font-medium text-fg">
+              {session.projectName}
+            </span>
+            <span
+              className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-medium tracking-wide uppercase ${attentionChipClass(state)}`}
+              title={
+                attention?.noWatch
+                  ? (attention.message ?? "no watch on this host")
+                  : attention?.message
+              }
+            >
+              {attention?.noWatch ? "no watch" : attentionLabel(state)}
+            </span>
           </span>
           <span className="truncate text-micro text-fg-subtle">
             {opening

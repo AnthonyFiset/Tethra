@@ -33,6 +33,9 @@ import {
   getLoginShell,
   getMaterialPref,
   getTerminalBell,
+  getNotifyDone,
+  getNotifyFailed,
+  getNotifyWaiting,
   getTerminalCopyOnSelect,
   getTerminalCursorBlink,
   getTerminalCursorStyle,
@@ -51,6 +54,9 @@ import {
   setLoginShell,
   setMaterialPref,
   setTerminalBell,
+  setNotifyDone,
+  setNotifyFailed,
+  setNotifyWaiting,
   setTerminalCopyOnSelect,
   setTerminalCursorBlink,
   setTerminalCursorStyle,
@@ -142,7 +148,7 @@ const SECTIONS: Array<{
     id: "agents",
     label: "Agents",
     icon: <Bot size={14} />,
-    keywords: "claude codex aider catalog byok inject",
+    keywords: "claude codex aider catalog byok inject notify notification waiting",
   },
   {
     id: "keyboard",
@@ -877,12 +883,55 @@ function AgentsSection({
 }): React.JSX.Element {
   const active = agents.filter((agent) => agent.status !== "deprecated");
   const deprecated = agents.filter((agent) => agent.status === "deprecated");
+  const [notifyWaiting, setWaiting] = useState(() => getNotifyWaiting());
+  const [notifyDone, setDone] = useState(() => getNotifyDone());
+  const [notifyFailed, setFailed] = useState(() => getNotifyFailed());
   return (
     <div className="flex flex-col gap-3">
       <p className="m-0 text-micro text-fg-muted">
         Bundled catalog. Bind an Assist key on a project to inject{" "}
         <code className="font-mono">byokEnv</code> at launch.
       </p>
+      <div className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-3">
+        <span className="text-ui font-medium text-fg">Notifications</span>
+        <p className="m-0 text-micro text-fg-muted">
+          Desktop alerts when a running agent needs you. Defaults: waiting and
+          failed on, done off.
+        </p>
+        <label className="flex items-center gap-2 text-ui text-fg">
+          <input
+            type="checkbox"
+            checked={notifyWaiting}
+            onChange={(event) => {
+              setWaiting(event.target.checked);
+              setNotifyWaiting(event.target.checked);
+            }}
+          />
+          Notify on waiting
+        </label>
+        <label className="flex items-center gap-2 text-ui text-fg">
+          <input
+            type="checkbox"
+            checked={notifyFailed}
+            onChange={(event) => {
+              setFailed(event.target.checked);
+              setNotifyFailed(event.target.checked);
+            }}
+          />
+          Notify on failed
+        </label>
+        <label className="flex items-center gap-2 text-ui text-fg">
+          <input
+            type="checkbox"
+            checked={notifyDone}
+            onChange={(event) => {
+              setDone(event.target.checked);
+              setNotifyDone(event.target.checked);
+            }}
+          />
+          Notify on done
+        </label>
+      </div>
       <ul className="m-0 flex list-none flex-col gap-1 p-0">
         {active.map((agent) => (
           <li

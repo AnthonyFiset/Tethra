@@ -165,6 +165,33 @@ mod tests {
     }
 
     #[test]
+    fn claude_and_codex_use_native_installers() {
+        let claude = agent_preset_by_id("claude-code").unwrap().unwrap();
+        assert!(
+            claude
+                .install
+                .for_platform("linux")
+                .unwrap()
+                .contains("claude.ai/install.sh")
+        );
+        assert!(
+            claude
+                .install
+                .for_platform("windows")
+                .unwrap()
+                .contains("claude.ai/install.ps1")
+        );
+        let codex = agent_preset_by_id("codex").unwrap().unwrap();
+        assert!(
+            codex
+                .install
+                .for_platform("macos")
+                .unwrap()
+                .contains("chatgpt.com/codex/install.sh")
+        );
+    }
+
+    #[test]
     fn antigravity_install_uses_official_script() {
         let agy = agent_preset_by_id("antigravity").unwrap().unwrap();
         assert!(

@@ -18,6 +18,10 @@ import type {
 } from "../lib/ipc";
 import { cn } from "../lib/cn";
 import { HostAvatar, DEFAULT_HOST_COLOR } from "./HostAvatar";
+import {
+  attentionChipClass,
+  attentionLabel,
+} from "../lib/sessionAttention";
 import { Logo } from "./Logo";
 import { Button, IconButton } from "./ui/Button";
 import {
@@ -38,6 +42,7 @@ interface LauncherProps {
   hosts: HostSummaryDto[];
   projects: ProjectSummaryDto[];
   runningSessions: RunningSessionSummaryDto[];
+  sessionAttention?: Record<string, import("../lib/sessionAttention").SessionAttention>;
   /** Host ids that currently have an open Workspace tab. */
   openHostIds?: ReadonlySet<string>;
   error?: string;
@@ -68,6 +73,7 @@ export function Launcher({
   hosts,
   projects,
   runningSessions,
+  sessionAttention,
   openHostIds,
   error,
   connectingHostId,
@@ -227,8 +233,25 @@ export function Launcher({
                           <span className="truncate text-ui font-medium text-fg">
                             {session.projectName}
                           </span>
-                          {/* Reserved for v0.4.0 waiting/done chip */}
-                          <span className="ml-auto shrink-0" aria-hidden />
+                          {(() => {
+                            const attention = sessionAttention?.[session.id];
+                            const state = attention?.state ?? "running";
+                            return (
+                              <span
+                                className={`ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase ${attentionChipClass(state)}`}
+                                title={
+                                  attention?.noWatch
+                                    ? (attention.message ??
+                                      "no watch on this host")
+                                    : attention?.message
+                                }
+                              >
+                                {attention?.noWatch
+                                  ? "no watch"
+                                  : attentionLabel(state)}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <span className="truncate text-micro text-fg-muted">
                           {agentLabel(session.agentId)} · {session.hostLabel}

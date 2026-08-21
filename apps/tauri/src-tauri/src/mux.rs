@@ -198,6 +198,21 @@ fn install_for(tool: &str, platform: &str, has_brew: bool) -> Option<(String, St
     }
 }
 
+fn node_install_command(platform: &str, has_brew: bool) -> String {
+    match platform {
+        "macos" if has_brew => "brew install node".into(),
+        "macos" => {
+            "curl -fsSL https://fnm.vercel.app/install | bash && fnm install --lts".into()
+        }
+        "windows" => {
+            "winget install OpenJS.NodeJS.LTS".into()
+        }
+        _ => {
+            "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs".into()
+        }
+    }
+}
+
 fn reason_for(tool: &str) -> String {
     match tool {
         "tmux" => "Keeps project sessions alive across disconnects and quitting Tethra.".into(),
@@ -238,6 +253,8 @@ echo uname=$(uname -s 2>/dev/null || echo unknown)
 if command -v tmux >/dev/null 2>&1; then echo tmux=1; else echo tmux=0; fi
 if command -v zellij >/dev/null 2>&1; then echo zellij=1; else echo zellij=0; fi
 if command -v brew >/dev/null 2>&1; then echo brew=1; else echo brew=0; fi
+if command -v node >/dev/null 2>&1; then echo node=1; else echo node=0; fi
+if command -v npm >/dev/null 2>&1; then echo npm=1; else echo npm=0; fi
 {extras}
 echo TETHRA_PROBE_END
 "#
@@ -249,6 +266,8 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
     let mut has_tmux = false;
     let mut has_zellij = false;
     let mut has_brew = false;
+    let mut has_node = false;
+    let mut has_npm = false;
     let mut cmd_hits: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
 
     let mut in_block = false;
@@ -270,6 +289,8 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
                 "tmux" => has_tmux = v == "1",
                 "zellij" => has_zellij = v == "1",
                 "brew" => has_brew = v == "1",
+                "node" => has_node = v == "1",
+                "npm" => has_npm = v == "1",
                 other if other.starts_with("cmd_") => {
                     cmd_hits.insert(other[4..].to_string(), v == "1");
                 }
@@ -309,6 +330,18 @@ fn parse_probe(stdout: &str, want_tools: &[String]) -> ToolsProbeDto {
             continue;
         }
         if let Some((id, label, cmd)) = install_for(tool, &platform, has_brew) {
+            // npm-based installs need Node first when the host has neither.
+            let needs_npm = cmd.contains("npm install");
+            if needs_npm && !has_npm && !has_node && !missing.iter().any(|m| m.id == "node") {
+                missing.push(MissingToolDto {
+                    id: "node".into(),
+                    label: "Node.js".into(),
+                    reason: format!(
+                        "Required before installing {label} (npm is missing on this host)."
+                    ),
+                    install_command: node_install_command(&platform, has_brew),
+                });
+            }
             missing.push(MissingToolDto {
                 id,
                 label,
@@ -701,9 +734,210 @@ pub async fn prune_stale_running_sessions(
     Ok(removed)
 }
 
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+pub struct SessionWatchDto {
+    mux_session: String,
+    /// waiting | none
+    alert: String,
+    /// false when tmux is missing/too old for hooks — UI shows "no watch".
+    watch_supported: bool,
+    message: Option<String>,
+}
+
+fn sanitize_mux_name(name: &str) -> Result<&str, String> {
+    let name = name.trim();
+    if name.is_empty() || name.contains('\'') || name.contains('\n') || name.contains('"') {
+        return Err("invalid mux session name".into());
+    }
+    Ok(name)
+}
+
+fn mux_watch_script(sessions: &[String]) -> String {
+    let mut names = String::new();
+    for s in sessions {
+        names.push_str(&format!(" '{s}'"));
+    }
+    format!(
+        r#"
+for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+  [ -d "$_p" ] || continue
+  case ":$PATH:" in *":$_p:"*) ;; *) PATH="$_p:$PATH" ;; esac
+done
+export PATH
+echo TETHRA_WATCH_BEGIN
+if ! command -v tmux >/dev/null 2>&1; then
+  echo tmux=0
+  echo TETHRA_WATCH_END
+  exit 0
+fi
+echo tmux=1
+_ver=$(tmux -V 2>/dev/null | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+echo tmux_major=${{_ver:-0}}
+# Idempotent global hooks (same command each run — no stack).
+if [ "${{_ver:-0}}" -ge 2 ] 2>/dev/null; then
+  mkdir -p "$HOME/.tethra/alerts"
+  tmux -L tethra set-hook -g alert-bell 'run-shell "mkdir -p \"$HOME/.tethra/alerts\"; printf bell > \"$HOME/.tethra/alerts/#{{session_name}}\""' 2>/dev/null || true
+  tmux -L tethra set-hook -g alert-silence 'run-shell "mkdir -p \"$HOME/.tethra/alerts\"; printf silence > \"$HOME/.tethra/alerts/#{{session_name}}\""' 2>/dev/null || true
+  echo hooks=1
+else
+  echo hooks=0
+fi
+for _s in{names}; do
+  [ -z "$_s" ] && continue
+  _alert=none
+  if [ -f "$HOME/.tethra/alerts/$_s" ]; then
+    _alert=$(tr -d '\n' < "$HOME/.tethra/alerts/$_s" 2>/dev/null || echo bell)
+    rm -f "$HOME/.tethra/alerts/$_s"
+  fi
+  if tmux -L tethra has-session -t "$_s" 2>/dev/null; then
+    tmux -L tethra set-option -t "$_s" monitor-bell on 2>/dev/null || true
+    tmux -L tethra set-window-option -t "$_s" monitor-silence 30 2>/dev/null || true
+    _bell=$(tmux -L tethra list-windows -t "$_s" -F '#{{window_bell_flag}}' 2>/dev/null | grep -c '^1$' || true)
+    _sil=$(tmux -L tethra list-windows -t "$_s" -F '#{{window_silence_flag}}' 2>/dev/null | grep -c '^1$' || true)
+    if [ "$_bell" != "0" ] && [ -n "$_bell" ]; then _alert=bell; fi
+    if [ "$_sil" != "0" ] && [ -n "$_sil" ] && [ "$_alert" = "none" ]; then _alert=silence; fi
+    echo "session=$_s alive=1 alert=$_alert"
+  else
+    echo "session=$_s alive=0 alert=none"
+  fi
+done
+echo TETHRA_WATCH_END
+"#
+    )
+}
+
+fn parse_watch(stdout: &str, want: &[String]) -> Vec<SessionWatchDto> {
+    let mut tmux = false;
+    let mut hooks = false;
+    let mut major = 0u32;
+    let mut found: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut in_block = false;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line == "TETHRA_WATCH_BEGIN" {
+            in_block = true;
+            continue;
+        }
+        if line == "TETHRA_WATCH_END" {
+            break;
+        }
+        if !in_block {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("session=") {
+            let mut parts = rest.split_whitespace();
+            let Some(name) = parts.next() else {
+                continue;
+            };
+            let mut alert = "none".to_string();
+            for part in parts {
+                if let Some((k, v)) = part.split_once('=')
+                    && k == "alert"
+                {
+                    alert = v.to_string();
+                }
+            }
+            found.insert(name.to_string(), alert);
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            match k {
+                "tmux" => tmux = v == "1",
+                "hooks" => hooks = v == "1",
+                "tmux_major" => major = v.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+    }
+
+    let watch_supported = tmux && (hooks || major >= 2);
+    want.iter()
+        .map(|name| {
+            let alert = found.get(name).cloned().unwrap_or_else(|| "none".into());
+            let waiting = alert == "bell" || alert == "silence";
+            SessionWatchDto {
+                mux_session: name.clone(),
+                alert: if waiting {
+                    "waiting".into()
+                } else {
+                    "none".into()
+                },
+                watch_supported,
+                message: if !tmux {
+                    Some("no watch on this host".into())
+                } else if !watch_supported {
+                    Some("no watch on this host (tmux too old)".into())
+                } else {
+                    None
+                },
+            }
+        })
+        .collect()
+}
+
+/// Ensure tmux alert hooks and poll pending alerts for the given sessions on one host.
+#[tauri::command]
+pub async fn poll_session_watches(
+    state: State<'_, AppState>,
+    host_id: String,
+    mux_sessions: Vec<String>,
+) -> Result<Vec<SessionWatchDto>, String> {
+    let mut clean = Vec::new();
+    for s in &mux_sessions {
+        clean.push(sanitize_mux_name(s)?.to_string());
+    }
+    if clean.is_empty() {
+        return Ok(vec![]);
+    }
+    let script = mux_watch_script(&clean);
+    let host_uuid = parse_uuid(&host_id, "host")?;
+    state
+        .approval_gate
+        .approve(&Action::Exec {
+            host_id: host_uuid,
+            command: "poll_session_watches".into(),
+        })
+        .await
+        .map_err(redacted_error)?;
+    let result = state
+        .manager
+        .exec(host_uuid, &script)
+        .await
+        .map_err(redacted_error)?;
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    Ok(parse_watch(&stdout, &clean))
+}
+
+#[tauri::command]
+pub async fn set_dock_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let badge = if count == 0 {
+        None
+    } else {
+        Some(i64::from(count))
+    };
+    window.set_badge_count(badge).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        let label = if count == 0 {
+            None
+        } else {
+            Some(count.to_string())
+        };
+        let _ = window.set_badge_label(label);
+    }
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub fn export_bindings(cfg: &ts_rs::Config) {
     MuxEnsureResultDto::export_all(cfg).unwrap();
     MissingToolDto::export_all(cfg).unwrap();
     ToolsProbeDto::export_all(cfg).unwrap();
+    SessionWatchDto::export_all(cfg).unwrap();
 }
