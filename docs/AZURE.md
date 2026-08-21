@@ -25,6 +25,7 @@ subscription identifiers belong in this file — see hard rule 12._
   ([`ROADMAP.md`](../ROADMAP.md) Part 5, Phase 1).
 - The one legitimate product use for the credits is **hosting the Phase 2
   ciphertext-only sync prototype**.
-- **Azure Trusted Signing** ($9.99/mo, Windows code signing) is restricted to
-  US/CA/EU/UK registered entities — verify eligibility before planning around it
-  ([`ROADMAP.md`](../ROADMAP.md) §3.4).
+- **Azure Artifact Signing** (renamed from Trusted Signing; $9.99/mo, Windows
+  code signing) accepts individual developers in the US or Canada, and orgs in
+  US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL. Identity validation takes 1–20 business
+  days ([`ROADMAP.md`](../ROADMAP.md) §3.4).

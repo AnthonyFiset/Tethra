@@ -1,7 +1,8 @@
 # Tethra roadmap
 
-_Revision 6 — 2026-08-21 (v0.3.0 shipped; plan focuses v0.4.0). Current plan.
-Filename stays `ROADMAP.md`; bump the revision line, not the name._
+_Revision 6 — 2026-08-21 (v0.3.1 shipped, auto-update proven; plan focuses
+v0.4.0). Current plan. Filename stays `ROADMAP.md`; bump the revision line, not
+the name._
 
 _Supersedes archived `docs/archive/ROADMAP-v2.md` / `ROADMAP-v3.md`._
 
@@ -68,8 +69,10 @@ real empty states. Brief: [`docs/archive/NEXT-v0.3.0.md`](docs/archive/NEXT-v0.3
   matrix, auto-publish on tag, no mirror, no `dangerousInsecureTransportProtocol`
 - ThinkPad mirror retired; it is now purely a vault sync server
 
-**Not yet proven:** end-to-end auto-update. All machines were installed by hand
-because of the rotation. The v0.2.11 → v0.3.0 update is the first real test.
+**Proven 2026-08-21:** end-to-end auto-update over the GitHub endpoint with the
+rotated key — v0.2.11 machines updated to v0.3.1 cleanly. (The `v0.3.0` tag
+exists but never published installers; its release run stalled and v0.3.1 was
+stamped on the same tree.)
 
 ---
 
@@ -162,10 +165,11 @@ Also ship plain terminal search (⌘F, `@xterm/addon-search`) — currently miss
 ### 3.4 Code signing
 
 macOS: Apple Developer $99/yr, Developer ID + notarization via `tauri-action`.
-Windows: check **Azure Trusted Signing** jurisdiction eligibility (US/CA/EU/UK
-registered entities) at $9.99/mo; if ineligible, a Certum OV cert ~$99/yr is
-issued to individuals worldwide. Neither skips SmartScreen reputation warmup
-except EV.
+Windows: **Azure Artifact Signing** (renamed from Trusted Signing, 2026) at
+$9.99/mo — individual developers in the **US or Canada** are eligible, orgs in
+US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL. Identity validation takes 1–20 business
+days, so start it early. Fallback: Certum OV cert ~$99/yr. Neither skips
+SmartScreen reputation warmup except EV.
 
 ### 3.5 Windows as a first-class target
 
@@ -187,7 +191,8 @@ macOS traffic-light inset, so one crate covers both.
 | Version | Contents | Why |
 |---|---|---|
 | **v0.2.11** | Paste/Enter, tmux config, copy sweep | ✅ Shipped |
-| **v0.3.0** | Azure OpenAI preset, BYOK injection, Launcher Running, Settings fill/hide, Track D design | ✅ Shipped |
+| **v0.3.0** | Azure OpenAI preset, BYOK injection, Launcher Running, Settings fill/hide, Track D design | ✅ Tagged; installers shipped as v0.3.1 |
+| **v0.3.1** | Version re-stamp of v0.3.0; first proven auto-update | ✅ Shipped |
 | **v0.4.0** | Agent notifications, SSH agent forwarding, code signing, port forwarding, SFTP recursive, terminal search | Table stakes + wedge notifications |
 | **v0.5.0** | Windows native chrome, command history search | Platform quality |
 | **v0.6.0** | Live ProxyJump, FleetExec, snippets, cross-device scrollback | Fleet features |
@@ -240,7 +245,8 @@ or a payment. Preserve the seam (`Transport::Managed`) either way.
 ## Part 7 — Open decisions
 
 - **Apple Developer $99/yr** — gates macOS adoption by anyone but you
-- **Windows cert path** — depends on Trusted Signing jurisdiction eligibility
+- **Windows cert path** — resolved 2026-08-21: Azure Artifact Signing accepts
+  individual developers in Canada; start identity validation before v0.4.0
 - **Public catalog hosting** — bundled JSON only today; a public URL means
   strangers get new agent presets without waiting for a release
 - **Zellij parity** — supported as a fallback; tmux gets all the attention
