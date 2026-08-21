@@ -1,3 +1,5 @@
+> **Archived.** Status folded into HANDOFF / ROADMAP — do not maintain a parallel board.
+
 # Tethra — Project Status
 
 _Snapshot for handoff / reassessment. Last updated **2026-08-07** after **v0.2.9**.

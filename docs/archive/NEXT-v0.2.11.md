@@ -1,3 +1,5 @@
+> **Completed.** Archived task brief.
+
 # NEXT — v0.2.11: input correctness, tmux, copy sweep
 
 > **Scope:** this release only. Do not start notifications, BYOK, Windows chrome,

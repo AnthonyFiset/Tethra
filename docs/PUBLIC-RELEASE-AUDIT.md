@@ -25,5 +25,5 @@ _Last updated 2026-08-21. Amendments: mirror retired; GitHub-only updater._
 
 ## Intentionally skipped
 
-- Recovering ThinkPad mirror URL (§1 of NEXT-5-revised)
+- Recovering ThinkPad mirror URL (archived updater cutover brief)
 - Keeping mirror as second endpoint / §7 flag decision — mirror retired

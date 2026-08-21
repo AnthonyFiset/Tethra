@@ -11,12 +11,10 @@ Desktop-first (macOS / Windows / Linux). Architected so mobile can be a port of
 
 ## Install
 
-Prebuilt installers ship on
-[GitHub Releases](https://github.com/AnthonyFiset/Tethra/releases)
-(once the repository is public and Release CI publishes them).
+Prebuilt installers: [GitHub Releases](https://github.com/AnthonyFiset/Tethra/releases).
 
-Until then, build from source (below). macOS Gatekeeper may require
-`xattr -cr /Applications/Tethra.app` for unsigned local builds.
+macOS Gatekeeper may require `xattr -cr /Applications/Tethra.app` for unsigned
+builds until Developer ID signing lands.
 
 ## Build from source
 
@@ -38,7 +36,7 @@ cargo build -p tethra-sync-server --release
 ./target/release/tethra-sync-server setup
 ```
 
-See [`docs/M6.md`](docs/M6.md) and [`docs/UPDATES.md`](docs/UPDATES.md).
+See [`docs/milestones/M6.md`](docs/milestones/M6.md) and [`docs/UPDATES.md`](docs/UPDATES.md).
 
 ## Threat model (short)
 
@@ -55,8 +53,9 @@ Fuller notes: [`SECURITY.md`](SECURITY.md).
 
 | Doc | Role |
 |---|---|
-| [`HANDOFF.md`](HANDOFF.md) | Current engineering brief |
-| [`ROADMAP-v3.md`](ROADMAP-v3.md) | Canonical plan |
+| [`ROADMAP.md`](ROADMAP.md) | What’s done / what’s next (**only** status board) |
+| [`NEXT.md`](NEXT.md) | Current engineering task |
+| [`HANDOFF.md`](HANDOFF.md) | Agent brief: landmines, verify, release |
 | [`PROJECT.md`](PROJECT.md) | Architecture + hard rules |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute (catalogs first) |
 

@@ -1,164 +1,227 @@
-# NEXT — Prepare Tethra for public release
+# NEXT — v0.3.0: docs, then make it feel finished
 
-> **Scope:** this task only. Do not start M13, design work, or feature work.
-> Stop when §6 acceptance passes and report findings.
-> Context: [`ROADMAP-v4.md`](ROADMAP-v4.md), [`PROJECT.md`](PROJECT.md), [`HANDOFF.md`](HANDOFF.md).
-
-**Goal:** get `AnthonyFiset/Tethra` safe to flip public, then switch the updater
-off the ThinkPad mirror and onto GitHub Releases.
-
-**Why now:** the private repo blocks three things at once — the GitHub updater
-endpoint, code signing, and catalogs-as-PRs. One decision unblocks all of them.
+> **Replaces the earlier `NEXT-v0.3.0.md`.** Do Phase A before Phase B.
+> Do **not** start agent notifications, SSH agent forwarding, port forwarding, or
+> Windows chrome — those are v0.4.0+.
+> Baseline: `v0.2.11`, repo public, GitHub-only updates.
 
 ---
 
-## 1. Audit history — do this first, report before changing anything
+# PHASE A — Documentation
 
-**Making a repo public exposes the entire git history, not just `HEAD`.** A secret
-deleted later is still readable in the commit that added it. Audit `git log`, not
-the working tree.
+## A0. The actual problem
 
-### 1.1 Updater signing key — highest priority
+Three files each carry a milestone board — `HANDOFF.md`, `STATUS.md`,
+`PROJECT.md` §12 — and they have drifted. HANDOFF currently says *"Canonical plan:
+ROADMAP-v3"* and *"Next feature work is M13 Fleet."* Both are wrong. An agent
+handed HANDOFF today would go build port forwarding.
 
-```bash
-git log --all --full-history -- '*.key' '*.pem' '*.p12' '*updater*'
-git log --all -p -S'PRIVATE KEY' --oneline
-git log --all -p -S'TAURI_SIGNING' --oneline
+**The fix is structural: one source of truth per fact.** Cleaning the text without
+removing the duplication just resets the clock on the same failure.
+
+| Fact | Lives in | Everywhere else |
+|---|---|---|
+| Architecture + hard rules | `PROJECT.md` | link only |
+| What's done / what's next | `ROADMAP.md` | link only |
+| Current task | `NEXT.md` | link only |
+| How to build/run/release | `HANDOFF.md` | link only |
+| Historical detail | `docs/milestones/M*.md` | link only |
+
+`PROJECT.md` §12 (milestone summary) and every milestone board outside
+`ROADMAP.md` get **deleted and replaced with a link.**
+
+## A1. Target layout
+
+```
+/
+  README.md            what it is, install, build, threat model, doc map
+  LICENSE
+  SECURITY.md
+  CONTRIBUTING.md
+  PROJECT.md           architecture + hard rules ONLY (no milestone board)
+  ROADMAP.md           ← current plan. NOT versioned in the filename.
+  HANDOFF.md           agent brief: how to work here, landmines, verify, release
+docs/
+  UPDATES.md
+  PUBLIC-RELEASE-AUDIT.md
+  milestones/          M1.md … M12.5.md
+  archive/             superseded roadmaps + completed NEXT files
 ```
 
-This one is categorically different from other secrets. Installed clients verify
-update payloads against its public half — anyone with the private key can sign a
-`latest.json` that every installed Tethra downloads and runs. It is a supply-chain
-compromise, not a leak.
+**Root holds seven files. No more.**
 
-**If it appears anywhere in history: STOP and report.** Do not proceed to §3.
-Rotation requires shipping a release signed with the old key that carries the new
-public key, before the old key is burned.
+## A2. Moves
 
-### 1.2 Scanners over full history
+| From | To | Note |
+|---|---|---|
+| `ROADMAP-v5.md` | `ROADMAP.md` | **Current plan.** Add `_Revision 5 — 2026-08-21_` at top |
+| `ROADMAP-v2.md`, `ROADMAP-v3.md`, `ROADMAP-v4.md` | `docs/archive/` | Add a one-line "superseded by ROADMAP.md" header to each |
+| `NEXT.md`, `NEXT-5-revised.md`, `NEXT-v0_2_11.md` | `docs/archive/` | Completed |
+| `STATUS.md` | `docs/archive/STATUS-v0.2.9.md` | See A3 |
+| `docs/M*.md` | `docs/milestones/` | Fix inbound links |
+| *(this file)* | `NEXT.md` at root | The current task is always `NEXT.md` |
+
+## A3. Retire STATUS.md
+
+`STATUS.md` and `HANDOFF.md` overlap by roughly 70% and that overlap is where the
+drift lives. Fold anything unique from STATUS into HANDOFF or the relevant
+milestone doc, then archive it. Do **not** maintain both.
+
+## A4. Rewrite HANDOFF.md
+
+Keep only what is genuinely handoff-shaped:
+
+1. One-line product + wedge
+2. Pointer to `ROADMAP.md` for status — **no milestone table**
+3. Architecture summary + hard rules pointer to `PROJECT.md`
+4. **Critical UI paths** table (keep — this is the most valuable thing in it)
+5. **Known landmines** (keep, updated — see A5)
+6. Verify / smoke commands
+7. Release flow (GitHub-only; note the 2026-08-20 key rotation)
+8. Doc map
+
+Update the header: `main` @ current commit, tag `v0.2.11`, repo public.
+
+## A5. Update landmine 1 with the v0.2.11 finding
+
+> **1. Device-report filter and insert gates.** xterm answers DA / OSC 10–11 via
+> `onData`. **Paste and insert are different operations.** Insert buttons arm
+> gates (`armGates()` → `blurAll()` + suppress); **paste must not** —
+> `pasteIntoTerminal` calling `armGates()` was the v0.2.11 bug: it stole focus and
+> dropped the first Enter for both ⌘V and right-click. `looksLikeDeviceReport`
+> must never classify lone C0 (`\r` / `\t` / `\x03`) as a report. See v0.2.8–v0.2.11.
+
+## A6. Fix stale references everywhere
 
 ```bash
-gitleaks detect --source . --log-opts="--all" --verbose
-trufflehog git file://. --json | jq 'select(.Verified==true)'
+rg -n 'ROADMAP-v[0-9]|STATUS\.md|M13 Fleet|NEXT-5|docs/M[0-9]' --glob '!docs/archive/**'
 ```
 
-Install via `brew` if missing. Report all findings; do not auto-remediate.
+Every hit outside `docs/archive/` must be updated. Particularly: `README.md` doc
+map still lists `ROADMAP-v3.md` as canonical.
 
-### 1.3 Real infrastructure in the tree
+## A7. Add the convention to CONTRIBUTING.md
 
-Known values that are likely present in fixtures, tests, or docs:
+> **Docs convention.** `ROADMAP.md` is the only place milestone status lives.
+> `NEXT.md` is always the current task; completed ones move to `docs/archive/`.
+> Roadmap revisions bump a header line, not the filename. Never duplicate a
+> milestone board.
 
-- `216.250.118.11` — **public IP with root user**. Highest priority to scrub.
-- `100.80.50.90`, `100.101.225.90` — Tailscale addresses
-- `anthonyfiset`, `Anthonys-MacBook-Pro`, `/Users/anthonyfiset/...`
-- Any tailnet hostnames in `crates/sync-server` config or docs
-
-```bash
-git grep -nI '216\.250\|100\.80\.50\|100\.101\.225\|anthonyfiset' -- . | head -80
-```
-
-### 1.4 Manual checks scanners miss
-
-- `crates/core/tests/docker-compose.yml` — SSH test credentials
-- `.github/workflows/*` — confirm secrets are `${{ secrets.X }}` refs only, never
-  inlined during past debugging
-- `.env`, `.envrc`, `*.local.*` — gitignored **and** never committed pre-ignore
-- `docs/` images — same disclosure risk as code
-- Vault test fixtures — any real blobs or dev master passwords
-
-**Deliverable for §1:** a written findings list. Nothing modified yet.
+**Commit Phase A on its own** before starting Phase B.
 
 ---
 
-## 2. Scrub the working tree
+# PHASE B — Features
 
-Replace real infrastructure with documentation-safe values:
+Everything here is visible daily. Mostly frontend and data — **no changes to
+`inject.ts` or `registry.ts` input paths.**
 
-- Hosts → `example.com`, `host.example`
-- IPs → RFC 5737 ranges: `192.0.2.0/24`, `198.51.100.0/24`
-- Usernames → `user`, `deploy`
-- Paths → `/home/user/...` or `$HOME/...`
+## B1. Azure OpenAI provider preset
 
-Keep it working: tests that need a live host should read from env vars with
-documented defaults, not hardcoded values.
+Add to `crates/core/data/assist_providers.json`. Data only.
+
+Azure OpenAI differs from vanilla OpenAI in three ways:
+
+- Per-resource base URL: `https://{resource}.openai.azure.com/openai/v1/`
+- Auth header is `api-key`, not `Authorization: Bearer`
+- Model identifier is a user-chosen **deployment name**, not a catalog ID — so
+  `GET /models` may behave differently
+
+If `OpenAiCompatible` can't express the header difference, extend the **preset
+schema**, not the code (hard rule: catalogs are data).
+
+**Never commit a key.** Preset is public; keys are local settings.
+
+> **Maintainer note, not a task:** Claude models in Microsoft Foundry are a
+> Marketplace partner offering and **cannot be paid for with Microsoft for
+> Startups credits** — credit-based subscriptions are explicitly excluded. Azure
+> OpenAI (first-party) works. Don't build anything assuming otherwise.
+
+## B2. BYOK injection at launch
+
+`byok_env` is stored and never used. Wire it up: at launch, resolve the project's
+bound provider key from the vault → map to the preset's `byok_env` names → inject
+into the agent process env.
+
+**Remote injection — choose deliberately and document:**
+
+- `VAR=secret cmd` keeps the key out of `argv`, but `/proc/PID/environ` is
+  readable by the same user on that host
+- **Never put a key in a tmux command line** — tmux stores and can display it
+- Stronger: write a `0600` env file, source it, unlink
+
+Surface which key a project is injecting, in the project UI.
+
+## B3. Launcher: Running first
+
+The hero promises *"Running agents stay alive in tmux"* and then shows Projects.
+There is no Running section.
+
+- Running → first section: agent, host, project, uptime, last activity, Attach / Kill
+- Nothing running → drop the tmux hero copy; show a quiet empty state
+
+Leave room in the row for a state chip — v0.4.0 notifications will fill it.
+
+## B4. Settings: fill or hide
+
+| Section | Minimum |
+|---|---|
+| Terminal | Font family/size/line height, ligatures, cursor style/blink, scrollback, copy-on-select, bell |
+| Appearance | Theme, accent, window material + opacity, density |
+| Keyboard | Full keymap, searchable |
+| Shell | Default shell, login-shell toggle, env overrides, integration mode |
+| Agents | Catalog, installed state, custom presets, BYOK bindings from B2 |
+| Advanced | Log level, catalog source, reset layout, export diagnostics |
+
+Hide anything still empty at the end. Style the browser-default blue focus ring on
+the nav. Every setting reachable from the palette by name.
+
+## B5. Design pass (M12.5 Track D)
+
+Ordered by impact per effort.
+
+**B5.1 — `Host.color` as ambient identity.** Highest value. Currently a 1px border
+nobody sees. Promote to: collapsed rail indicator, active tab underline, hairline
+along the top of the terminal viewport. You should know which machine you're on
+peripherally, without reading. Safety property, not decoration.
+
+**B5.2 — Reduce host-card button weight.** Three equal buttons × N hosts is a wall
+of chrome. Card itself clickable for the primary action; secondary actions on
+hover and in the context menu.
+
+**B5.3 — Fix type hierarchy.** The hero is larger than anything it introduces.
+Section headers do the navigational work. Shrink hero, strengthen sections.
+
+**B5.4 — Mono vs sans.** Machine strings (hosts, ports, paths, fingerprints,
+sizes) always mono. Human labels and prose sans. Inconsistent today.
+
+**B5.5 — Real empty states.** Zero projects → *New project* as a target. Zero
+hosts → *Import ~/.ssh/config* as the primary action.
+
+**B5.6 — Smaller.** Sidebar footer reassurance on first unlock only. Overflow menu
+entries become shortcuts *into* Settings, not a parallel surface. Tooltips with
+shortcuts on toolbar icons. Fix the Projects/Hosts vertical gap; align the host
+filter with its section header.
 
 ---
 
-## 3. Decide history strategy (ask before executing)
+## Acceptance
 
-Present both, recommend based on §1 findings:
+**Phase A**
+- [x] Root has exactly seven files
+- [x] `ROADMAP.md` is the only milestone board; PROJECT §12 replaced with a link
+- [x] `STATUS.md` archived, unique content folded into HANDOFF
+- [x] Landmine 1 records the paste-vs-insert distinction
+- [x] `rg` for stale references clean outside `docs/archive/`
+- [x] Docs convention in CONTRIBUTING
 
-**A — Fresh repo (recommended if anything sensitive is in history).** New public
-repo, working tree copied without `.git`, one initial commit. Archive the private
-repo — don't delete it; the history stays private and intact. A partial
-`git-filter-repo` scrub that misses one blob is worse than no scrub, because it
-produces false confidence.
+**Phase B**
+- [ ] Azure OpenAI: paste key → Test → model list → Assist works
+- [ ] BYOK injects locally and remotely; no key in a tmux command line
+- [ ] Launcher shows Running first; honest empty state
+- [ ] No empty Settings sections
+- [ ] Host color in rail, tab, viewport hairline
+- [ ] Paste → one Enter still works (v0.2.11 regression)
+- [ ] `scripts/ci-check.sh` green
 
-**B — Keep history** if §1 comes back clean.
-
-Either way, the old private repo is archived, never deleted.
-
----
-
-## 4. Add the public-repo files
-
-- **`LICENSE`** — ask which. Default recommendation **Apache-2.0** (patent grant,
-  permissive; MIT is fine if simpler is preferred).
-- **`SECURITY.md`** — disclosure contact, "best-effort response, no bounty",
-  supported versions.
-- **`README.md`** — what it is, the wedge (agent persistence + reattach), install,
-  build from source, and a short **threat model**: what the vault protects, what
-  it doesn't (a compromised endpoint reads your session regardless), private keys
-  stay device-local, sync server sees ciphertext only.
-- **`CONTRIBUTING.md`** — short. Point catalog additions at
-  `crates/core/data/agents.json` as the easiest first PR.
-
----
-
-## 5. Switch the updater to GitHub Releases
-
-Once public, `https://github.com/AnthonyFiset/Tethra/releases/latest/download/latest.json`
-resolves without auth. That removes the reason the ThinkPad mirror exists.
-
-1. Point `tauri-plugin-updater` endpoints at that URL.
-2. **Verify `tauri-plugin-updater` ≥ 2.10.0** — `latest.json` now emits
-   `{os}-{arch}-{installer}` keys and older plugin versions won't parse them.
-3. Convert Release CI to `tauri-action` with a platform matrix and
-   `releaseDraft: false` so publishing is automatic on a `v*` tag.
-4. macOS builds without an Apple cert need an **ad-hoc signing identity**, or
-   Apple Silicon downloads from GitHub get flagged as damaged.
-5. Reuse the existing `TAURI_SIGNING_PRIVATE_KEY` (unless §1.1 forced rotation).
-   Do not regenerate — installed clients will reject updates signed by a new key.
-6. Keep `tethra-sync-server`'s mirror working as a fallback; just stop making it
-   the primary path.
-
----
-
-## 6. Acceptance
-
-- [ ] `gitleaks` and `trufflehog` clean over full history
-- [ ] No real IPs, hostnames, usernames, or home paths in the tree
-- [ ] Updater key confirmed never committed (or rotation plan written)
-- [ ] `LICENSE`, `SECURITY.md`, `README.md`, `CONTRIBUTING.md` present
-- [ ] `scripts/ci-check.sh` passes
-- [ ] A test release builds and publishes via `tauri-action`
-- [ ] An installed client updates from the GitHub endpoint with no ThinkPad
-
----
-
-## 7. After flipping public (checklist for Anthony, not Cursor)
-
-Enable in repo settings: **secret scanning**, **push protection**, **Dependabot**,
-branch protection on `main` with required CI.
-
----
-
-## Do NOT do in this task
-
-- Do not commit or reference any API key, including Anthony's personal Azure /
-  OpenAI credentials. Personal provider config lives in local app settings and
-  gitignored files — **never** in `assist_providers.json` or any committed file.
-- Do not start M13, notifications, BYOK injection, or design work.
-- Do not run `git filter-repo` or BFG without explicit approval (§3).
-- Do not delete the private repo.
-- Do not regenerate the updater keypair without approval.
+Tag `v0.3.0`.

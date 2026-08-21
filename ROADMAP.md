@@ -1,7 +1,9 @@
-# Tethra roadmap — v5
+# Tethra roadmap
 
-_Full status and forward plan at `v0.2.10`. Supersedes [`ROADMAP-v4.md`](ROADMAP-v4.md)._
-_Written 2026-08-21, immediately after going public and cutting over to GitHub Releases._
+_Revision 5 — 2026-08-21 (updated for v0.2.11 / v0.3.0). Current plan. Filename
+stays `ROADMAP.md`; bump the revision line, not the name._
+
+_Supersedes archived `docs/archive/ROADMAP-v2.md` / `ROADMAP-v3.md`._
 
 ---
 
@@ -66,20 +68,22 @@ because of the rotation. v0.2.11 is the first real test.
 
 | Item | Severity | Where |
 |---|---|---|
-| Paste needs refocus + double Enter | 🐛 High — daily friction | v0.2.11 |
-| tmux swallows OSC 133 / OSC 52 (`allow-passthrough` unset) | 🐛 High — silently breaks blocks + remote clipboard in every persistent session | v0.2.11 |
-| tmux green status bar | Visual | v0.2.11 |
-| Roadmap language in UI | Visual | v0.2.11 |
-| **No SSH agent forwarding** | 🐛 High — see §3.3 | v0.3.0 |
-| BYOK env stored, never injected | Feature gap | v0.3.0 |
-| Settings sections thin (Shell/Keyboard/Agents/Advanced) | Feels broken | v0.3.0 |
-| Launcher promises Running, doesn't show it | Feels broken | v0.3.0 |
+| Paste needs refocus + double Enter | ✅ Fixed — paste must not arm insert gates | v0.2.11 |
+| tmux swallows OSC 133 / OSC 52 | ✅ Fixed — `-L tethra` + allow-passthrough | v0.2.11 |
+| tmux green status bar | ✅ Fixed (`status off`) | v0.2.11 |
+| Roadmap language in UI | ✅ Fixed | v0.2.11 |
+| **No SSH agent forwarding** | 🐛 High — see §3.3 | v0.4.0+ |
+| BYOK env stored, never injected | Feature gap | **v0.3.0** |
+| Settings sections thin (Shell/Keyboard/Agents/Advanced) | Feels broken | **v0.3.0** |
+| Launcher promises Running, doesn't show it | Feels broken | **v0.3.0** |
+| Azure OpenAI preset missing | Catalog gap | **v0.3.0** |
+| Host color underused; card weight; type hierarchy | Polish | **v0.3.0** (Track D) |
 | Unsigned installers (Gatekeeper/SmartScreen) | Adoption blocker | v0.4.0 |
 | No port forwarding | Table stakes | v0.4.0 |
+| Agent notifications (BEL / tmux hooks) | Highest-value wedge | v0.4.0 |
 | SFTP no recursive folder transfer | Table stakes | v0.4.0 |
 | No terminal search (⌘F) | Table stakes | v0.4.0 |
 | Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
-| Design: host color underused, card weight, type hierarchy | Polish | v0.5.0 |
 | Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |
 | Mobile stub only | Deferred | Last |
 
@@ -190,7 +194,7 @@ except EV.
 
 ### 3.8 Windows as a first-class target
 
-Specced in [`docs/M12.5.md`](docs/M12.5.md) Track C, not built. A `ChromeStyle`
+Specced in [`docs/milestones/M12.5.md`](docs/milestones/M12.5.md) Track C, not built. A `ChromeStyle`
 abstraction (`'mac' | 'win' | 'linux'`) resolved once, not `if (isWindows)`
 scattered through components. Segoe UI Variable, Mica, right-side caption buttons,
 system accent, Fluent settings page.
@@ -201,10 +205,9 @@ macOS traffic-light inset, so one crate covers both.
 
 ### 3.9 Design polish
 
-From M12.5 Track D. Highest ratio of identity to effort: **promote `Host.color`
-from a 1px border to ambient identity** — collapsed rail indicator, active tab
-underline, terminal viewport hairline. You have three hosts in three colors and
-can't tell which machine you're on without reading. It's a safety property.
+From M12.5 Track D — **in v0.3.0**. Highest ratio of identity to effort: **promote
+`Host.color` from a 1px border to ambient identity** — collapsed rail indicator,
+active tab underline, terminal viewport hairline.
 
 Also: reduce host-card button weight, fix inverted type hierarchy, enforce the
 mono-for-machine-strings / sans-for-labels rule, real empty states.
@@ -215,10 +218,10 @@ mono-for-machine-strings / sans-for-labels rule, real empty states.
 
 | Version | Contents | Why |
 |---|---|---|
-| **v0.2.11** | Paste/Enter bugs, tmux config, copy sweep | Bugs + first auto-update test — [`NEXT-v0.2.11.md`](NEXT-v0.2.11.md) |
-| **v0.3.0** | Agent notifications, BYOK injection, agent forwarding, Launcher Running, Settings fill | Completes the wedge |
-| **v0.4.0** | Code signing, port forwarding, SFTP recursive, terminal search, onboarding | Table stakes for strangers |
-| **v0.5.0** | Windows native chrome, design polish, command history search | Platform quality |
+| **v0.2.11** | Paste/Enter, tmux config, copy sweep | ✅ Shipped |
+| **v0.3.0** | Azure OpenAI preset, BYOK injection, Launcher Running, Settings fill/hide, Track D design | Current — [`NEXT.md`](NEXT.md) |
+| **v0.4.0** | Agent notifications, SSH agent forwarding, code signing, port forwarding, SFTP recursive, terminal search | Table stakes + wedge notifications |
+| **v0.5.0** | Windows native chrome, command history search | Platform quality |
 | **v0.6.0** | Live ProxyJump, FleetExec, snippets, cross-device scrollback | Fleet features |
 | **Later** | Hosted sync tier, mobile | See Part 5 |
 

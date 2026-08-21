@@ -1,3 +1,5 @@
+> **Superseded by [`ROADMAP.md`](../../ROADMAP.md).** Kept for history.
+
 # Tethra roadmap — v2
 
 _Written after M6.1. **M10/M11 below are superseded** by [`ROADMAP-v3.md`](ROADMAP-v3.md)

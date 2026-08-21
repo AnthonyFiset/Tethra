@@ -1,3 +1,5 @@
+> **Completed.** Archived task brief.
+
 # NEXT — §5 (revised): updater on GitHub Releases + auto-publish
 
 > **Scope:** this task only. Do not start M13, BYOK, notifications, or design work.

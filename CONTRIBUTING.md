@@ -2,6 +2,12 @@
 
 Thanks for considering a contribution.
 
+## Docs convention
+
+`ROADMAP.md` is the **only** place milestone status lives. `NEXT.md` is always
+the current task; completed ones move to `docs/archive/`. Roadmap revisions bump
+a header line, not the filename. Never duplicate a milestone board.
+
 ## Highest-value first PRs
 
 Agent and Assist provider churn should not require a tagged app release.

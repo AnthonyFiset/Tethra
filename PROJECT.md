@@ -22,8 +22,8 @@ already running — but every decision today is made so that mobile is a port, n
 a rewrite.
 
 The original Termius-with-unread-credentials scope is done through M6.1. The
-post-M6.1 narrative through Assist is in [`ROADMAP-v2.md`](ROADMAP-v2.md); **what
-to build next** is [`ROADMAP-v3.md`](ROADMAP-v3.md). §9's `exec` path and
+post-M6.1 narrative through Assist is in [docs/archive/ROADMAP-v2.md](docs/archive/ROADMAP-v2.md); **what
+to build next** is [ROADMAP.md](ROADMAP.md). §9's `exec` path and
 `ApprovalGate` remain the seam Assist (M9) plugs into.
 
 ---
@@ -255,7 +255,7 @@ policy above.
 
 **Shipped (M8):** first-class `Project` (local or remote location + default agent)
 and `AgentSpec` (launch command, env, `persistent` multiplexer wrap). Projects
-and running-session markers sync like hosts. See [`docs/M8.md`](docs/M8.md).
+and running-session markers sync like hosts. See [docs/milestones/M8.md](docs/milestones/M8.md).
 
 ---
 
@@ -362,74 +362,11 @@ front:
 
 ## 12. Milestones
 
-Shipped through M9 (v0.2.5). **What to build next** lives in
-[`ROADMAP-v3.md`](ROADMAP-v3.md). v2 (`ROADMAP-v2.md`) is historical for M6.2–M9.
-This section is the summary Cursor should respect; strategy brief: `HANDOFF.md`.
+**Do not maintain a milestone board here.** What’s done / what’s next lives only
+in [`ROADMAP.md`](ROADMAP.md). The current engineering task is always
+[`NEXT.md`](NEXT.md). Historical writeups: [`docs/milestones/`](docs/milestones/).
 
-**M1 — headless core.** `core/ssh` with a small CLI harness in `examples/`. No
-Tauri at all. Connect, PTY, resize, exec, SFTP list/get/put. If this works
-standalone, portability is proven. ✅
-
-**M2 — desktop shell.** Tauri window, xterm.js wired to the PTY path with the
-batching from §10, tab bar, connect from a hard-coded host list. ✅
-
-**M3 — vault.** Full §6 implementation, unlock/lock UI, `keyring`-backed
-recovery, host CRUD. ✅
-
-**M4 — `~/.ssh/config` import.** Highest value-per-line-of-code feature in the
-project. Parse via `russh-config`, map to `Host` records, preserve `ProxyJump`. ✅
-
-**M5 — SFTP UI.** Dual-pane browser, drag/drop, transfer queue with resume. ✅
-
-**M5.5 / M5.6 — identity, local terminal, UI polish.** Stable identity, local
-PTY, host colors, branding, design tokens, command palette. ✅
-
-**M6 — sync.** `FileBackend` + `HttpBackend` (`tethra-sync-server` for Tailscale
-hosts). Host metadata only; password identities stay local. See `docs/M6.md`. ✅
-
-**M6.1 — sync hardening + self-update.** In-app vault join/reset, tag-driven
-versions, self-update via sync host. ✅
-
-**M6.2 — sync you don't think about.** Opt-in `sync_secret` for passwords,
-background sync, coordinated re-key, restore iOS `cargo check` on the macOS
-runner, auto-mirror timer on the sync host. ✅ See `docs/M6.2.md`.
-
-**M7 — real terminal.** Alternate screen, truecolor, bracketed paste, OSC 52/7,
-mouse/SIGWINCH, Unicode width; OSC 133 command blocks in `core`; splits /
-multi-window over the session registry (hard rule 5). Acceptance: Claude Code
-local and over SSH matches Terminal.app / Ghostty. ✅ See `docs/M7.md`. Stay on
-xterm.js (known scroll-jump under agent TUIs → M12).
-
-**M8 — projects and agents.** First-class `Project` + `AgentSpec`; open project =
-connect → `cd` → launch agent; persistent remote agents via `tmux`/`zellij`
-(do not build a multiplexer); running-sessions view; cross-device reattach.
-✅ See `docs/M8.md`. Presets must become data catalogs in M11 (not compiled-in).
-
-**M9 — Assist.** `Cmd/Ctrl+I` → NL to command in the input (never auto-exec);
-pluggable providers; API keys as vault items with `sync_secret`; explain-failure
-via block context. Stay small — do not compete with the agents you host.
-✅ See `docs/M9.md`. OpenAI-compat path is the bulk of “all providers”; M11 is UX
-+ presets.
-
-**M10 — launcher and workspace.** Two modes: Launcher (Resume-first dashboard,
-no sidebar) ↔ Workspace (current UI, sidebar here only). Last tab → Launcher;
-Launcher never kills sessions. See `ROADMAP-v3.md`, `docs/M10.md`.
-
-**M11 — provider and agent catalogs.** Synced `Catalog<T>` (bundled → sync-server
-→ vault overrides). **M11.1–11.3 done** — provider paste-key + Test UX; agent
-catalog + project picker (`docs/M11.md`). BYOK env injection at launch deferred.
-See `ROADMAP-v3.md` §A.
-
-**M12 — terminal feel.** OSC 133 blocks (**M12.1**), agent TUI scroll-jump filter
-(**M12.2**), token theme (**M12.3**), same-device serialize reattach (**M12.4**) —
-see `docs/M12.md`. Still open: ligature toggle, cross-device scrollback sync,
-optional asciinema.
-
-**M13 — fleet power features.** Port forwarding, live `ProxyJump`, snippets,
-`FleetExec` structured broadcast. Promote above M12 only if jump hosts block you.
-
-**M14 — mobile.** Deferred. Reattach/monitor persistent agents — not “SSH from
-your phone.” Keep `cargo check -p core --target aarch64-apple-ios` green.
+Agent brief (landmines, verify, release): [`HANDOFF.md`](HANDOFF.md).
 
 ---
 
