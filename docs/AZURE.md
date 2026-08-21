@@ -1,8 +1,9 @@
 # Azure — Microsoft for Startups credits
 
-_Reconstructed 2026-08-21. The fuller `AZURE-PLAN.md` from the pre-public-release
-working set was never committed and is lost; these are the load-bearing facts.
-No keys or subscription identifiers belong in this file — see hard rule 12._
+_Updated 2026-08-21. These are the public, load-bearing facts. The full milestone
+plan (balances, workload list, clock strategy) lives in `AZURE-PLAN.md` at the
+repo root — **local-only and gitignored; never commit it**. No keys, balances, or
+subscription identifiers belong in this file — see hard rule 12._
 
 ## Three hard facts
 

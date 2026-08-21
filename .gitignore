@@ -32,3 +32,7 @@ id_ed25519
 # Test artifacts
 /tmp/
 *.log
+
+# Local-only maintainer notes (never publish)
+AZURE-PLAN.md
+_to_delete/
