@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tethra — your agents keep working after you close the laptop</title>
+<meta name="description" content="Tethra is an end-to-end encrypted SSH client that hosts coding agents across your machines. Start Claude Code on one device, walk away, resume anywhere.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-raised: #11151f;
+    --bg-card: #141926;
+    --line: #232a3a;
+    --fg: #e6e9f0;
+    --fg-muted: #9aa3b5;
+    --fg-subtle: #6b7488;
+    --accent: #4f9cff;
+    --accent-soft: rgba(79, 156, 255, 0.12);
+    --green: #3ecf8e;
+    --amber: #f5b544;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  nav {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 22px 0;
+  }
+  .logo {
+    font-family: var(--mono); font-weight: 600; font-size: 1.15rem;
+    color: var(--fg); letter-spacing: 0.02em;
+  }
+  .logo span { color: var(--accent); }
+  .nav-links { display: flex; gap: 26px; align-items: center; font-size: 0.92rem; }
+  .nav-links a { color: var(--fg-muted); }
+  .nav-links a:hover { color: var(--fg); text-decoration: none; }
+
+  /* Hero */
+  header { padding: 72px 0 40px; }
+  .badge {
+    display: inline-block; font-family: var(--mono); font-size: 0.78rem;
+    color: var(--green); background: rgba(62, 207, 142, 0.1);
+    border: 1px solid rgba(62, 207, 142, 0.25);
+    padding: 4px 12px; border-radius: 999px; margin-bottom: 22px;
+  }
+  h1 {
+    font-size: clamp(2.1rem, 5.4vw, 3.4rem); font-weight: 800;
+    line-height: 1.12; letter-spacing: -0.02em; max-width: 720px;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub {
+    margin-top: 20px; font-size: 1.13rem; color: var(--fg-muted); max-width: 640px;
+  }
+  .cta-row { margin-top: 34px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-block; padding: 12px 24px; border-radius: 9px;
+    font-weight: 600; font-size: 0.98rem; transition: all 0.15s ease;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: #071120; }
+  .btn-primary:hover { background: #6cadff; }
+  .btn-ghost { border: 1px solid var(--line); color: var(--fg); }
+  .btn-ghost:hover { border-color: var(--fg-subtle); background: var(--bg-raised); }
+  .cta-note { font-size: 0.84rem; color: var(--fg-subtle); width: 100%; }
+  .cta-note code { font-family: var(--mono); font-size: 0.8rem; }
+
+  /* Terminal demo */
+  .term {
+    margin: 56px 0 0; background: var(--bg-raised);
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px; border-bottom: 1px solid var(--line);
+    background: var(--bg-card);
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot:nth-child(1) { background: #ff5f57; } .dot:nth-child(2) { background: #febc2e; } .dot:nth-child(3) { background: #28c840; }
+  .term-title { margin-left: 10px; font-family: var(--mono); font-size: 0.78rem; color: var(--fg-subtle); }
+  .term-body {
+    padding: 20px 22px; font-family: var(--mono); font-size: 0.86rem;
+    line-height: 1.75; overflow-x: auto; white-space: pre;
+  }
+  .t-dim { color: var(--fg-subtle); }
+  .t-green { color: var(--green); }
+  .t-blue { color: var(--accent); }
+  .t-amber { color: var(--amber); }
+
+  /* Sections */
+  section { padding: 76px 0 0; }
+  .kicker {
+    font-family: var(--mono); font-size: 0.8rem; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: 12px;
+  }
+  h2 { font-size: clamp(1.5rem, 3.2vw, 2.1rem); font-weight: 700; letter-spacing: -0.015em; }
+  .section-sub { margin-top: 12px; color: var(--fg-muted); max-width: 620px; }
+
+  /* Steps */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 40px; }
+  .step {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 26px 24px;
+  }
+  .step-num {
+    font-family: var(--mono); font-size: 0.8rem; color: var(--accent);
+    background: var(--accent-soft); display: inline-block;
+    padding: 2px 10px; border-radius: 6px; margin-bottom: 14px;
+  }
+  .step h3 { font-size: 1.06rem; font-weight: 600; margin-bottom: 8px; }
+  .step p { font-size: 0.92rem; color: var(--fg-muted); }
+  .step p code { font-family: var(--mono); font-size: 0.84rem; color: var(--fg); }
+
+  /* Features */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 40px; }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px;
+  }
+  .card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 9px; }
+  .card p { font-size: 0.9rem; color: var(--fg-muted); }
+  .card svg { flex-shrink: 0; }
+
+  /* Security band */
+  .security {
+    margin-top: 76px; background: var(--bg-raised);
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 60px 0;
+  }
+  .security h2 { max-width: 560px; }
+  .sec-points { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 32px; margin-top: 30px; max-width: 820px; }
+  .sec-point { display: flex; gap: 12px; font-size: 0.94rem; color: var(--fg-muted); }
+  .sec-point strong { color: var(--fg); font-weight: 600; }
+  .check { color: var(--green); font-weight: 700; flex-shrink: 0; }
+
+  /* Footer */
+  footer { padding: 54px 0 60px; }
+  .foot-row {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--line); padding-top: 34px;
+  }
+  .foot-links { display: flex; gap: 22px; font-size: 0.88rem; }
+  .foot-links a { color: var(--fg-muted); }
+  .foot-note { font-size: 0.82rem; color: var(--fg-subtle); }
+
+  @media (max-width: 780px) {
+    .steps, .grid, .sec-points { grid-template-columns: 1fr; }
+    .nav-links a:not(.btn) { display: none; }
+    header { padding-top: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <div class="logo"><span>▲</span> tethra</div>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#security">Security</a>
+      <a class="btn btn-ghost" href="https://github.com/AnthonyFiset/Tethra" style="padding:8px 16px;font-size:0.88rem;">GitHub</a>
+    </div>
+  </nav>
+
+  <header>
+    <div class="badge">● open source · end-to-end encrypted</div>
+    <h1>Your agents keep working <em>after you close the laptop.</em></h1>
+    <p class="sub">
+      Tethra is an encrypted SSH client that hosts coding agents across your
+      machines. Start Claude Code on a server from your desk, shut the lid,
+      and pick the session back up from anywhere — exactly where it left off.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/AnthonyFiset/Tethra/releases/latest">Download for macOS &amp; Windows</a>
+      <a class="btn btn-ghost" href="https://github.com/AnthonyFiset/Tethra#build-from-source">Build from source</a>
+      <div class="cta-note">Free · Apache-2.0 · self-hostable sync</div>
+    </div>
+
+    <div class="term" aria-hidden="true">
+      <div class="term-bar">
+        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        <div class="term-title">tethra — build-server · project: api-refactor</div>
+      </div>
+      <div class="term-body"><span class="t-dim">┌ session</span> <span class="t-blue">api-refactor</span> <span class="t-dim">on</span> build-server <span class="t-dim">· tmux · persistent</span>
+
+<span class="t-green">❯</span> claude "migrate the auth module to the new session store"
+<span class="t-dim">  … agent working — 214 files scanned, 12 edits queued …</span>
+
+<span class="t-amber">⏻ you detach — laptop closed, session keeps running</span>
+
+<span class="t-dim">┌ 41 min later, from another machine</span>
+<span class="t-green">❯</span> tethra reattach api-refactor
+<span class="t-green">✓</span> tests passing <span class="t-dim">·</span> agent waiting for review <span class="t-dim">— right where you left it</span></div>
+    </div>
+  </header>
+
+  <section id="how">
+    <div class="kicker">How it works</div>
+    <h2>Connect. Launch. Walk away.</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <h3>Connect your machines</h3>
+        <p>Add hosts with a password or SSH key — or import <code>~/.ssh/config</code> in one click. Everything lands in an encrypted vault only you can open.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <h3>Launch any agent</h3>
+        <p>Claude Code, Codex, Gemini, aider — pick from the catalog and Tethra installs what's missing on the host for you. Every session runs inside <code>tmux</code>.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <h3>Leave — it keeps going</h3>
+        <p>Close the tab, close the laptop. The session survives on the host, your vault syncs to your other devices, and you reattach from any of them.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="kicker">Features</div>
+    <h2>An SSH client built for the agent era.</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Persistent sessions</h3>
+        <p>tmux and zellij under the hood. Sessions outlive the app, the connection, and the machine you started them from.</p>
+      </div>
+      <div class="card">
+        <h3>Encrypted vault</h3>
+        <p>Hosts, keys, and passwords sealed with your master password. Argon2id + authenticated encryption; nothing readable at rest.</p>
+      </div>
+      <div class="card">
+        <h3>Sync without trust</h3>
+        <p>Devices sync through a server that only ever sees ciphertext. Keys and passwords sync only if you opt in — per item.</p>
+      </div>
+      <div class="card">
+        <h3>Self-host in one binary</h3>
+        <p>Run the sync server on a Raspberry Pi, a VPS, or Tailscale. One Rust binary, no database, free forever.</p>
+      </div>
+      <div class="card">
+        <h3>Agent catalog</h3>
+        <p>Launch and manage coding agents across a fleet of hosts. Missing tools are detected and installed with one click.</p>
+      </div>
+      <div class="card">
+        <h3>Full SSH toolkit</h3>
+        <p>SFTP with resumable transfers, ssh-config import, host-key verification, command blocks — the table stakes, done right.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="security" id="security">
+  <div class="wrap">
+    <div class="kicker">Security model</div>
+    <h2>The sync server can't read anything. By design.</h2>
+    <div class="sec-points">
+      <div class="sec-point"><span class="check">✓</span><span><strong>Ciphertext-only sync.</strong> The server stores opaque encrypted rows. There is nothing to leak.</span></div>
+      <div class="sec-point"><span class="check">✓</span><span><strong>Keys never leave the device</strong> unless you explicitly opt a key into sync — and then only as ciphertext.</span></div>
+      <div class="sec-point"><span class="check">✓</span><span><strong>Vault-derived device auth.</strong> A new device needs your master password, not a pasted token.</span></div>
+      <div class="sec-point"><span class="check">✓</span><span><strong>Open source, Apache-2.0.</strong> The client, the server, the crypto — read every line.</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <footer>
+    <div class="foot-row">
+      <div class="logo" style="font-size:1rem;"><span>▲</span> tethra</div>
+      <div class="foot-links">
+        <a href="https://github.com/AnthonyFiset/Tethra">GitHub</a>
+        <a href="https://github.com/AnthonyFiset/Tethra/releases">Releases</a>
+        <a href="https://github.com/AnthonyFiset/Tethra/blob/main/SECURITY.md">Security</a>
+        <a href="https://github.com/AnthonyFiset/Tethra/blob/main/LICENSE">License</a>
+      </div>
+      <div class="foot-note">© 2026 Tethra. Apache-2.0.</div>
+    </div>
+  </footer>
+</div>
+
+</body>
+</html>
