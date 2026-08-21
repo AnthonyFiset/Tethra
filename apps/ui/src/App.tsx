@@ -32,8 +32,6 @@ import {
   type SessionAttention,
 } from "./lib/sessionAttention";
 import { maybeNotifyAttention } from "./lib/agentNotify";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { onAction } from "@tauri-apps/plugin-notification";
 import {
   getAppVersion,
   closeSftp,
@@ -57,6 +55,8 @@ import {
   onVaultStatus,
   pollSessionWatches,
   setDockBadge,
+  focusMainWindow,
+  onAgentNotificationAction,
   openExternal,
   openLocalTerminal,
   openSftp,
@@ -1323,29 +1323,24 @@ function Workspace({
   useEffect(() => {
     if (!status.unlocked) return;
     let cancelled = false;
-    let unlisten: { unregister: () => Promise<void> } | undefined;
-    void onAction((notification) => {
-      const extra = notification.extra as
-        | { runningSessionId?: string }
-        | undefined;
-      const id = extra?.runningSessionId;
-      if (!id) return;
-      const session = runningSessionsRef.current.find((s) => s.id === id);
+    let unlisten: (() => void) | undefined;
+    void onAgentNotificationAction((runningSessionId) => {
+      const session = runningSessionsRef.current.find(
+        (s) => s.id === runningSessionId,
+      );
       if (!session) return;
-      void getCurrentWindow()
-        .setFocus()
-        .catch(() => undefined);
+      void focusMainWindow().catch(() => undefined);
       void reattachSession(session);
-    }).then((listener) => {
+    }).then((fn) => {
       if (cancelled) {
-        void listener.unregister();
+        fn();
         return;
       }
-      unlisten = listener;
+      unlisten = fn;
     });
     return () => {
       cancelled = true;
-      void unlisten?.unregister();
+      unlisten?.();
     };
     // reattachSession closes over projects — refresh when unlocked.
     // eslint-disable-next-line react-hooks/exhaustive-deps

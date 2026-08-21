@@ -1,29 +1,12 @@
 /** Desktop notifications for agent attention (waiting / done / failed). */
 
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { sendAgentNotification } from "./ipc";
 import {
   getNotifyDone,
   getNotifyFailed,
   getNotifyWaiting,
 } from "./prefs";
 import type { AgentAttentionState } from "./generated/AgentAttentionState";
-
-async function ensurePermission(): Promise<boolean> {
-  try {
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const permission = await requestPermission();
-      granted = permission === "granted";
-    }
-    return granted;
-  } catch {
-    return false;
-  }
-}
 
 export async function maybeNotifyAttention(options: {
   state: AgentAttentionState;
@@ -38,8 +21,6 @@ export async function maybeNotifyAttention(options: {
   if (state === "failed" && !getNotifyFailed()) return;
   if (state === "running") return;
 
-  if (!(await ensurePermission())) return;
-
   const label =
     state === "waiting"
       ? "needs attention"
@@ -48,10 +29,10 @@ export async function maybeNotifyAttention(options: {
         : "done";
 
   try {
-    sendNotification({
+    await sendAgentNotification({
       title: `Tethra · ${title}`,
       body: body ?? `Session ${label}`,
-      extra: { runningSessionId },
+      runningSessionId,
     });
   } catch {
     // Notification plugin unavailable (browser preview).

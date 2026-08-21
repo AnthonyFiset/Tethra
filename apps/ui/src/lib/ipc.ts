@@ -1,10 +1,17 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   WebviewWindow,
   getCurrentWebviewWindow,
 } from "@tauri-apps/api/webviewWindow";
+import {
+  isPermissionGranted as notificationPermissionGranted,
+  onAction as onNotificationAction,
+  requestPermission as requestNotificationPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import type { AgentSpecDto } from "./generated/AgentSpecDto";
 import type { ApiKeySummaryDto } from "./generated/ApiKeySummaryDto";
 import type { AssistExplainResultDto } from "./generated/AssistExplainResultDto";
@@ -406,6 +413,43 @@ export function pollSessionWatches(
 
 export function setDockBadge(count: number): Promise<void> {
   return invoke("set_dock_badge", { count });
+}
+
+export async function focusMainWindow(): Promise<void> {
+  await getCurrentWindow().setFocus();
+}
+
+export async function sendAgentNotification(options: {
+  title: string;
+  body: string;
+  runningSessionId: string;
+}): Promise<void> {
+  let granted = await notificationPermissionGranted();
+  if (!granted) {
+    const permission = await requestNotificationPermission();
+    granted = permission === "granted";
+  }
+  if (!granted) return;
+  sendNotification({
+    title: options.title,
+    body: options.body,
+    extra: { runningSessionId: options.runningSessionId },
+  });
+}
+
+export async function onAgentNotificationAction(
+  handler: (runningSessionId: string) => void,
+): Promise<() => void> {
+  const listener = await onNotificationAction((notification) => {
+    const extra = notification.extra as
+      | { runningSessionId?: string }
+      | undefined;
+    const id = extra?.runningSessionId;
+    if (id) handler(id);
+  });
+  return () => {
+    void listener.unregister();
+  };
 }
 
 export function openTerminal(
