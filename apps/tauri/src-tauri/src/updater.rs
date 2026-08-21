@@ -1,9 +1,7 @@
-//! Self-update against the same server that hosts vault sync.
+//! Self-update from GitHub Releases (`latest.json`).
 //!
-//! Updates are minisign-verified by the updater plugin, so the transport only
-//! needs to be reachable — typically the same always-on sync host the user
-//! already configured on their tailnet. Deriving the endpoint from the sync
-//! settings keeps update delivery zero-config.
+//! Payloads are minisign-verified against `plugins.updater.pubkey`. The old
+//! sync-host update mirror is retired — vault sync HTTP is unrelated.
 
 use serde::Serialize;
 use tauri::State;
@@ -11,7 +9,6 @@ use tauri_plugin_updater::UpdaterExt;
 use ts_rs::TS;
 
 use crate::AppState;
-use crate::sync::{SyncBackendConfig, SyncSettings};
 
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -24,38 +21,10 @@ pub struct UpdateInfoDto {
     pub pub_date: Option<String>,
 }
 
-/// `http://host:8787` → `http://host:8787/updates/{{target}}/{{arch}}/{{current_version}}`
-fn endpoint_for(settings: &SyncSettings) -> Option<String> {
-    match &settings.backend {
-        SyncBackendConfig::Http { url, .. } => {
-            let base = url.trim_end_matches('/');
-            Some(format!(
-                "{base}/updates/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}"
-            ))
-        }
-        _ => None,
-    }
-}
-
-async fn build_updater(
-    app: &tauri::AppHandle,
-    state: &State<'_, AppState>,
-) -> Result<tauri_plugin_updater::Updater, String> {
-    let endpoint = {
-        let settings = state.sync_settings.lock().await;
-        endpoint_for(&settings)
-    }
-    .ok_or_else(|| {
-        "updates come from your sync server — configure Vault sync with an HTTP server first"
-            .to_string()
-    })?;
-
-    let url = endpoint
-        .parse()
-        .map_err(|e| format!("bad update URL: {e}"))?;
+fn build_updater(app: &tauri::AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    // Endpoints come from tauri.conf.json → plugins.updater.endpoints
+    // (GitHub Releases latest.json).
     app.updater_builder()
-        .endpoints(vec![url])
-        .map_err(|e| e.to_string())?
         .build()
         .map_err(|e| e.to_string())
 }
@@ -63,12 +32,11 @@ async fn build_updater(
 #[tauri::command]
 pub async fn update_check(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> Result<UpdateInfoDto, String> {
     let current_version = app.package_info().version.to_string();
 
-    // Dev / `tauri dev` builds must not prompt to install a release — that
-    // only makes sense for packaged installs that came from the update mirror.
+    // Dev / `tauri dev` builds must not prompt to install a release.
     if cfg!(debug_assertions) {
         return Ok(UpdateInfoDto {
             available: false,
@@ -79,7 +47,7 @@ pub async fn update_check(
         });
     }
 
-    let updater = build_updater(&app, &state).await?;
+    let updater = build_updater(&app)?;
 
     match updater.check().await.map_err(|e| e.to_string())? {
         Some(update) => Ok(UpdateInfoDto {
@@ -103,13 +71,13 @@ pub async fn update_check(
 #[tauri::command]
 pub async fn update_install(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> Result<(), String> {
     if cfg!(debug_assertions) {
         return Err("updates are disabled in development builds".into());
     }
 
-    let updater = build_updater(&app, &state).await?;
+    let updater = build_updater(&app)?;
     let update = updater
         .check()
         .await
@@ -122,41 +90,4 @@ pub async fn update_install(
         .map_err(|e| e.to_string())?;
 
     app.restart();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn endpoint_is_derived_from_sync_server() {
-        let settings = SyncSettings {
-            backend: SyncBackendConfig::Http {
-                url: "http://sync.example:8787/".into(),
-                token: None,
-            },
-        };
-        assert_eq!(
-            endpoint_for(&settings).unwrap(),
-            "http://sync.example:8787/updates/{{target}}/{{arch}}/{{current_version}}"
-        );
-    }
-
-    #[test]
-    fn no_endpoint_without_http_backend() {
-        assert!(
-            endpoint_for(&SyncSettings {
-                backend: SyncBackendConfig::Disabled,
-            })
-            .is_none()
-        );
-        assert!(
-            endpoint_for(&SyncSettings {
-                backend: SyncBackendConfig::File {
-                    path: "/tmp".into()
-                },
-            })
-            .is_none()
-        );
-    }
 }

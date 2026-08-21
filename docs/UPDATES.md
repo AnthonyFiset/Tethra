@@ -1,101 +1,58 @@
 # Automatic updates
 
-Desktop clients self-update from the **same server that hosts vault sync**. No
-extra configuration: if Vault sync points at an HTTP server, updates come from
-that server too.
-
-## Why not straight from GitHub
-
-The repo is private, so release assets require a credential. Embedding one in
-the app would leak it. The sync host is already authenticated with `gh` and
-already reachable from every device over Tailscale, so it mirrors the assets
-instead. Payloads are minisign-signed by CI and verified on the client, so the
-mirror never has to be trusted.
+Desktop clients self-update from **GitHub Releases**. CI builds installers,
+minisign-signs updater artifacts, uploads `latest.json`, and publishes the
+release when every platform finishes. No ThinkPad / sync-host mirror is required
+for updates (vault sync over HTTP remains optional and separate).
 
 ## Release flow
 
-1. Tag a release: `git tag v0.2.1 && git push origin v0.2.1`
-2. CI stamps the version from the tag into every manifest
-   (`scripts/set-version.mjs`), builds installers, signs updater artifacts with
-   `TAURI_SIGNING_PRIVATE_KEY`, and publishes `latest.json`.
-3. **Publish the draft release** on GitHub — `gh` only sees published releases.
-4. On the sync host, mirror it:
+```bash
+node scripts/set-version.mjs 0.3.0
+git commit -am "release: 0.3.0"
+git tag -a v0.3.0 -m "v0.3.0"
+git push origin main
+git push origin v0.3.0
+# CI: require-ci → matrix builds → undraft release → latest.json live
+```
+
+Clients poll:
+
+`https://github.com/AnthonyFiset/Tethra/releases/latest/download/latest.json`
+
+That path **excludes prereleases**. Never mark a shipping tag as prerelease.
+
+## Key rotation note (2026-08-20)
+
+The updater signing keypair was rotated after the previous private key was
+exposed. **v0.2.9 and earlier cannot auto-update** to builds signed with the new
+key — they still embed the old public key. Install the first post-rotation build
+manually on each machine; later updates resume normally.
+
+Do **not** regenerate the keypair again unless it is compromised. Signing
+failures are usually a malformed Actions secret or password mismatch.
+
+## Verify a release
 
 ```bash
-tethra-sync-server fetch-updates            # latest published release
-tethra-sync-server fetch-updates --tag v0.2.1
+curl -sL https://github.com/AnthonyFiset/Tethra/releases/latest/download/latest.json \
+  | jq '.platforms | keys, (.[].signature | length)'
 ```
 
-5. Clients show "Tethra x.y.z is available" on next launch and update in place.
+Every platform key needs a non-empty signature length. Download macOS `.dmg`
+**through a browser** when checking Gatekeeper (“damaged” often means quarantine
++ missing ad-hoc signature; `curl` alone won’t reproduce quarantine).
 
-To keep the host current automatically, install the updates timer (also offered
-by the setup wizard):
+## Sync server (vault only)
 
-```bash
-tethra-sync-server install-updates-timer
-# later: tethra-sync-server uninstall-updates-timer
-```
+`tethra-sync-server` still syncs vault ciphertext. Its optional `fetch-updates`
+mirror is **retired for the client updater path**. Prefer GitHub Releases for
+desktop updates; leave the mirror disabled unless you have a private fork that
+needs it.
 
-That writes units whose `ExecStart` points at the installed binary:
+## Public key
 
-```ini
-# ~/.config/systemd/user/tethra-updates.service
-[Unit]
-Description=Mirror Tethra release assets
-
-[Service]
-Type=oneshot
-ExecStart=/path/to/tethra-sync-server fetch-updates
-```
-
-```ini
-# ~/.config/systemd/user/tethra-updates.timer
-[Unit]
-Description=Check for new Tethra releases hourly
-
-[Timer]
-OnBootSec=5min
-OnUnitActiveSec=1h
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```bash
-systemctl --user status tethra-updates.timer
-```
-
-## Why `dangerousInsecureTransportProtocol` is on
-
-The sync host serves plain HTTP on a tailnet, and the updater plugin refuses
-non-`https` endpoints in release builds — it fails to initialize, which takes
-the whole app down at startup. Debug builds only print a warning, so this only
-ever shows up in a shipped binary.
-
-Enabling the flag is safe here because the update payload is minisign-signed by
-CI and verified on the client before install: a tampered or swapped payload is
-rejected regardless of transport. Turn it off if the update host ever gets a
-TLS certificate.
-
-## Signing keys
-
-CI signs with `TAURI_SIGNING_PRIVATE_KEY` (repo secret); the app verifies with
-the public key in `tauri.conf.json` under `plugins.updater.pubkey`.
-
-The private key is also saved at `~/.tethra-updater.key` on the machine that
-generated it. **Back it up.** Losing it means shipped clients can no longer
-verify new updates, and every device must be reinstalled by hand.
-
-## Endpoints
-
-The server exposes, unauthenticated:
-
-| Route | Purpose |
-|---|---|
-| `GET /updates/{target}/{arch}/{current_version}` | Manifest, or `204` when current |
-| `GET /updates/download/{file}` | Mirrored asset |
-
-These skip the sync token deliberately: a device that cannot authenticate is
-exactly the device that most needs to update. Integrity comes from the
-signature, not the transport.
+The minisign public half lives in `tauri.conf.json` under `plugins.updater.pubkey`.
+The private half is only in GitHub Actions secrets (`TAURI_SIGNING_PRIVATE_KEY` /
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) and the operator’s local
+`~/.tethra-updater.key` — never commit it.

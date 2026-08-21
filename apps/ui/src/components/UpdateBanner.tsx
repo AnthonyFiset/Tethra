@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { updateCheck, updateInstall, type UpdateInfoDto } from "../lib/ipc";
 import { Button } from "./ui/Button";
 
-/// Checked once per launch; the sync server is the update host, so a device
-/// with sync configured stays current without visiting GitHub.
+/// Checked once per launch against GitHub Releases (`latest.json`).
 /// Skipped entirely in Vite/`tauri dev` — release installs only.
 export function UpdateBanner(): React.JSX.Element | null {
   const [info, setInfo] = useState<UpdateInfoDto>();

@@ -191,16 +191,11 @@ See [`docs/M6.2.md`](docs/M6.2.md).
   `package-lock.json`, and workspace `Cargo.toml` from the git tag; CI runs it on
   every release so shipped binaries match the tag (fixes v0.1.1 shipping as 0.1.0).
 
-### Self-update — [`apps/tauri/src-tauri/src/updater.rs`](apps/tauri/src-tauri/src/updater.rs) + [`crates/sync-server`](crates/sync-server)
-- `tauri-plugin-updater` + `tauri-plugin-process`; updater artifacts signed in CI
-  with `TAURI_SIGNING_PRIVATE_KEY` (public key in `tauri.conf.json`).
-- Clients derive the update endpoint from their configured HTTP sync server, so
-  updates are zero-config. `UpdateBanner` offers "Update and restart".
-- The sync server mirrors release assets via `gh` (`fetch-updates`) and serves
-  `GET /updates/{target}/{arch}/{current_version}` + `/updates/download/{file}`;
-  private-repo assets never need a client credential. See [`docs/UPDATES.md`](docs/UPDATES.md).
-- `dangerousInsecureTransportProtocol` is enabled because the tailnet host is
-  plain HTTP; payloads are minisign-verified on-device, so transport isn't trusted.
+### Self-update — [`apps/tauri/src-tauri/src/updater.rs`](apps/tauri/src-tauri/src/updater.rs)
+- `tauri-plugin-updater` + `tauri-plugin-process`; artifacts signed in CI with
+  `TAURI_SIGNING_PRIVATE_KEY` (public key in `tauri.conf.json`).
+- Clients poll GitHub Releases `latest.json` (sync-host update mirror retired).
+- Key rotated 2026-08-20 — installs before that build need a one-time manual reinstall.
 
 ### Startup/crash fixes
 - `#![windows_subsystem = "windows"]` (release) removes the blank console window
@@ -211,9 +206,9 @@ See [`docs/M6.2.md`](docs/M6.2.md).
 ### CI/CD cleanup — `.github/workflows/`
 - Removed the `aarch64-apple-ios` compile check (never worked on Ubuntu — no
   `xcrun`) and the `--features cli` clippy flag.
-- Dropped the Intel Mac (`macos-13`) release target; release now builds Apple
-  Silicon `.dmg`, Windows NSIS `.exe`, Linux `.deb`/AppImage, and the sync-server
-  binary — plus signed updater artifacts.
+- Release builds Apple Silicon + Intel `.dmg`, Windows NSIS `.exe`, Linux
+  `.deb`/AppImage, sync-server artifact, and signed updater `latest.json` on
+  GitHub Releases (auto-published after the matrix completes).
 - Idempotent version stamping; cancelled the old stuck/failed runs.
 
 ---
@@ -358,12 +353,9 @@ docker compose -f crates/core/tests/docker-compose.yml down -v
 ## Release & update flow
 
 ```bash
-# 1. Cut a release (CI stamps version, builds installers, signs updater artifacts)
-git tag v0.2.5 && git push origin v0.2.5
-# 2. Publish the draft release on GitHub (gh only sees published releases)
-# 3. On the sync host, mirror it for clients:
-tethra-sync-server fetch-updates
-# 4. Clients with HTTP sync configured show "Update and restart" on next launch
+# 1. Cut a release (CI stamps version, builds, signs, publishes latest.json)
+git tag v0.2.10 && git push origin v0.2.10
+# 2. Clients with a post-key-rotation install update from GitHub Releases
 ```
 
 ---
@@ -376,8 +368,8 @@ ligature toggle, asciinema, cross-device scrollback.
 
 Strategy brief: [`HANDOFF.md`](HANDOFF.md).
 
-On the sync host after a release publishes:
-`tethra-sync-server fetch-updates` (and `install-updates-timer` if not already).
+On the sync host after a vault-related release (optional): keep `tethra-sync-server`
+running for vault sync only — desktop updates no longer need `fetch-updates`.
 
 Open decisions (v3): public vs private repo; catalog hosting (sync-host-only vs
 public URL).

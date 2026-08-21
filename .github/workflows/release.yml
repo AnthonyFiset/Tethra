@@ -49,10 +49,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Apple Silicon only — no Intel Mac target.
           - platform: macos-latest
             rust_target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            rust_target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
           - platform: windows-latest
             rust_target: ""
             args: ""
@@ -94,6 +96,8 @@ jobs:
       - name: Stamp version from tag
         run: node scripts/set-version.mjs ${{ github.ref_name }}
 
+      # Builds + uploads to a draft release. A follow-up job publishes once every
+      # matrix leg succeeds so `releases/latest` never points at a half-built set.
       - name: Build installer
         uses: tauri-apps/tauri-action@v0
         env:
@@ -105,9 +109,28 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Tethra ${{ github.ref_name }}
           releaseDraft: true
+          prerelease: false
           args: ${{ matrix.args }}
           includeUpdaterJson: true
 
+  # Auto-publish after all platform artifacts are on the draft (no manual click).
+  publish-release:
+    name: publish-release
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Undraft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          gh release edit "$tag" --repo "${{ github.repository }}" --draft=false
+          echo "Published ${tag}"
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/latest/download/latest.json" \
+            | jq '{version, platforms: (.platforms | keys)}'
+
+  # Optional sync-server binary for self-hosted vault sync (not used for updates).
   sync-server:
     name: publish-sync-server
     needs: require-ci
@@ -129,6 +152,7 @@ jobs:
       - name: Build sync server
         run: cargo build -p tethra-sync-server --release
 
+      # Binary only — not signing material / secrets.
       - name: Upload sync-server binary
         uses: actions/upload-artifact@v4
         with:

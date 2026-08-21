@@ -1,11 +1,11 @@
-# Tethra handoff — v0.2.9 / roadmap v3
+# Tethra handoff — v0.2.9 + GitHub updater (roadmap v3)
 
 _Paste this into Claude Code (or any new agent session) with [`ROADMAP-v3.md`](ROADMAP-v3.md) and [`PROJECT.md`](PROJECT.md) if needed. Longer engineering diary: [`STATUS.md`](STATUS.md)._
 
-**As of:** 2026-08-07  
-**Repo:** https://github.com/AnthonyFiset/Tethra (private)  
-**Branch / commit:** `main` @ `b630b80`  
-**Latest tag:** `v0.2.9` — Enter-key regression fix after insert hygiene  
+**As of:** 2026-08-21  
+**Repo:** https://github.com/AnthonyFiset/Tethra  
+**Branch:** `main` (see latest commit)  
+**Latest shipped tag:** `v0.2.9` — next tag after updater cutover is a **manual reinstall** (key rotation 2026-08-20)  
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (supersedes M10/M11 in v2; mobile deferred)
 
 ---
@@ -16,7 +16,7 @@ _Paste this into Claude Code (or any new agent session) with [`ROADMAP-v3.md`](R
 2. **Respect hard rules** (architecture section) — especially `core` ≠ Tauri, secrets ≠ JS, `ipc.ts` only.
 3. **Next feature work is M13 Fleet** unless the user says otherwise. Optional polish is listed under leftovers.
 4. **Do not invent milestones** — prefer [`ROADMAP-v3.md`](ROADMAP-v3.md) + per-milestone `docs/M*.md`.
-5. **Ship desktop fixes as tagged releases** (`scripts/set-version.mjs` → commit → `vX.Y.Z` → push → publish draft → sync host `fetch-updates`). See [`docs/UPDATES.md`](docs/UPDATES.md).
+5. **Ship desktop fixes as tagged releases** (`set-version` → commit → `vX.Y.Z` → push). CI publishes to GitHub Releases + `latest.json` — no draft click, no sync-host mirror. See [`docs/UPDATES.md`](docs/UPDATES.md).
 6. Prefer small, reviewable PRs/commits; run `scripts/ci-check.sh` (or the pre-push gate) before pushing `main`.
 
 ---
@@ -52,7 +52,7 @@ Tethra is an E2E-encrypted SSH/SFTP vault client that **hosts coding agents** ac
 - Portable `crates/core`: SSH PTY/exec/SFTP, vault crypto, sync (`FileBackend` + `HttpBackend`)
 - Desktop Tauri shell + React UI; Node **22** in CI (`.nvmrc`)
 - Vault join/reset, background sync, opt-in password `sync_secret`, coordinated re-key
-- Self-update via sync host mirror (`tethra-sync-server fetch-updates`) — [`docs/UPDATES.md`](docs/UPDATES.md)
+- Self-update via **GitHub Releases** (`latest.json`) — [`docs/UPDATES.md`](docs/UPDATES.md). Sync-host update mirror retired.
 - iOS stub + CI `cargo check -p core --target aarch64-apple-ios` (keep green for M14)
 
 ### Terminal + sessions (M7–M9)
@@ -123,7 +123,7 @@ Promote ProxyJump above other Fleet work if jump hosts are blocking real machine
 ```
 crates/core          portable product logic — MUST NOT depend on Tauri
 crates/platform*     traits + desktop/ios adapters
-crates/sync-server   HTTP sync + update mirror (Tailscale sync host)
+crates/sync-server   HTTP vault sync (optional; not the updater)
 apps/tauri/src-tauri IPC glue only (commands, mux, updater, output pump)
 apps/ui              React; apps/ui/src/lib/ipc.ts is the ONLY invoke() surface
 ```
@@ -225,10 +225,14 @@ node scripts/set-version.mjs 0.2.x
 git tag -a v0.2.x -m "…"
 gh auth switch --user AnthonyFiset   # if multiple gh accounts
 git push origin main && git push origin v0.2.x
-# Wait for Release CI → publish GitHub draft release
-# On sync host:
-tethra-sync-server fetch-updates --tag v0.2.x
+# CI builds/signs all platforms, then auto-publishes (not a draft, not a prerelease)
 ```
+
+Updater endpoint (embedded):  
+`https://github.com/AnthonyFiset/Tethra/releases/latest/download/latest.json`
+
+**v0.2.9 and earlier:** manual reinstall required once after the 2026-08-20 updater
+key rotation; auto-update resumes afterward.
 
 Details: [`docs/UPDATES.md`](docs/UPDATES.md).
 
@@ -236,8 +240,7 @@ Details: [`docs/UPDATES.md`](docs/UPDATES.md).
 
 ## Open product decisions (v3)
 
-1. **Private vs public repo** — blocks signing + “catalog as PR target.”
-2. **Catalog hosting** — sync-host-only vs public URL so strangers get agent presets without a release.
+1. **Catalog hosting** — sync-host-only vs public URL so strangers get agent presets without a release.
 
 ---
 
@@ -252,7 +255,7 @@ Details: [`docs/UPDATES.md`](docs/UPDATES.md).
 | [`STATUS.md`](STATUS.md) | Long engineering status |
 | [`docs/M10.md`](docs/M10.md)–[`M12.5.md`](docs/M12.5.md) | Shipped milestone notes |
 | [`docs/M1.md`](docs/M1.md)–[`M9.md`](docs/M9.md) | Earlier milestones |
-| [`docs/UPDATES.md`](docs/UPDATES.md) | Self-update / mirror |
+| [`docs/UPDATES.md`](docs/UPDATES.md) | Self-update via GitHub Releases |
 
 ---
 
