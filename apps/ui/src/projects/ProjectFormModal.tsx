@@ -3,10 +3,12 @@ import { FolderOpen } from "lucide-react";
 import {
   createProject,
   listAgents,
+  listApiKeys,
   probeHostTools,
   syncPickFolder,
   updateProject,
   type AgentSpecDto,
+  type ApiKeySummaryDto,
   type HostSummaryDto,
   type ProjectMutation,
   type ProjectSummaryDto,
@@ -46,20 +48,25 @@ export function ProjectFormModal({
   const [defaultAgent, setDefaultAgent] = useState(
     initial?.defaultAgent ?? "claude-code",
   );
+  const [assistKeyId, setAssistKeyId] = useState(
+    initial?.assistKeyId ?? "",
+  );
   const [agents, setAgents] = useState<AgentSpecDto[]>([]);
+  const [apiKeys, setApiKeys] = useState<ApiKeySummaryDto[]>([]);
   const [probe, setProbe] = useState<ToolsProbeDto>();
   const [probing, setProbing] = useState(false);
   const [copiedInstall, setCopiedInstall] = useState(false);
   const [browsing, setBrowsing] = useState(false);
 
   useEffect(() => {
-    void listAgents()
-      .then((next) => {
-        setAgents(next);
+    void Promise.all([listAgents(), listApiKeys()])
+      .then(([nextAgents, nextKeys]) => {
+        setAgents(nextAgents);
+        setApiKeys(nextKeys);
         setDefaultAgent((current) => {
-          const resolved = resolveAgentForLaunch(next, current).agent;
+          const resolved = resolveAgentForLaunch(nextAgents, current).agent;
           if (resolved) return resolved.id;
-          return next.find((agent) => agent.id === "claude-code")?.id ?? "shell";
+          return nextAgents.find((agent) => agent.id === "claude-code")?.id ?? "shell";
         });
       })
       .catch((reason) => setError(String(reason)));
@@ -170,6 +177,7 @@ export function ProjectFormModal({
             ? { kind: "local", path: path.trim() }
             : { kind: "remote", hostId, path: path.trim() },
         defaultAgent: agentId,
+        assistKeyId: assistKeyId.trim() || null,
       };
 
       const saved = initial
@@ -473,6 +481,34 @@ export function ProjectFormModal({
                   {copiedInstall ? "Copied" : "Copy install command"}
                 </Button>
               </div>
+            )}
+
+            {(selected?.byokEnv?.length ?? 0) > 0 && (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-micro font-medium text-fg-muted">
+                  Inject Assist key
+                </span>
+                <select
+                  value={assistKeyId}
+                  onChange={(event) => setAssistKeyId(event.target.value)}
+                  disabled={busy}
+                  className={inputClass}
+                >
+                  <option value="">None</option>
+                  {apiKeys.map((key) => (
+                    <option key={key.id} value={key.id}>
+                      {key.label}
+                      {key.model ? ` · ${key.model}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-micro text-fg-subtle">
+                  Sets {selected?.byokEnv.join(", ")} via a temporary env file
+                  (never on the tmux command line). On remote hosts the same
+                  user can read{" "}
+                  <code className="font-mono">/proc/PID/environ</code>.
+                </span>
+              </label>
             )}
           </div>
         )}

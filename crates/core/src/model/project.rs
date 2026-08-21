@@ -20,6 +20,9 @@ pub struct Project {
     pub location: ProjectLocation,
     /// Built-in or custom agent id (`AgentSpec.id`).
     pub default_agent: Option<String>,
+    /// Vault Assist API key injected into the agent process via `byok_env`.
+    #[serde(default)]
+    pub assist_key_id: Option<Uuid>,
     pub last_opened: Option<DateTime<Utc>>,
 }
 
@@ -30,6 +33,7 @@ impl Project {
             name: name.into(),
             location: ProjectLocation::Local { path: path.into() },
             default_agent: None,
+            assist_key_id: None,
             last_opened: None,
         }
     }
@@ -43,6 +47,7 @@ impl Project {
                 path: path.into(),
             },
             default_agent: None,
+            assist_key_id: None,
             last_opened: None,
         }
     }

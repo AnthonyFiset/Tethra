@@ -154,15 +154,18 @@ export function Launcher({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6 py-10 md:px-10 md:py-14">
-        <motion.header {...fade} className="flex flex-col gap-3">
+        <motion.header {...fade} className="flex flex-col gap-2">
           <Logo variant="lockup" size={28} />
           <div>
-            <h1 className="m-0 text-lg font-semibold tracking-tight text-fg">
-              Resume where you left off
+            <h1 className="m-0 text-[15px] font-semibold tracking-tight text-fg">
+              {runningSessions.length > 0
+                ? "Resume where you left off"
+                : "Ready when you are"}
             </h1>
             <p className="mt-1 mb-0 max-w-xl text-ui text-fg-muted">
-              Running agents stay alive in tmux. Open a host or project when
-              you&apos;re ready to work.
+              {runningSessions.length > 0
+                ? "Attach to a running agent, or open a host or project."
+                : "Open a host or project to start working."}
             </p>
           </div>
           {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -177,8 +180,9 @@ export function Launcher({
               Import your SSH config
             </h2>
             <p className="mt-2 mb-5 max-w-lg text-ui text-fg-muted">
-              Pull hosts from <code className="font-mono text-micro">~/.ssh/config</code>{" "}
-              into the vault — the fastest way to get a usable fleet.
+              Pull hosts from{" "}
+              <code className="font-mono text-micro">~/.ssh/config</code> into
+              the vault — the fastest way to get a usable fleet.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button variant="primary" onClick={onImport}>
@@ -194,50 +198,59 @@ export function Launcher({
           </motion.section>
         ) : null}
 
-        {runningSessions.length > 0 && (
+        {!emptyVault && (
           <motion.section {...fade} className="flex flex-col gap-3">
             <SectionHeading
               icon={<Radio size={14} />}
-              title="Resume"
+              title="Running"
               count={runningSessions.length}
             />
-            <div className="grid gap-2 sm:grid-cols-2">
-              <AnimatePresence initial={false}>
-                {runningSessions.map((session) => (
-                  <motion.div
-                    key={session.id}
-                    layout={!reduceMotion}
-                    className="flex items-stretch gap-0 overflow-hidden rounded-panel border border-line bg-elevated"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onReattach(session)}
-                      className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 px-3.5 py-3 text-left transition-colors hover:bg-hover"
+            {runningSessions.length === 0 ? (
+              <p className="m-0 text-ui text-fg-subtle">
+                No agents running. Open a project to launch one.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <AnimatePresence initial={false}>
+                  {runningSessions.map((session) => (
+                    <motion.div
+                      key={session.id}
+                      layout={!reduceMotion}
+                      className="flex items-stretch gap-0 overflow-hidden rounded-panel border border-line bg-elevated"
                     >
-                      <span className="truncate text-ui font-medium text-fg">
-                        {session.projectName}
-                      </span>
-                      <span className="truncate text-micro text-fg-muted">
-                        {agentLabel(session.agentId)} · {session.hostLabel}
-                      </span>
-                      <span className="text-micro text-fg-subtle">
-                        up {formatAge(session.startedAt)} · attached{" "}
-                        {formatAge(session.lastAttachedAt)} ago · from{" "}
-                        {session.startedOnDevice}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      title="Kill session on host"
-                      onClick={() => onEndSession(session)}
-                      className="shrink-0 cursor-pointer border-l border-line px-3 text-micro text-fg-subtle transition-colors hover:bg-hover hover:text-danger"
-                    >
-                      Kill
-                    </button>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
+                      <button
+                        type="button"
+                        onClick={() => onReattach(session)}
+                        className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 px-3.5 py-3 text-left transition-colors hover:bg-hover"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-ui font-medium text-fg">
+                            {session.projectName}
+                          </span>
+                          {/* Reserved for v0.4.0 waiting/done chip */}
+                          <span className="ml-auto shrink-0" aria-hidden />
+                        </div>
+                        <span className="truncate text-micro text-fg-muted">
+                          {agentLabel(session.agentId)} · {session.hostLabel}
+                        </span>
+                        <span className="font-mono text-micro text-fg-subtle">
+                          up {formatAge(session.startedAt)} · attached{" "}
+                          {formatAge(session.lastAttachedAt)} ago
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        title="Kill session on host"
+                        onClick={() => onEndSession(session)}
+                        className="shrink-0 cursor-pointer border-l border-line px-3 text-micro text-fg-subtle transition-colors hover:bg-hover hover:text-danger"
+                      >
+                        Kill
+                      </button>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
           </motion.section>
         )}
 
@@ -326,7 +339,7 @@ export function Launcher({
         </motion.section>
 
         <motion.section {...fade} className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <SectionHeading
               icon={<TerminalSquare size={14} />}
               title="Hosts"
@@ -337,7 +350,7 @@ export function Launcher({
                 value={hostFilter}
                 onChange={(event) => setHostFilter(event.target.value)}
                 placeholder="Filter hosts"
-                className={cn(inputClass, "h-7 w-40 text-micro")}
+                className={cn(inputClass, "h-7 w-40 font-mono text-micro")}
               />
               <div className="flex rounded-md border border-line bg-elevated p-0.5">
                 <button
@@ -540,7 +553,7 @@ function SectionHeading({
   return (
     <div className="flex items-center gap-2">
       {icon && <span className="text-fg-subtle">{icon}</span>}
-      <h2 className="m-0 text-micro font-semibold tracking-[0.1em] text-fg-subtle uppercase">
+      <h2 className="m-0 text-[13px] font-semibold tracking-wide text-fg">
         {title}
       </h2>
       {typeof count === "number" && (

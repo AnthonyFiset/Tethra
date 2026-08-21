@@ -15,7 +15,9 @@ use crate::{Error, Result};
 pub use prompt::{strip_command_fences, system_explain, system_propose};
 
 #[cfg(feature = "sync-http")]
-pub use catalog::{ProviderPreset, bundled_presets, preset_by_id};
+pub use catalog::{
+    AuthHeaderKind, ProviderPreset, auth_for_base_url, bundled_presets, preset_by_id,
+};
 #[cfg(feature = "sync-http")]
 pub use http::{TestProviderRequest, TestProviderResult, test_provider};
 

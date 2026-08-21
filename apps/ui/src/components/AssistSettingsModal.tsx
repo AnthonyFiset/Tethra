@@ -255,7 +255,7 @@ function ApiKeyEditor({
     if (!initial) {
       setLabel(next.displayName);
     }
-    setBaseUrl(next.baseUrl);
+    setBaseUrl(next.baseUrl || next.baseUrlHint || "");
     setModel(next.defaultModel ?? "");
     setModels(next.defaultModel ? [next.defaultModel] : []);
     setTestState("idle");
@@ -350,7 +350,9 @@ function ApiKeyEditor({
   const showBaseUrl =
     preset.transport === "openaiCompat" ||
     preset.id === "custom" ||
-    Boolean(baseUrl && preset.baseUrl !== baseUrl);
+    preset.id === "azure-openai" ||
+    Boolean(baseUrl && preset.baseUrl !== baseUrl) ||
+    Boolean(preset.baseUrlHint);
 
   return (
     <Dialog
@@ -420,8 +422,15 @@ function ApiKeyEditor({
               setBaseUrl(event.target.value);
               setTestState("idle");
             }}
-            placeholder="http://127.0.0.1:11434/v1"
+            placeholder={
+              preset.baseUrlHint ?? "http://127.0.0.1:11434/v1"
+            }
             required={preset.transport === "openaiCompat"}
+            hint={
+              preset.id === "azure-openai"
+                ? "Replace {resource} with your Azure OpenAI resource name. Model is the deployment name."
+                : undefined
+            }
           />
         )}
         {preset.requiresKey && (

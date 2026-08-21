@@ -24,6 +24,20 @@
     "headers": []
   },
   {
+    "id": "azure-openai",
+    "display_name": "Azure OpenAI",
+    "transport": "openaiCompat",
+    "base_url": "",
+    "base_url_hint": "https://{resource}.openai.azure.com/openai/v1/",
+    "models_endpoint": "/models",
+    "api_key_url": "https://portal.azure.com/",
+    "key_prefix_hint": null,
+    "requires_key": true,
+    "default_model": null,
+    "auth_header": "api-key",
+    "headers": []
+  },
+  {
     "id": "openrouter",
     "display_name": "OpenRouter",
     "transport": "openaiCompat",

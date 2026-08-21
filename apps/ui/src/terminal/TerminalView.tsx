@@ -141,7 +141,7 @@ export function TerminalView({
       )}
       data-terminal-surface
       style={{
-        boxShadow: `inset 0 2px 0 0 ${color}`,
+        boxShadow: `inset 0 3px 0 0 ${color}`,
         backgroundColor: "var(--terminal-bg, #0d0d0d)",
       }}
       onContextMenu={(event) => {

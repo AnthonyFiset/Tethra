@@ -8,26 +8,42 @@ export type MaterialPref = "opaque" | "vibrant" | "custom" | "acrylic";
 const KEYS = {
   landing: "tethra.landing",
   fontSize: "tethra.terminal.fontSize",
+  fontFamily: "tethra.terminal.fontFamily",
+  lineHeight: "tethra.terminal.lineHeight",
   ligatures: "tethra.terminal.ligatures",
   cursorBlink: "tethra.terminal.cursorBlink",
+  cursorStyle: "tethra.terminal.cursorStyle",
+  scrollback: "tethra.terminal.scrollback",
   copyOnSelect: "tethra.terminal.copyOnSelect",
+  bell: "tethra.terminal.bell",
   idleLockSecs: "tethra.vault.idleLockSecs",
   material: "tethra.chrome.material",
   chromeOpacity: "tethra.chrome.opacity",
   terminalOpacity: "tethra.terminal.opacity",
+  defaultShell: "tethra.shell.default",
+  loginShell: "tethra.shell.login",
 } as const;
+
+export type CursorStylePref = "block" | "underline" | "bar";
 
 export const DEFAULTS = {
   landing: "launcher" as LandingPref,
   fontSize: 13,
+  fontFamily: "JetBrains Mono",
+  lineHeight: 1.25,
   ligatures: false,
   cursorBlink: true,
+  cursorStyle: "bar" as CursorStylePref,
+  scrollback: 10_000,
   copyOnSelect: false,
+  bell: false,
   /** 15 minutes — matches core DEFAULT_IDLE_LOCK. */
   idleLockSecs: 15 * 60,
   material: "opaque" as MaterialPref,
   chromeOpacity: 92,
   terminalOpacity: 100,
+  defaultShell: "",
+  loginShell: true,
 };
 
 export const IDLE_LOCK_OPTIONS: Array<{ secs: number; label: string }> = [
@@ -104,6 +120,80 @@ export function setTerminalCopyOnSelect(on: boolean): void {
   writeString(KEYS.copyOnSelect, on ? "1" : "0");
 }
 
+export function getTerminalFontFamily(): string {
+  return readString(KEYS.fontFamily) || DEFAULTS.fontFamily;
+}
+
+export function setTerminalFontFamily(value: string): void {
+  writeString(KEYS.fontFamily, value.trim() || DEFAULTS.fontFamily);
+}
+
+export function getTerminalLineHeight(): number {
+  const raw = Number(readString(KEYS.lineHeight));
+  if (!Number.isFinite(raw) || raw < 1 || raw > 2) return DEFAULTS.lineHeight;
+  return Math.round(raw * 100) / 100;
+}
+
+export function setTerminalLineHeight(value: number): void {
+  writeString(
+    KEYS.lineHeight,
+    String(Math.min(2, Math.max(1, Math.round(value * 100) / 100))),
+  );
+}
+
+export function getTerminalCursorStyle(): CursorStylePref {
+  const raw = readString(KEYS.cursorStyle);
+  if (raw === "block" || raw === "underline" || raw === "bar") return raw;
+  return DEFAULTS.cursorStyle;
+}
+
+export function setTerminalCursorStyle(value: CursorStylePref): void {
+  writeString(KEYS.cursorStyle, value);
+}
+
+export function getTerminalScrollback(): number {
+  const raw = Number(readString(KEYS.scrollback));
+  if (!Number.isFinite(raw) || raw < 1000 || raw > 100_000) {
+    return DEFAULTS.scrollback;
+  }
+  return Math.round(raw);
+}
+
+export function setTerminalScrollback(value: number): void {
+  writeString(
+    KEYS.scrollback,
+    String(Math.min(100_000, Math.max(1000, Math.round(value)))),
+  );
+}
+
+export function getTerminalBell(): boolean {
+  const raw = readString(KEYS.bell);
+  if (raw === null || raw === undefined) return DEFAULTS.bell;
+  return raw === "1" || raw === "true";
+}
+
+export function setTerminalBell(on: boolean): void {
+  writeString(KEYS.bell, on ? "1" : "0");
+}
+
+export function getDefaultShell(): string {
+  return readString(KEYS.defaultShell) ?? DEFAULTS.defaultShell;
+}
+
+export function setDefaultShell(value: string): void {
+  writeString(KEYS.defaultShell, value);
+}
+
+export function getLoginShell(): boolean {
+  const raw = readString(KEYS.loginShell);
+  if (raw === null || raw === undefined) return DEFAULTS.loginShell;
+  return raw !== "0" && raw !== "false";
+}
+
+export function setLoginShell(on: boolean): void {
+  writeString(KEYS.loginShell, on ? "1" : "0");
+}
+
 export function getIdleLockSecs(): number {
   const raw = Number(readString(KEYS.idleLockSecs));
   if (!Number.isFinite(raw) || raw < 0) return DEFAULTS.idleLockSecs;
@@ -161,7 +251,12 @@ export function setTerminalOpacity(value: number): void {
 
 export function resetTerminalPrefs(): void {
   setTerminalFontSize(DEFAULTS.fontSize);
+  setTerminalFontFamily(DEFAULTS.fontFamily);
+  setTerminalLineHeight(DEFAULTS.lineHeight);
   setTerminalLigatures(DEFAULTS.ligatures);
   setTerminalCursorBlink(DEFAULTS.cursorBlink);
+  setTerminalCursorStyle(DEFAULTS.cursorStyle);
+  setTerminalScrollback(DEFAULTS.scrollback);
   setTerminalCopyOnSelect(DEFAULTS.copyOnSelect);
+  setTerminalBell(DEFAULTS.bell);
 }

@@ -144,6 +144,7 @@ struct ProjectSummaryDto {
     name: String,
     location: ProjectLocationDto,
     default_agent: Option<String>,
+    assist_key_id: Option<String>,
     last_opened: Option<String>,
 }
 
@@ -154,6 +155,7 @@ impl From<&CoreProjectSummary> for ProjectSummaryDto {
             name: project.name.clone(),
             location: ProjectLocationDto::from(&project.location),
             default_agent: project.default_agent.clone(),
+            assist_key_id: project.assist_key_id.map(|id| id.to_string()),
             last_opened: project.last_opened.map(|ts| ts.to_rfc3339()),
         }
     }
@@ -368,6 +370,8 @@ struct ProjectMutation {
     name: String,
     location: ProjectLocationDto,
     default_agent: Option<String>,
+    #[serde(default)]
+    assist_key_id: Option<String>,
 }
 
 struct PromptBroker {
@@ -610,12 +614,17 @@ async fn create_project(
     state: State<'_, AppState>,
     project: ProjectMutation,
 ) -> Result<ProjectSummaryDto, String> {
+    let assist_key_id = match project.assist_key_id.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => Some(parse_uuid(raw, "assist key")?),
+        _ => None,
+    };
     let created = state
         .repo
         .create_project(CreateProjectRequest {
             name: project.name,
             location: ProjectLocation::try_from(project.location)?,
             default_agent: project.default_agent,
+            assist_key_id,
         })
         .await
         .map_err(redacted_error)?;
@@ -631,6 +640,10 @@ async fn update_project(
     project: ProjectMutation,
 ) -> Result<ProjectSummaryDto, String> {
     let project_id = parse_uuid(&id, "project")?;
+    let assist_key_id = match project.assist_key_id.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => Some(parse_uuid(raw, "assist key")?),
+        _ => None,
+    };
     let updated = state
         .repo
         .update_project(
@@ -639,6 +652,7 @@ async fn update_project(
                 name: project.name,
                 location: ProjectLocation::try_from(project.location)?,
                 default_agent: project.default_agent,
+                assist_key_id,
             },
         )
         .await
@@ -661,6 +675,31 @@ async fn delete_project(
         .map_err(redacted_error)?;
     sync::schedule_background_sync(app, &state);
     Ok(())
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct ByokEnvHandleDto {
+    env_path: String,
+    var_names: Vec<String>,
+    key_label: String,
+}
+
+#[tauri::command]
+async fn prepare_project_byok(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Option<ByokEnvHandleDto>, String> {
+    let id = parse_uuid(&project_id, "project")?;
+    let handle = ssh_client_core::agents::prepare_project_byok(&state.repo, &state.manager, id)
+        .await
+        .map_err(redacted_error)?;
+    Ok(handle.map(|h| ByokEnvHandleDto {
+        env_path: h.env_path,
+        var_names: h.var_names,
+        key_label: h.key_label,
+    }))
 }
 
 #[tauri::command]
@@ -892,11 +931,23 @@ async fn open_local_terminal(
     cols: u32,
     rows: u32,
     cwd: Option<String>,
+    shell: Option<String>,
+    login_shell: Option<bool>,
 ) -> Result<String, String> {
     let mut spec = state
         .local_pty
         .default_shell()
         .ok_or_else(|| "no local shell is available".to_string())?;
+    if let Some(program) = shell.filter(|s| !s.trim().is_empty()) {
+        spec.program = std::path::PathBuf::from(program);
+    }
+    if login_shell.unwrap_or(true) {
+        if !spec.args.iter().any(|a| a == "-l" || a == "--login") {
+            spec.args.insert(0, "-l".into());
+        }
+    } else {
+        spec.args.retain(|a| a != "-l" && a != "--login");
+    }
     if let Some(dir) = cwd {
         let path = std::path::PathBuf::from(dir);
         if path.is_dir() {
@@ -1315,6 +1366,7 @@ pub fn run() {
             create_project,
             update_project,
             delete_project,
+            prepare_project_byok,
             touch_project_opened,
             list_running_sessions,
             mark_project_running,
@@ -1387,6 +1439,7 @@ mod tests {
         ProjectSummaryDto::export_all(&cfg).unwrap();
         ProjectLocationDto::export_all(&cfg).unwrap();
         AgentSpecDto::export_all(&cfg).unwrap();
+        ByokEnvHandleDto::export_all(&cfg).unwrap();
         RunningSessionSummaryDto::export_all(&cfg).unwrap();
         assist::export_bindings(&cfg);
         mux::export_bindings(&cfg);

@@ -477,6 +477,13 @@ function OpenTabRow({
         active && "bg-active/60",
       )}
     >
+      {tab.color && (
+        <span
+          aria-hidden="true"
+          className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full"
+          style={{ backgroundColor: tab.color }}
+        />
+      )}
       <button
         type="button"
         onClick={() => onSelect(tab.sessionId)}

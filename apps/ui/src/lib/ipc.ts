@@ -28,6 +28,7 @@ import type { TerminalEvent } from "./generated/TerminalEvent";
 import type { TerminalEventEnvelope } from "./generated/TerminalEventEnvelope";
 import type { TestProviderResultDto } from "./generated/TestProviderResultDto";
 import type { ToolsProbeDto } from "./generated/ToolsProbeDto";
+import { getDefaultShell, getLoginShell } from "./prefs";
 import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
@@ -151,7 +152,15 @@ export interface ProjectMutation {
   name: string;
   location: ProjectLocationDto;
   defaultAgent?: string;
+  /** Vault Assist key id to inject via agent `byokEnv` (never the secret). */
+  assistKeyId?: string | null;
 }
+
+export type ByokEnvHandleDto = {
+  envPath: string;
+  varNames: string[];
+  keyLabel: string;
+};
 
 export function listProjects(): Promise<ProjectSummaryDto[]> {
   return invoke<ProjectSummaryDto[]>("list_projects");
@@ -176,6 +185,12 @@ export function updateProject(
 
 export function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
+}
+
+export function prepareProjectByok(
+  projectId: string,
+): Promise<ByokEnvHandleDto | null> {
+  return invoke<ByokEnvHandleDto | null>("prepare_project_byok", { projectId });
 }
 
 export function touchProjectOpened(id: string): Promise<ProjectSummaryDto> {
@@ -343,6 +358,8 @@ export function openLocalTerminal(
     cols,
     rows,
     cwd,
+    shell: getDefaultShell() || null,
+    loginShell: getLoginShell(),
   });
 }
 

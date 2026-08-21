@@ -4,4 +4,8 @@ export type ProviderPresetDto = { id: string, displayName: string,
 /**
  * `anthropic` | `openai` | `openaiCompat`
  */
-transport: string, baseUrl: string, modelsEndpoint: string | null, apiKeyUrl: string | null, keyPrefixHint: string | null, requiresKey: boolean, defaultModel: string | null, };
+transport: string, baseUrl: string, baseUrlHint: string | null, modelsEndpoint: string | null, apiKeyUrl: string | null, keyPrefixHint: string | null, requiresKey: boolean, defaultModel: string | null, 
+/**
+ * `bearer` | `api-key`
+ */
+authHeader: string, };

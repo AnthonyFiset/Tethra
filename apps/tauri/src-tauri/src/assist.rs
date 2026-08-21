@@ -97,11 +97,14 @@ pub struct ProviderPresetDto {
     /// `anthropic` | `openai` | `openaiCompat`
     transport: String,
     base_url: String,
+    base_url_hint: Option<String>,
     models_endpoint: Option<String>,
     api_key_url: Option<String>,
     key_prefix_hint: Option<String>,
     requires_key: bool,
     default_model: Option<String>,
+    /// `bearer` | `api-key`
+    auth_header: String,
 }
 
 impl From<&assist::ProviderPreset> for ProviderPresetDto {
@@ -111,11 +114,16 @@ impl From<&assist::ProviderPreset> for ProviderPresetDto {
             display_name: preset.display_name.clone(),
             transport: preset.transport.as_str().into(),
             base_url: preset.base_url.clone(),
+            base_url_hint: preset.base_url_hint.clone(),
             models_endpoint: preset.models_endpoint.clone(),
             api_key_url: preset.api_key_url.clone(),
             key_prefix_hint: preset.key_prefix_hint.clone(),
             requires_key: preset.requires_key,
             default_model: preset.default_model.clone(),
+            auth_header: match preset.auth_header {
+                assist::AuthHeaderKind::Bearer => "bearer".into(),
+                assist::AuthHeaderKind::ApiKey => "api-key".into(),
+            },
         }
     }
 }

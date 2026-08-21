@@ -85,6 +85,8 @@ pub struct ProjectRecord {
     pub name: String,
     pub location: ProjectLocation,
     pub default_agent: Option<String>,
+    #[serde(default)]
+    pub assist_key_id: Option<Uuid>,
     pub last_opened: Option<DateTime<Utc>>,
 }
 
@@ -95,6 +97,7 @@ impl From<&Project> for ProjectRecord {
             name: project.name.clone(),
             location: project.location.clone(),
             default_agent: project.default_agent.clone(),
+            assist_key_id: project.assist_key_id,
             last_opened: project.last_opened,
         }
     }
@@ -107,6 +110,7 @@ impl From<ProjectRecord> for Project {
             name: record.name,
             location: record.location,
             default_agent: record.default_agent,
+            assist_key_id: record.assist_key_id,
             last_opened: record.last_opened,
         }
     }

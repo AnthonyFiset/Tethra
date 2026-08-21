@@ -9,8 +9,12 @@ import { readClipboardText, writeClipboardText } from "../lib/ipc";
 import {
   getTerminalCopyOnSelect,
   getTerminalCursorBlink,
+  getTerminalCursorStyle,
+  getTerminalFontFamily,
   getTerminalFontSize,
   getTerminalLigatures,
+  getTerminalLineHeight,
+  getTerminalScrollback,
 } from "../lib/prefs";
 import { disposeBlockTracker, flushBlockPhases } from "./blocks";
 import {
@@ -134,18 +138,17 @@ export function createTerminal(
   const terminal = new Terminal({
     allowProposedApi: true,
     cursorBlink: getTerminalCursorBlink(),
-    cursorStyle: "bar",
+    cursorStyle: getTerminalCursorStyle(),
     convertEol: false,
     // Bracketed paste stays enabled so shells that request it get it.
     ignoreBracketedPasteMode: false,
     // macOS Option sends meta for readline / agent keybindings.
     macOptionIsMeta: true,
-    fontFamily:
-      '"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace',
+    fontFamily: `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace`,
     fontSize: getTerminalFontSize(),
-    lineHeight: 1.25,
+    lineHeight: getTerminalLineHeight(),
     letterSpacing: 0,
-    scrollback: 10_000,
+    scrollback: getTerminalScrollback(),
     // iTerm/Terminal.app–like ED2: push cleared viewport into scrollback instead
     // of nuking it (xterm default). Softens agent full-redraw scroll yanks.
     scrollOnEraseInDisplay: true,
@@ -290,10 +293,18 @@ export function writeTerminal(
 /** Re-apply prefs from localStorage to every live terminal. */
 export function applyTerminalPrefs(): void {
   const fontSize = getTerminalFontSize();
+  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace`;
+  const lineHeight = getTerminalLineHeight();
   const cursorBlink = getTerminalCursorBlink();
+  const cursorStyle = getTerminalCursorStyle();
+  const scrollback = getTerminalScrollback();
   for (const record of terminals.values()) {
     record.terminal.options.fontSize = fontSize;
+    record.terminal.options.fontFamily = fontFamily;
+    record.terminal.options.lineHeight = lineHeight;
     record.terminal.options.cursorBlink = cursorBlink;
+    record.terminal.options.cursorStyle = cursorStyle;
+    record.terminal.options.scrollback = scrollback;
     applyFontFeatures(record.terminal);
     if (record.terminal.element) {
       try {

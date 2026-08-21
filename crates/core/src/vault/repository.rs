@@ -75,6 +75,7 @@ pub struct ProjectSummary {
     pub name: String,
     pub location: ProjectLocation,
     pub default_agent: Option<String>,
+    pub assist_key_id: Option<Uuid>,
     pub last_opened: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -85,6 +86,7 @@ impl From<&Project> for ProjectSummary {
             name: project.name.clone(),
             location: project.location.clone(),
             default_agent: project.default_agent.clone(),
+            assist_key_id: project.assist_key_id,
             last_opened: project.last_opened,
         }
     }
@@ -96,6 +98,7 @@ pub struct CreateProjectRequest {
     pub name: String,
     pub location: ProjectLocation,
     pub default_agent: Option<String>,
+    pub assist_key_id: Option<Uuid>,
 }
 
 /// Non-secret running-session metadata for UI / IPC.
@@ -448,6 +451,7 @@ impl VaultRepository {
             }
         };
         project.default_agent = request.default_agent;
+        project.assist_key_id = request.assist_key_id;
         let record = ProjectRecord::from(&project);
         put_encrypted_json(
             &self.vault,
@@ -475,6 +479,7 @@ impl VaultRepository {
         record.name = request.name;
         record.location = request.location;
         record.default_agent = request.default_agent;
+        record.assist_key_id = request.assist_key_id;
         put_encrypted_json(
             &self.vault,
             id,
@@ -791,6 +796,14 @@ impl VaultRepository {
         Ok(Host::from(record))
     }
 
+    pub async fn get_project(&self, id: Uuid) -> Result<Project> {
+        let (record, row) = get_encrypted_json::<ProjectRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Project {
+            return Err(Error::InvalidArgument("item is not a project".into()));
+        }
+        Ok(Project::from(record))
+    }
+
     async fn next_version(&self, id: Uuid) -> Result<u64> {
         Ok(self
             .vault
@@ -1018,6 +1031,7 @@ mod tests {
                     path: "/srv/tethra".into(),
                 },
                 default_agent: Some("claude-code".into()),
+                assist_key_id: None,
             })
             .await
             .unwrap();
@@ -1058,6 +1072,7 @@ mod tests {
                     path: "/srv/tethra".into(),
                 },
                 default_agent: Some("claude-code".into()),
+                assist_key_id: None,
             })
             .await
             .unwrap();

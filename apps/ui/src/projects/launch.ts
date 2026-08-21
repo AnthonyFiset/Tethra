@@ -43,6 +43,11 @@ export function projectLaunchScript(options: {
   muxAvailable?: boolean;
   /** When true, PTY already started in `path` — skip cd. */
   cwdAlreadySet?: boolean;
+  /**
+   * Absolute path to a `0600` env file (local or remote). Sourced then unlinked.
+   * Never put secrets on the tmux command line.
+   */
+  byokEnvPath?: string;
 }): string {
   const pathQ = shellSingleQuote(options.path);
   const argv = agentArgv(options.agent);
@@ -52,16 +57,32 @@ export function projectLaunchScript(options: {
     !localWindows &&
     options.muxAvailable !== false;
 
+  const byokPreamble =
+    options.byokEnvPath && !localWindows
+      ? [
+          `set -a`,
+          `. ${shellSingleQuote(options.byokEnvPath)}`,
+          `set +a`,
+          `rm -f ${shellSingleQuote(options.byokEnvPath)}`,
+        ]
+      : [];
+
   if (!wantMux) {
     if (localWindows) {
-      // cwd set at spawn; only launch agent if any.
+      // cwd set at spawn; only launch agent if any. BYOK file injection is POSIX.
       return argv ? `${argv}\r\n` : "";
     }
+    const head = [...byokPreamble];
     if (options.cwdAlreadySet) {
-      return argv ? `${argv}\n` : "";
+      if (argv) head.push(argv);
+      return head.length ? `${head.join("\n")}\n` : "";
     }
-    if (argv) return `cd ${pathQ} && ${argv}\n`;
-    return `cd ${pathQ}\n`;
+    if (argv) {
+      head.push(`cd ${pathQ} && ${argv}`);
+      return `${head.join("\n")}\n`;
+    }
+    head.push(`cd ${pathQ}`);
+    return `${head.join("\n")}\n`;
   }
 
   const sessionQ = shellSingleQuote(muxSessionName(options.projectId));
@@ -92,6 +113,7 @@ export function projectLaunchScript(options: {
     : [];
 
   return [
+    ...byokPreamble,
     ...pathBootstrap,
     ...ensureRemote,
     `if command -v tmux >/dev/null 2>&1; then`,

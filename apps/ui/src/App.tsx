@@ -53,6 +53,7 @@ import {
   openSftp,
   openTerminal,
   probeHostTools,
+  prepareProjectByok,
   pruneStaleRunningSessions,
   readClipboardText,
   resizeTerminal,
@@ -1077,6 +1078,7 @@ function Workspace({
           name: project.name,
           location: project.location,
           defaultAgent: agent.id,
+          assistKeyId: project.assistKeyId,
         })
           .then((saved) => {
             setProjects((current) => {
@@ -1168,6 +1170,7 @@ function Workspace({
       }
 
       await sleep(450);
+      const byok = await prepareProjectByok(project.id).catch(() => null);
       const script = projectLaunchScript({
         projectId: project.id,
         path: project.location.path,
@@ -1176,11 +1179,20 @@ function Workspace({
         platform: probe?.platform,
         muxAvailable: muxOnHost,
         cwdAlreadySet,
+        byokEnvPath: byok?.envPath,
       });
       if (script) {
         await sendTerminalInput(sessionId, new TextEncoder().encode(script), {
           force: true,
         });
+      }
+      if (byok?.keyLabel) {
+        setAgentNotice(
+          (migratedFrom
+            ? `${migratedFrom} is deprecated — launching ${agent?.name ?? "agent"}. `
+            : "") +
+            `Injecting ${byok.keyLabel} (${byok.varNames.join(", ")}).`,
+        );
       }
 
       const touched = await touchProjectOpened(project.id);

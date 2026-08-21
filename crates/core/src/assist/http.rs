@@ -3,10 +3,24 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use super::catalog::{self, ProviderPreset};
+use super::catalog::{self, AuthHeaderKind, ProviderPreset};
 use super::{AssistProvider, default_model};
 use crate::model::{ApiKey, AssistProviderKind};
 use crate::{Error, Result};
+
+fn apply_openai_auth(
+    builder: reqwest::RequestBuilder,
+    api_key: &str,
+    auth: AuthHeaderKind,
+) -> reqwest::RequestBuilder {
+    if api_key.trim().is_empty() {
+        return builder;
+    }
+    match auth {
+        AuthHeaderKind::Bearer => builder.bearer_auth(api_key),
+        AuthHeaderKind::ApiKey => builder.header("api-key", api_key),
+    }
+}
 
 pub fn provider_from_api_key(key: &ApiKey) -> Result<Box<dyn AssistProvider>> {
     let api_key = key.api_key.expose().to_string();
@@ -38,11 +52,13 @@ pub fn provider_from_api_key(key: &ApiKey) -> Result<Box<dyn AssistProvider>> {
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
             let headers = catalog::headers_for_base_url(&base_url);
+            let auth = catalog::auth_for_base_url(&base_url);
             Box::new(OpenAiCompatProvider {
                 api_key,
                 model,
                 base_url,
                 headers,
+                auth,
             })
         }
         AssistProviderKind::OpenAiCompat => {
@@ -55,11 +71,13 @@ pub fn provider_from_api_key(key: &ApiKey) -> Result<Box<dyn AssistProvider>> {
                 })?;
             let base_url = base_url.trim_end_matches('/').to_string();
             let headers = catalog::headers_for_base_url(&base_url);
+            let auth = catalog::auth_for_base_url(&base_url);
             Box::new(OpenAiCompatProvider {
                 api_key,
                 model,
                 base_url,
                 headers,
+                auth,
             })
         }
     })
@@ -125,6 +143,10 @@ async fn test_provider_inner(request: TestProviderRequest) -> Result<Vec<String>
         .as_ref()
         .map(|p| p.headers.clone())
         .unwrap_or_else(|| catalog::headers_for_base_url(&base_url));
+    let auth = preset
+        .as_ref()
+        .map(|p| p.auth_header)
+        .unwrap_or_else(|| catalog::auth_for_base_url(&base_url));
 
     let endpoint = preset
         .as_ref()
@@ -144,9 +166,7 @@ async fn test_provider_inner(request: TestProviderRequest) -> Result<Vec<String>
                 .header("anthropic-version", "2023-06-01");
         }
         AssistProviderKind::OpenAi | AssistProviderKind::OpenAiCompat => {
-            if !api_key.is_empty() {
-                builder = builder.bearer_auth(&api_key);
-            }
+            builder = apply_openai_auth(builder, &api_key, auth);
             for (name, value) in &headers {
                 builder = builder.header(name, value);
             }
@@ -223,6 +243,7 @@ struct OpenAiCompatProvider {
     model: String,
     base_url: String,
     headers: Vec<(String, String)>,
+    auth: AuthHeaderKind,
 }
 
 #[async_trait]
@@ -279,9 +300,7 @@ impl AssistProvider for OpenAiCompatProvider {
             .post(url)
             .header("content-type", "application/json")
             .json(&body);
-        if !self.api_key.trim().is_empty() {
-            builder = builder.bearer_auth(&self.api_key);
-        }
+        builder = apply_openai_auth(builder, &self.api_key, self.auth);
         for (name, value) in &self.headers {
             builder = builder.header(name, value);
         }

@@ -72,17 +72,17 @@ because of the rotation. v0.2.11 is the first real test.
 | tmux swallows OSC 133 / OSC 52 | ✅ Fixed — `-L tethra` + allow-passthrough | v0.2.11 |
 | tmux green status bar | ✅ Fixed (`status off`) | v0.2.11 |
 | Roadmap language in UI | ✅ Fixed | v0.2.11 |
-| **No SSH agent forwarding** | 🐛 High — see §3.3 | v0.4.0+ |
-| BYOK env stored, never injected | Feature gap | **v0.3.0** |
-| Settings sections thin (Shell/Keyboard/Agents/Advanced) | Feels broken | **v0.3.0** |
-| Launcher promises Running, doesn't show it | Feels broken | **v0.3.0** |
-| Azure OpenAI preset missing | Catalog gap | **v0.3.0** |
-| Host color underused; card weight; type hierarchy | Polish | **v0.3.0** (Track D) |
+| BYOK env stored, never injected | ✅ Injected via 0600 env file at launch | v0.3.0 |
+| Settings sections thin (Shell/Keyboard/Agents/Advanced) | ✅ Filled / searchable | v0.3.0 |
+| Launcher promises Running, doesn't show it | ✅ Running section first | v0.3.0 |
+| Azure OpenAI preset missing | ✅ Catalog + `api-key` auth | v0.3.0 |
+| Host color underused; card weight; type hierarchy | ✅ Ambient rail / hairline / hierarchy | v0.3.0 |
 | Unsigned installers (Gatekeeper/SmartScreen) | Adoption blocker | v0.4.0 |
 | No port forwarding | Table stakes | v0.4.0 |
 | Agent notifications (BEL / tmux hooks) | Highest-value wedge | v0.4.0 |
 | SFTP no recursive folder transfer | Table stakes | v0.4.0 |
 | No terminal search (⌘F) | Table stakes | v0.4.0 |
+| **No SSH agent forwarding** | 🐛 High — see §3.3 | v0.4.0+ |
 | Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
 | Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |
 | Mobile stub only | Deferred | Last |
@@ -219,7 +219,7 @@ mono-for-machine-strings / sans-for-labels rule, real empty states.
 | Version | Contents | Why |
 |---|---|---|
 | **v0.2.11** | Paste/Enter, tmux config, copy sweep | ✅ Shipped |
-| **v0.3.0** | Azure OpenAI preset, BYOK injection, Launcher Running, Settings fill/hide, Track D design | Current — [`NEXT.md`](NEXT.md) |
+| **v0.3.0** | Azure OpenAI preset, BYOK injection, Launcher Running, Settings fill/hide, Track D design | ✅ Shipped |
 | **v0.4.0** | Agent notifications, SSH agent forwarding, code signing, port forwarding, SFTP recursive, terminal search | Table stakes + wedge notifications |
 | **v0.5.0** | Windows native chrome, command history search | Platform quality |
 | **v0.6.0** | Live ProxyJump, FleetExec, snippets, cross-device scrollback | Fleet features |

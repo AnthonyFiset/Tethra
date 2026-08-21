@@ -19,25 +19,40 @@ import { modKeyLabel, shiftModLabel, type ChromeStyle } from "../lib/chrome";
 import {
   DEFAULTS,
   getChromeOpacity,
+  getDefaultShell,
   getIdleLockSecs,
   getLandingPref,
+  getLoginShell,
   getMaterialPref,
+  getTerminalBell,
   getTerminalCopyOnSelect,
   getTerminalCursorBlink,
+  getTerminalCursorStyle,
+  getTerminalFontFamily,
   getTerminalFontSize,
   getTerminalLigatures,
+  getTerminalLineHeight,
   getTerminalOpacity,
+  getTerminalScrollback,
   IDLE_LOCK_OPTIONS,
   resetTerminalPrefs,
   setChromeOpacity,
+  setDefaultShell,
   setIdleLockSecs,
   setLandingPref,
+  setLoginShell,
   setMaterialPref,
+  setTerminalBell,
   setTerminalCopyOnSelect,
   setTerminalCursorBlink,
+  setTerminalCursorStyle,
+  setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalLigatures,
+  setTerminalLineHeight,
   setTerminalOpacity,
+  setTerminalScrollback,
+  type CursorStylePref,
   type LandingPref,
   type MaterialPref,
 } from "../lib/prefs";
@@ -94,7 +109,7 @@ const SECTIONS: Array<{
     id: "shell",
     label: "Shell",
     icon: <Monitor size={14} />,
-    keywords: "shell integration osc login",
+    keywords: "shell integration osc login env",
   },
   {
     id: "vault",
@@ -112,25 +127,25 @@ const SECTIONS: Array<{
     id: "ai",
     label: "AI providers",
     icon: <Sparkles size={14} />,
-    keywords: "assist anthropic openai api key model",
+    keywords: "assist anthropic openai azure api key model",
   },
   {
     id: "agents",
     label: "Agents",
     icon: <Bot size={14} />,
-    keywords: "claude codex aider catalog",
+    keywords: "claude codex aider catalog byok inject",
   },
   {
     id: "keyboard",
     label: "Keyboard",
     icon: <Keyboard size={14} />,
-    keywords: "shortcuts keymap",
+    keywords: "shortcuts keymap search palette",
   },
   {
     id: "advanced",
     label: "Advanced",
     icon: <Wrench size={14} />,
-    keywords: "diagnostics reset layout",
+    keywords: "diagnostics reset layout version catalog",
   },
 ];
 
@@ -282,7 +297,7 @@ function SettingsBody({
             type="button"
             onClick={() => setSection(entry.id)}
             className={cn(
-              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui transition-colors",
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
               section === entry.id
                 ? "bg-hover text-fg"
                 : "text-fg-muted hover:bg-hover/60 hover:text-fg",
@@ -584,13 +599,20 @@ function AppearanceSection({
 
 function TerminalSection(): React.JSX.Element {
   const [fontSize, setFontSize] = useState(() => getTerminalFontSize());
+  const [fontFamily, setFontFamily] = useState(() => getTerminalFontFamily());
+  const [lineHeight, setLineHeight] = useState(() => getTerminalLineHeight());
   const [ligatures, setLigatures] = useState(() => getTerminalLigatures());
   const [cursorBlink, setCursorBlink] = useState(() =>
     getTerminalCursorBlink(),
   );
+  const [cursorStyle, setCursorStyle] = useState<CursorStylePref>(() =>
+    getTerminalCursorStyle(),
+  );
+  const [scrollback, setScrollback] = useState(() => getTerminalScrollback());
   const [copyOnSelect, setCopyOnSelect] = useState(() =>
     getTerminalCopyOnSelect(),
   );
+  const [bell, setBell] = useState(() => getTerminalBell());
 
   function apply(): void {
     applyTerminalPrefs();
@@ -598,6 +620,32 @@ function TerminalSection(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-4">
+      <PrefRow
+        title="Font family"
+        detail="Monospace stack for the terminal"
+        defaultLabel={DEFAULTS.fontFamily}
+        onReset={() => {
+          setFontFamily(DEFAULTS.fontFamily);
+          setTerminalFontFamily(DEFAULTS.fontFamily);
+          apply();
+        }}
+      >
+        <select
+          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          value={fontFamily}
+          onChange={(event) => {
+            setFontFamily(event.target.value);
+            setTerminalFontFamily(event.target.value);
+            apply();
+          }}
+        >
+          <option value="JetBrains Mono">JetBrains Mono</option>
+          <option value="SF Mono">SF Mono</option>
+          <option value="Menlo">Menlo</option>
+          <option value="Cascadia Code">Cascadia Code</option>
+          <option value="Consolas">Consolas</option>
+        </select>
+      </PrefRow>
       <PrefRow
         title="Font size"
         detail="Live terminals update immediately"
@@ -624,6 +672,32 @@ function TerminalSection(): React.JSX.Element {
           {fontSize}
         </span>
       </PrefRow>
+      <PrefRow
+        title="Line height"
+        detail="Spacing between terminal rows"
+        defaultLabel={String(DEFAULTS.lineHeight)}
+        onReset={() => {
+          setLineHeight(DEFAULTS.lineHeight);
+          setTerminalLineHeight(DEFAULTS.lineHeight);
+          apply();
+        }}
+      >
+        <input
+          type="range"
+          min={100}
+          max={160}
+          value={Math.round(lineHeight * 100)}
+          onChange={(event) => {
+            const next = Number(event.target.value) / 100;
+            setLineHeight(next);
+            setTerminalLineHeight(next);
+            apply();
+          }}
+        />
+        <span className="w-10 text-right font-mono text-micro text-fg-muted">
+          {lineHeight.toFixed(2)}
+        </span>
+      </PrefRow>
       <ToggleRow
         title="Ligatures"
         detail="Coding ligatures in JetBrains Mono"
@@ -635,9 +709,34 @@ function TerminalSection(): React.JSX.Element {
           apply();
         }}
       />
+      <PrefRow
+        title="Cursor style"
+        detail="Block, underline, or bar"
+        defaultLabel={DEFAULTS.cursorStyle}
+        onReset={() => {
+          setCursorStyle(DEFAULTS.cursorStyle);
+          setTerminalCursorStyle(DEFAULTS.cursorStyle);
+          apply();
+        }}
+      >
+        <select
+          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          value={cursorStyle}
+          onChange={(event) => {
+            const next = event.target.value as CursorStylePref;
+            setCursorStyle(next);
+            setTerminalCursorStyle(next);
+            apply();
+          }}
+        >
+          <option value="bar">Bar</option>
+          <option value="block">Block</option>
+          <option value="underline">Underline</option>
+        </select>
+      </PrefRow>
       <ToggleRow
         title="Cursor blink"
-        detail="Blinking bar cursor"
+        detail="Blinking cursor"
         defaultOn={DEFAULTS.cursorBlink}
         checked={cursorBlink}
         onChange={(on) => {
@@ -646,6 +745,32 @@ function TerminalSection(): React.JSX.Element {
           apply();
         }}
       />
+      <PrefRow
+        title="Scrollback"
+        detail="Lines retained above the viewport"
+        defaultLabel={`${DEFAULTS.scrollback.toLocaleString()} lines`}
+        onReset={() => {
+          setScrollback(DEFAULTS.scrollback);
+          setTerminalScrollback(DEFAULTS.scrollback);
+          apply();
+        }}
+      >
+        <select
+          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          value={scrollback}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            setScrollback(next);
+            setTerminalScrollback(next);
+            apply();
+          }}
+        >
+          <option value={5000}>5,000</option>
+          <option value={10000}>10,000</option>
+          <option value={25000}>25,000</option>
+          <option value={50000}>50,000</option>
+        </select>
+      </PrefRow>
       <ToggleRow
         title="Copy on select"
         detail="Copy selection to the clipboard automatically"
@@ -657,18 +782,32 @@ function TerminalSection(): React.JSX.Element {
           apply();
         }}
       />
+      <ToggleRow
+        title="Audible bell"
+        detail="Stored preference — visual BEL handling comes with notifications"
+        defaultOn={DEFAULTS.bell}
+        checked={bell}
+        onChange={(on) => {
+          setBell(on);
+          setTerminalBell(on);
+        }}
+      />
       <p className="m-0 text-micro text-fg-subtle">
-        Scrollback buffer is 10,000 lines. Option-as-Meta is on for macOS
-        readline / agent keybindings.
+        Option-as-Meta is on for macOS readline / agent keybindings.
       </p>
       <Button
         variant="ghost"
         onClick={() => {
           resetTerminalPrefs();
           setFontSize(DEFAULTS.fontSize);
+          setFontFamily(DEFAULTS.fontFamily);
+          setLineHeight(DEFAULTS.lineHeight);
           setLigatures(DEFAULTS.ligatures);
           setCursorBlink(DEFAULTS.cursorBlink);
+          setCursorStyle(DEFAULTS.cursorStyle);
+          setScrollback(DEFAULTS.scrollback);
           setCopyOnSelect(DEFAULTS.copyOnSelect);
+          setBell(DEFAULTS.bell);
           apply();
         }}
       >
@@ -679,15 +818,44 @@ function TerminalSection(): React.JSX.Element {
 }
 
 function ShellSection(): React.JSX.Element {
+  const [shell, setShell] = useState(() => getDefaultShell());
+  const [login, setLogin] = useState(() => getLoginShell());
+
   return (
-    <div className="flex flex-col gap-3 text-ui text-fg-muted">
-      <p className="m-0">
-        Shell integration (OSC 133 / OSC 7) is configured{" "}
+    <div className="flex flex-col gap-4">
+      <PrefRow
+        title="Default local shell"
+        detail="Empty uses $SHELL / system default. Applies to new local terminals."
+        defaultLabel="System"
+        onReset={() => {
+          setShell(DEFAULTS.defaultShell);
+          setDefaultShell(DEFAULTS.defaultShell);
+        }}
+      >
+        <input
+          className="h-8 w-48 rounded-md border border-line bg-base px-2 font-mono text-ui text-fg"
+          value={shell}
+          placeholder="/bin/zsh"
+          onChange={(event) => {
+            setShell(event.target.value);
+            setDefaultShell(event.target.value);
+          }}
+        />
+      </PrefRow>
+      <ToggleRow
+        title="Login shell"
+        detail="Pass -l when spawning the local shell"
+        defaultOn={DEFAULTS.loginShell}
+        checked={login}
+        onChange={(on) => {
+          setLogin(on);
+          setLoginShell(on);
+        }}
+      />
+      <p className="m-0 text-micro text-fg-muted">
+        Remote OSC 133 / OSC 7 shell integration is configured{" "}
         <strong className="font-medium text-fg">per host</strong> in the host
-        editor — Auto injects markers for failed-block gutters and cwd.
-      </p>
-      <p className="m-0 text-micro text-fg-subtle">
-        Default local shell and login-shell toggles are Track A follow-ups.
+        editor.
       </p>
     </div>
   );
@@ -703,8 +871,8 @@ function AgentsSection({
   return (
     <div className="flex flex-col gap-3">
       <p className="m-0 text-micro text-fg-muted">
-        Bundled catalog. Install state is probed when you create or edit a
-        project.
+        Bundled catalog. Bind an Assist key on a project to inject{" "}
+        <code className="font-mono">byokEnv</code> at launch.
       </p>
       <ul className="m-0 flex list-none flex-col gap-1 p-0">
         {active.map((agent) => (
@@ -718,6 +886,11 @@ function AgentsSection({
             <span className="shrink-0 font-mono text-micro text-fg-subtle">
               {agent.command || "—"}
             </span>
+            {(agent.byokEnv?.length ?? 0) > 0 && (
+              <span className="shrink-0 text-micro text-fg-subtle">
+                BYOK
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -740,8 +913,9 @@ function AgentsSection({
         </div>
       )}
       <p className="m-0 text-micro text-fg-subtle">
-        Bundled agents only for now. Custom presets and injecting Assist keys
-        into agent launches are not available yet.
+        Catalog edits:{" "}
+        <code className="font-mono">crates/core/data/agents.json</code>. Custom
+        presets land in a later release.
       </p>
     </div>
   );
@@ -813,6 +987,7 @@ function KeyboardSection({
 }): React.JSX.Element {
   const mod = modKeyLabel(chrome);
   const shiftMod = shiftModLabel(chrome);
+  const [query, setQuery] = useState("");
   const rows = [
     ["Command palette", `${mod}K`],
     ["Settings", chrome === "mac" ? "⌘," : "Ctrl+,"],
@@ -821,27 +996,44 @@ function KeyboardSection({
     ["Launcher ↔ Workspace", chrome === "mac" ? "⌘Esc" : "Ctrl+Esc"],
     ["Clear terminal", `${shiftMod}K`],
     ["Close tab", `${mod}W`],
+    ["New tab", `${mod}T`],
     ["Split right", chrome === "mac" ? "⌘\\" : "Ctrl+\\"],
     ["Split down", chrome === "mac" ? "⇧⌘\\" : "Ctrl+Shift+\\"],
     ["Zoom pane", chrome === "mac" ? "⇧⌘↩" : "Ctrl+Shift+Enter"],
+    ["Copy", chrome === "mac" ? "⌘C" : "Ctrl+Shift+C"],
+    ["Paste", chrome === "mac" ? "⌘V" : "Ctrl+Shift+V"],
   ];
+  const filtered = rows.filter(([label, shortcut]) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      label.toLowerCase().includes(q) || shortcut.toLowerCase().includes(q)
+    );
+  });
   return (
-    <div className="flex flex-col gap-1">
-      {rows.map(([label, shortcut]) => (
-        <div
-          key={label}
-          className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-ui"
-        >
-          <span className="text-fg-muted">{label}</span>
-          <kbd className="rounded border border-line bg-base px-1.5 py-0.5 font-mono text-micro text-fg">
-            {shortcut}
-          </kbd>
-        </div>
-      ))}
-      <p className="mt-2 mb-0 text-micro text-fg-subtle">
-        Shortcuts are fixed for now. Custom keybindings will land in a future
-        update.
-      </p>
+    <div className="flex flex-col gap-3">
+      <input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search shortcuts"
+        className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+      />
+      <div className="flex flex-col gap-1">
+        {filtered.map(([label, shortcut]) => (
+          <div
+            key={label}
+            className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-ui"
+          >
+            <span className="text-fg-muted">{label}</span>
+            <kbd className="rounded border border-line bg-base px-1.5 py-0.5 font-mono text-micro text-fg">
+              {shortcut}
+            </kbd>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <p className="m-0 px-2 text-micro text-fg-subtle">No matches.</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -871,7 +1063,30 @@ function AdvancedSection({
             {import.meta.env.DEV ? "dev" : "release"}
           </span>
         </div>
+        <div className="mt-1 flex justify-between gap-2">
+          <span>Catalog</span>
+          <span className="font-mono text-fg">bundled</span>
+        </div>
       </div>
+      <PrefRow
+        title="Export diagnostics"
+        detail="Copies version and platform info to the clipboard"
+      >
+        <Button
+          variant="subtle"
+          onClick={() => {
+            const payload = [
+              `Tethra ${appVersion ?? "?"}`,
+              `build=${import.meta.env.DEV ? "dev" : "release"}`,
+              `ua=${navigator.userAgent}`,
+              `platform=${navigator.platform}`,
+            ].join("\n");
+            void navigator.clipboard.writeText(payload);
+          }}
+        >
+          Copy
+        </Button>
+      </PrefRow>
     </div>
   );
 }
