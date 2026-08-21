@@ -24,9 +24,7 @@ pub struct UpdateInfoDto {
 fn build_updater(app: &tauri::AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     // Endpoints come from tauri.conf.json → plugins.updater.endpoints
     // (GitHub Releases latest.json).
-    app.updater_builder()
-        .build()
-        .map_err(|e| e.to_string())
+    app.updater_builder().build().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
