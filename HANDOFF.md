@@ -4,7 +4,7 @@ _Paste this into Claude Code (or any new agent session) with [`ROADMAP-v3.md`](R
 
 **As of:** 2026-08-21 (v0.2.11 paste/tmux)  
 **Repo:** https://github.com/AnthonyFiset/Tethra  
-**Branch / commit:** `main` @ `91fb76e`  
+**Branch / commit:** `main` @ `3ef7e70`  
 **Latest shipped tag:** `v0.2.9` — next tag after updater cutover is a **manual reinstall** (key rotation 2026-08-20)  
 **Canonical plan:** [`ROADMAP-v3.md`](ROADMAP-v3.md) (supersedes M10/M11 in v2; mobile deferred)
 
