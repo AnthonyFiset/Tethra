@@ -1,7 +1,7 @@
 # Tethra roadmap
 
-_Revision 5 — 2026-08-21 (updated for v0.2.11 / v0.3.0). Current plan. Filename
-stays `ROADMAP.md`; bump the revision line, not the name._
+_Revision 6 — 2026-08-21 (v0.3.0 shipped; plan focuses v0.4.0). Current plan.
+Filename stays `ROADMAP.md`; bump the revision line, not the name._
 
 _Supersedes archived `docs/archive/ROADMAP-v2.md` / `ROADMAP-v3.md`._
 
@@ -49,6 +49,15 @@ Launcher ↔ Workspace with ⌘Esc. Resume-first dashboard. Command palette. Uni
 Settings. Window materials (opaque default, vibrancy/Mica opt-in). macOS menu bar.
 Custom context menus. Assist (⌘I) — propose/explain, insert without auto-run.
 
+### v0.3.0 polish — shipped 2026-08-21
+Azure OpenAI preset (`api-key` auth, deployment names) in the catalog. BYOK
+injection at launch — vault key → preset `byok_env` names → process env; remote
+via `0600` env file (never a tmux command line; `/proc/PID/environ` caveat
+documented). Launcher shows Running first with an honest empty state. Settings
+sections filled or hidden, palette-reachable. Design Track D: `Host.color` as
+ambient identity (rail / tab / viewport hairline), type hierarchy, mono-vs-sans,
+real empty states. Brief: [`docs/archive/NEXT-v0.3.0.md`](docs/archive/NEXT-v0.3.0.md).
+
 ### Distribution — completed 2026-08-21
 - Security audit clean (`docs/PUBLIC-RELEASE-AUDIT.md`), history kept
 - **Repo public**, Apache-2.0, `SECURITY.md`, `README.md`, `CONTRIBUTING.md`
@@ -60,7 +69,7 @@ Custom context menus. Assist (⌘I) — propose/explain, insert without auto-run
 - ThinkPad mirror retired; it is now purely a vault sync server
 
 **Not yet proven:** end-to-end auto-update. All machines were installed by hand
-because of the rotation. v0.2.11 is the first real test.
+because of the rotation. The v0.2.11 → v0.3.0 update is the first real test.
 
 ---
 
@@ -82,7 +91,7 @@ because of the rotation. v0.2.11 is the first real test.
 | Agent notifications (BEL / tmux hooks) | Highest-value wedge | v0.4.0 |
 | SFTP no recursive folder transfer | Table stakes | v0.4.0 |
 | No terminal search (⌘F) | Table stakes | v0.4.0 |
-| **No SSH agent forwarding** | 🐛 High — see §3.3 | v0.4.0+ |
+| **No SSH agent forwarding** | 🐛 High — see §3.2 | v0.4.0+ |
 | Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
 | Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |
 | Mobile stub only | Deferred | Last |
@@ -128,24 +137,7 @@ straight to that session.
 
 **Settings:** per-agent notify on waiting / done / failed; global quiet hours.
 
-### 3.2 BYOK injection at launch
-
-`byok_env` is stored on agent presets and never used. Wire it up: at launch,
-resolve the project's bound provider key from the vault, map to the preset's env
-var names, inject into the agent process environment.
-
-**Why it matters:** most of these CLIs accept an OpenAI-compatible base URL. One
-OpenRouter key configured once in Tethra, injected into Claude Code, OpenCode,
-Aider, and Cline — on any host in your fleet. Warp is local-only; Termius has no
-agent story. This is the single clearest differentiator left.
-
-**⚠️ Remote injection needs care.** `VAR=secret cmd` over SSH keeps the key out of
-`argv`, but `/proc/PID/environ` is readable by the same user on that host.
-Acceptable for machines you own; document it. For anything stronger, write a
-`0600` env file, source it, unlink. Never put a key in a tmux command line — tmux
-stores and displays it.
-
-### 3.3 SSH agent forwarding — a real gap
+### 3.2 SSH agent forwarding — a real gap
 
 Not on any previous roadmap and it should be. If Claude Code is running on a
 remote host and needs to `git push`, it needs credentials there. Today the options
@@ -158,24 +150,7 @@ core-workflow, not a nice-to-have.
 Per-host opt-in with a clear warning: a root user on the remote can use your
 forwarded agent while you're connected. Default off.
 
-### 3.4 Launcher: Running as a first-class section
-
-The hero says "Resume where you left off / Running agents stay alive in tmux" and
-then shows Projects. There's no Running section.
-
-- Sessions running → list first, above everything: agent, host, project, uptime,
-  last activity, state chip from §3.1, Attach / Kill
-- Nothing running → drop the tmux hero copy entirely; show a quieter empty state
-
-Right now the hero writes a cheque the page doesn't cash.
-
-### 3.5 Settings: fill or hide
-
-Ten sections, several nearly empty. An empty section reads as broken; a missing
-one doesn't. Priority: **Terminal → Appearance → Keyboard → Shell → Agents →
-Advanced.** Also style the browser-default blue focus ring on the nav.
-
-### 3.6 Command history search
+### 3.3 Command history search
 
 You already parse every command into blocks. Make them searchable across all
 hosts and all time — "what was that docker command I ran on the VPS in June."
@@ -184,7 +159,7 @@ distinctive.
 
 Also ship plain terminal search (⌘F, `@xterm/addon-search`) — currently missing.
 
-### 3.7 Code signing
+### 3.4 Code signing
 
 macOS: Apple Developer $99/yr, Developer ID + notarization via `tauri-action`.
 Windows: check **Azure Trusted Signing** jurisdiction eligibility (US/CA/EU/UK
@@ -192,25 +167,18 @@ registered entities) at $9.99/mo; if ineligible, a Certum OV cert ~$99/yr is
 issued to individuals worldwide. Neither skips SmartScreen reputation warmup
 except EV.
 
-### 3.8 Windows as a first-class target
+### 3.5 Windows as a first-class target
 
-Specced in [`docs/milestones/M12.5.md`](docs/milestones/M12.5.md) Track C, not built. A `ChromeStyle`
-abstraction (`'mac' | 'win' | 'linux'`) resolved once, not `if (isWindows)`
-scattered through components. Segoe UI Variable, Mica, right-side caption buttons,
-system accent, Fluent settings page.
+[`docs/milestones/M12.5.md`](docs/milestones/M12.5.md) Track C landed the
+foundation: a `ChromeStyle` abstraction (`'mac' | 'win' | 'linux'`) resolved once,
+`tauri-plugin-decoration`, Segoe UI Variable, caption-button clearance, system
+accent, Mica opt-in via Track B. What remains for v0.5.0 is the deeper pass —
+Fluent settings page, acrylic tuning, per-platform QA — so Windows feels native
+rather than ported.
 
 **⚠️ The trap:** `decorations: false` silently breaks Windows 11 Snap Layouts.
 Use `tauri-plugin-decoration` (native `HTMAXBUTTON` overlay) — it also handles the
 macOS traffic-light inset, so one crate covers both.
-
-### 3.9 Design polish
-
-From M12.5 Track D — **in v0.3.0**. Highest ratio of identity to effort: **promote
-`Host.color` from a 1px border to ambient identity** — collapsed rail indicator,
-active tab underline, terminal viewport hairline.
-
-Also: reduce host-card button weight, fix inverted type hierarchy, enforce the
-mono-for-machine-strings / sans-for-labels rule, real empty states.
 
 ---
 
@@ -225,8 +193,9 @@ mono-for-machine-strings / sans-for-labels rule, real empty states.
 | **v0.6.0** | Live ProxyJump, FleetExec, snippets, cross-device scrollback | Fleet features |
 | **Later** | Hosted sync tier, mobile | See Part 5 |
 
-**Everything in v0.3.0 serves the wedge.** Nothing in v0.4.0 does, but it's what
-makes the app usable by someone who isn't you.
+**v0.4.0 carries the wedge** — notifications are what make persistence useful
+rather than merely true. v0.3.0 was the polish pass; signing, port forwarding,
+SFTP recursive, and ⌘F are what make the app usable by someone who isn't you.
 
 ---
 
@@ -275,5 +244,5 @@ or a payment. Preserve the seam (`Transport::Managed`) either way.
 - **Public catalog hosting** — bundled JSON only today; a public URL means
   strangers get new agent presets without waiting for a release
 - **Zellij parity** — supported as a fallback; tmux gets all the attention
-- **When to announce** — the repo is public but unannounced. v0.3.0 with
-  notifications working is the version worth showing people
+- **When to announce** — the repo is public but unannounced, zero users. v0.4.0
+  with notifications working is the version worth showing people

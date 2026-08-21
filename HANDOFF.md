@@ -120,5 +120,6 @@ Details: [`docs/UPDATES.md`](docs/UPDATES.md).
 | [`HANDOFF.md`](HANDOFF.md) | This brief |
 | [`README.md`](README.md) | Product / install / threat model |
 | [`docs/UPDATES.md`](docs/UPDATES.md) | Self-update |
+| [`docs/AZURE.md`](docs/AZURE.md) | Azure credit constraints (maintainer notes) |
 | [`docs/milestones/`](docs/milestones/) | Historical milestone writeups |
 | [`docs/archive/`](docs/archive/) | Superseded roadmaps + completed NEXT / STATUS |
