@@ -4,7 +4,7 @@ _Paste this into a new agent session with [`ROADMAP.md`](ROADMAP.md) / [`PROJECT
 
 **As of:** 2026-08-21  
 **Repo:** https://github.com/AnthonyFiset/Tethra (public)  
-**Branch / commit:** `main` @ `e0357de`  
+**Branch / commit:** `main` @ `5f58532`  
 **Latest tag:** `v0.3.0`  
 **Current task:** none — see [`ROADMAP.md`](ROADMAP.md)  
 **Status / plan:** [`ROADMAP.md`](ROADMAP.md) — **only** place milestone status lives
