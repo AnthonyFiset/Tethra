@@ -596,7 +596,7 @@ for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
 done
 export PATH
 if command -v tmux >/dev/null 2>&1; then
-  tmux kill-session -t '{name}' 2>/dev/null || true
+  tmux -L tethra kill-session -t '{name}' 2>/dev/null || true
 fi
 if command -v zellij >/dev/null 2>&1; then
   zellij kill-session '{name}' 2>/dev/null || zellij delete-session -f '{name}' 2>/dev/null || true
@@ -614,7 +614,7 @@ for _p in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
 done
 export PATH
 echo TETHRA_MUX_BEGIN
-if command -v tmux >/dev/null 2>&1 && tmux has-session -t '{name}' 2>/dev/null; then
+if command -v tmux >/dev/null 2>&1 && tmux -L tethra has-session -t '{name}' 2>/dev/null; then
   echo alive=1
 elif command -v zellij >/dev/null 2>&1 && zellij list-sessions 2>/dev/null | grep -F '{name}' >/dev/null; then
   echo alive=1

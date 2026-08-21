@@ -103,8 +103,8 @@ export function SshConfigImportModal({
         {hasIdentityFiles && (
           <Notice tone="info">
             IdentityFile references were detected. Import covers host metadata
-            only; add a password by editing the host. Private-key identities
-            remain deferred.
+            only; add a password by editing the host. Private keys stay on each
+            device and are not imported.
           </Notice>
         )}
 

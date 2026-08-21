@@ -6,12 +6,9 @@
  * DA and OSC 10/11 color report replies that bash treats as typed input:
  *   `1;2c0;276;0c10;rgb:e8e8/e8e8/e8e811;rgb:0d0d/0d0d/0d0dnpm install …`
  *
- * Defense in depth:
- * 1. Early `armShellInjectGate` on button pointerdown
- * 2. Drop xterm onData + non-force IPC for ~2s
- * 3. Always filter pure device-report chunks in registry `onData`
- * 4. Ctrl-U before the payload so any prior junk is killed
- * 5. Force IPC so the kill-line + command still go through
+ * Paste (⌘V / context menu / Edit→Paste) also routes here with
+ * `{ clearLine: false }`. That path must NOT arm blur/suppress — doing so
+ * stole focus and dropped the next Enter for ~2.5s (v0.2.10 regression).
  */
 
 import { sendTerminalInput, suppressPtyUserInput } from "../lib/ipc";
@@ -35,6 +32,7 @@ type Gates = {
   suppressAll: (ms: number) => void;
   armShield: (ms: number) => void;
   blurAll?: () => void;
+  focus?: (sessionId: string) => void;
 };
 
 let gates: Gates | null = null;
@@ -109,15 +107,31 @@ export function sanitizeShellPayload(text: string): string {
   );
 }
 
+/**
+ * Wrap multi-line payloads in bracketed-paste markers so the shell treats
+ * embedded newlines as literal input instead of submitting each line.
+ * Applied after sanitize (which strips foreign ESC sequences).
+ */
+export function withBracketedPaste(text: string): string {
+  if (!text.includes("\n")) return text;
+  return `\u001b[200~${text}\u001b[201~`;
+}
+
 export interface InjectShellOptions {
   /** Append Enter after the text. */
   run?: boolean;
   /**
    * Send Ctrl-U first so a polluted prompt (device reports, half-typed junk)
-   * is cleared before the command. Default true.
+   * is cleared before the command. Default true for insert buttons.
+   * Paste passes false.
    */
   clearLine?: boolean;
-  /** How long to suppress xterm onData + IPC input after inject. */
+  /**
+   * Arm blur / onData suppress / click shield. Default: same as clearLine
+   * (on for insert, off for paste). Paste must not blur or suppress Enter.
+   */
+  armGates?: boolean;
+  /** How long to suppress xterm onData + IPC input after gated inject. */
   suppressMs?: number;
 }
 
@@ -140,7 +154,8 @@ function forceInput(sessionId: string, payload: string): Promise<void> {
 
 /**
  * Single entry point for every "type this into the terminal" UI action.
- * Also call {@link armShellInjectGate} on the button's pointerdown.
+ * Insert buttons should call {@link armShellInjectGate} on pointerdown.
+ * Paste should use `{ clearLine: false }` and never arm gates.
  */
 export function injectShellText(
   sessionId: string,
@@ -150,10 +165,21 @@ export function injectShellText(
   const clean = sanitizeShellPayload(text).replace(/^\n+|\n+$/g, "");
   if (!clean) return;
 
-  const suppressMs = options.suppressMs ?? 2500;
   const clearLine = options.clearLine !== false;
+  const useGates = options.armGates ?? clearLine;
+  const suppressMs = options.suppressMs ?? 2500;
   const run = options.run === true;
-  const body = `${clean}${run ? "\n" : ""}`;
+  const payload = withBracketedPaste(clean);
+  const body = `${payload}${run ? "\n" : ""}`;
+
+  if (!useGates) {
+    // Paste / soft inject: do not blur or suppress keyboard. Always-on
+    // device-report filtering in registry still strips DA/OSC replies.
+    void forceInput(sessionId, body).finally(() => {
+      gates?.focus?.(sessionId);
+    });
+    return;
+  }
 
   armGates(suppressMs);
 
@@ -164,21 +190,17 @@ export function injectShellText(
       armGates(suppressMs);
 
       const deliver = async (): Promise<void> => {
-        if (clearLine) {
-          // Kill whatever is on the bash edit buffer before the command.
-          await forceInput(sessionId, "\u0015");
-          // Brief delay: let the kill-line land, re-arm for late DA chunks.
-          await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, 50);
-          });
-          armGates(Math.max(800, suppressMs - 300));
-          // Second Ctrl-U: anything that landed in the gap dies too.
-          await forceInput(sessionId, `\u0015${body}`);
-        } else {
-          await forceInput(sessionId, body);
-        }
-        // Hold gates after inject so post-paste focus reports die too.
+        // Kill whatever is on the bash edit buffer before the command.
+        await forceInput(sessionId, "\u0015");
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 50);
+        });
+        armGates(Math.max(800, suppressMs - 300));
+        // Second Ctrl-U: anything that landed in the gap dies too.
+        await forceInput(sessionId, `\u0015${body}`);
+        // Hold gates after inject so post-insert focus reports die too.
         armGates(Math.max(600, Math.min(suppressMs, 1200)));
+        gates?.focus?.(sessionId);
       };
 
       void deliver();

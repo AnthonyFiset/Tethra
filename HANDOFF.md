@@ -2,7 +2,7 @@
 
 _Paste this into Claude Code (or any new agent session) with [`ROADMAP-v3.md`](ROADMAP-v3.md) and [`PROJECT.md`](PROJECT.md) if needed. Longer engineering diary: [`STATUS.md`](STATUS.md)._
 
-**As of:** 2026-08-21  
+**As of:** 2026-08-21 (v0.2.11 paste/tmux)  
 **Repo:** https://github.com/AnthonyFiset/Tethra  
 **Branch / commit:** `main` @ `91fb76e`  
 **Latest shipped tag:** `v0.2.9` — next tag after updater cutover is a **manual reinstall** (key rotation 2026-08-20)  
@@ -159,7 +159,7 @@ apps/ui              React; apps/ui/src/lib/ipc.ts is the ONLY invoke() surface
 
 ## Known landmines (read before coding)
 
-1. **Device-report filter** — xterm answers DA / OSC 10–11 via `onData`. Filtering is required for Insert buttons, but **must not drop Enter/Tab/Ctrl-C**. See v0.2.8 → v0.2.9. Any change to `looksLikeDeviceReport` / `stripDeviceReports` needs both: pure-report drop **and** C0 keystroke pass-through tests.
+1. **Device-report filter + insert gates** — xterm answers DA / OSC 10–11 via `onData`. Insert buttons must arm gates; **paste must not** (`clearLine: false`) or blur/suppress steals focus and drops Enter. `looksLikeDeviceReport` must never classify lone C0 (`\r`/`\t`/`\x03`) as reports. See v0.2.8–v0.2.11.
 2. **Passwords don’t sync by default** — hosts sync; identities need `sync_secret` or re-entry on the peer. `IdentityNotFound` UX improved in v0.2.8 (host form banner + clearer error).
 3. **Modal → PTY focus** — dialog close can focus xterm and fire DA/color replies; inject path uses suppress + click shield + Ctrl-U. Don’t “simplify” Insert to raw `sendTerminalInput`.
 4. **Edit → Copy/Paste on Mac** — xterm’s hidden textarea is not a form field; selection is cleared by menu-bar focus (use selection cache). See v0.2.7 notes.

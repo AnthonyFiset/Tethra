@@ -519,9 +519,8 @@ export function Launcher({
             </Button>
           </form>
           <p className="m-0 text-micro text-fg-subtle">
-            Matches a vault host and connects immediately. Otherwise opens Add
-            host with the fields filled in — nothing is saved until you confirm.
-            True one-off sessions without the vault land in a later slice.
+            Connects immediately if it matches a saved host, otherwise opens Add
+            host prefilled.
           </p>
         </motion.section>
       </div>

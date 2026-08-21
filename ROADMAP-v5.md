@@ -1,0 +1,276 @@
+# Tethra roadmap — v5
+
+_Full status and forward plan at `v0.2.10`. Supersedes [`ROADMAP-v4.md`](ROADMAP-v4.md)._
+_Written 2026-08-21, immediately after going public and cutting over to GitHub Releases._
+
+---
+
+## Product, restated
+
+Tethra is an E2E-encrypted SSH/SFTP vault client that **hosts coding agents**
+across your machines. Not an agent itself.
+
+**Wedge:** tmux persistence + vault sync reattach. Start Claude Code on the
+ThinkPad from your MacBook, close the lid, resume from your Windows desktop.
+Warp is local-only. Termius has no agent story. Nobody ships the combination.
+
+**Non-negotiable:** nobody can read your vault, including us. Every business
+decision is subordinate to that.
+
+---
+
+## Part 1 — What's done
+
+### Foundation
+Portable `crates/core` with SSH PTY/exec/SFTP, vault crypto (Argon2id + HKDF +
+XChaCha20-Poly1305, per-item encryption), sync (`FileBackend` + `HttpBackend`),
+coordinated re-key, opt-in password `sync_secret`, iOS portability guard in CI.
+
+### Terminal
+OSC 133 blocks, alt-screen, truecolor, bracketed paste, OSC 52/7, Unicode 11,
+mouse. Splits and multi-window. Sessions live in Rust by ID — closing a window
+doesn't kill them. Same-device scrollback via `addon-serialize` + IndexedDB.
+DEC 2026 ED2/ED3 scroll-jump filter for agent TUIs.
+
+### Agents and projects
+Projects (local or remote host + path), `AgentSpec` catalog, open → cd → launch,
+tmux/zellij persistence, RunningSessions with reattach. Tab × = detach; sidebar
+Kill = kill mux. Tools probe + install dialog.
+
+### Catalogs
+Bundled `agents.json` and `assist_providers.json` as **data, not code**. Assist
+provider flow: preset → paste key → Test (`GET /models`) → live model list → save
+as vault item. Gemini CLI marked deprecated → Antigravity successor.
+
+### Product UI
+Launcher ↔ Workspace with ⌘Esc. Resume-first dashboard. Command palette. Unified
+Settings. Window materials (opaque default, vibrancy/Mica opt-in). macOS menu bar.
+Custom context menus. Assist (⌘I) — propose/explain, insert without auto-run.
+
+### Distribution — completed 2026-08-21
+- Security audit clean (`docs/PUBLIC-RELEASE-AUDIT.md`), history kept
+- **Repo public**, Apache-2.0, `SECURITY.md`, `README.md`, `CONTRIBUTING.md`
+- Secret scanning, push protection, AI detection, Dependabot, code scanning on
+- Ruleset on `main` blocking force-push and deletion
+- **Updater signing key rotated** after exposure; old key destroyed
+- **GitHub Releases as the only update channel** — `tauri-action`, four-platform
+  matrix, auto-publish on tag, no mirror, no `dangerousInsecureTransportProtocol`
+- ThinkPad mirror retired; it is now purely a vault sync server
+
+**Not yet proven:** end-to-end auto-update. All machines were installed by hand
+because of the rotation. v0.2.11 is the first real test.
+
+---
+
+## Part 2 — Known bugs and gaps
+
+| Item | Severity | Where |
+|---|---|---|
+| Paste needs refocus + double Enter | 🐛 High — daily friction | v0.2.11 |
+| tmux swallows OSC 133 / OSC 52 (`allow-passthrough` unset) | 🐛 High — silently breaks blocks + remote clipboard in every persistent session | v0.2.11 |
+| tmux green status bar | Visual | v0.2.11 |
+| Roadmap language in UI | Visual | v0.2.11 |
+| **No SSH agent forwarding** | 🐛 High — see §3.3 | v0.3.0 |
+| BYOK env stored, never injected | Feature gap | v0.3.0 |
+| Settings sections thin (Shell/Keyboard/Agents/Advanced) | Feels broken | v0.3.0 |
+| Launcher promises Running, doesn't show it | Feels broken | v0.3.0 |
+| Unsigned installers (Gatekeeper/SmartScreen) | Adoption blocker | v0.4.0 |
+| No port forwarding | Table stakes | v0.4.0 |
+| SFTP no recursive folder transfer | Table stakes | v0.4.0 |
+| No terminal search (⌘F) | Table stakes | v0.4.0 |
+| Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
+| Design: host color underused, card weight, type hierarchy | Polish | v0.5.0 |
+| Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |
+| Mobile stub only | Deferred | Last |
+
+---
+
+## Part 3 — The next big features, specced
+
+### 3.1 Agent notifications — **the highest-value thing left**
+
+Agents run for tens of minutes and then *wait for input*. Today you have to go
+look. This is what makes persistence **useful** rather than merely true, and
+nothing else does it across a fleet.
+
+**States:** `running` → `waiting` → `done` / `failed`
+
+**Detection — don't rely on OSC 133 alone.** Once an agent takes over the screen,
+it owns the TUI and won't emit prompt markers. Layer the signals:
+
+| Signal | Meaning | Reliability |
+|---|---|---|
+| **BEL (`\a`)** | Agent wants attention | High — Claude Code and others emit this |
+| **OSC 9 / OSC 777** | Explicit desktop notification request | High where supported |
+| **OSC 133;D + exit code** | Command finished, success or failure | High for shell commands |
+| Output silence > N seconds while process alive | Probably waiting | Heuristic, tunable, last resort |
+
+**⚠️ The hard part — detached sessions.** When you detach, Tethra stops reading
+the PTY, so it can't see BEL. But notifying about *detached* sessions is the whole
+point. Two approaches:
+
+1. **tmux-native.** `monitor-silence` / `monitor-activity` plus `set-hook` on
+   `alert-silence` / `alert-bell` running a shell command that pings Tethra. No
+   persistent connection, survives Tethra being closed. Preferred.
+2. **Monitor connection.** Keep a lightweight reader per running session that
+   discards output and watches for signals. Simpler, but costs a connection per
+   session and dies when Tethra does.
+
+Prototype (1) first. This is the interesting engineering in the whole roadmap.
+
+**Surfaces:** native notification (`tauri-plugin-notification`), tab badge,
+Running-list state chip, dock/taskbar badge count. Click a notification → jump
+straight to that session.
+
+**Settings:** per-agent notify on waiting / done / failed; global quiet hours.
+
+### 3.2 BYOK injection at launch
+
+`byok_env` is stored on agent presets and never used. Wire it up: at launch,
+resolve the project's bound provider key from the vault, map to the preset's env
+var names, inject into the agent process environment.
+
+**Why it matters:** most of these CLIs accept an OpenAI-compatible base URL. One
+OpenRouter key configured once in Tethra, injected into Claude Code, OpenCode,
+Aider, and Cline — on any host in your fleet. Warp is local-only; Termius has no
+agent story. This is the single clearest differentiator left.
+
+**⚠️ Remote injection needs care.** `VAR=secret cmd` over SSH keeps the key out of
+`argv`, but `/proc/PID/environ` is readable by the same user on that host.
+Acceptable for machines you own; document it. For anything stronger, write a
+`0600` env file, source it, unlink. Never put a key in a tmux command line — tmux
+stores and displays it.
+
+### 3.3 SSH agent forwarding — a real gap
+
+Not on any previous roadmap and it should be. If Claude Code is running on a
+remote host and needs to `git push`, it needs credentials there. Today the options
+are a deploy key on the box or nothing.
+
+Agent forwarding (`ForwardAgent`) makes the local SSH agent available remotely, so
+the agent can do git operations without any key living on the server. This is
+core-workflow, not a nice-to-have.
+
+Per-host opt-in with a clear warning: a root user on the remote can use your
+forwarded agent while you're connected. Default off.
+
+### 3.4 Launcher: Running as a first-class section
+
+The hero says "Resume where you left off / Running agents stay alive in tmux" and
+then shows Projects. There's no Running section.
+
+- Sessions running → list first, above everything: agent, host, project, uptime,
+  last activity, state chip from §3.1, Attach / Kill
+- Nothing running → drop the tmux hero copy entirely; show a quieter empty state
+
+Right now the hero writes a cheque the page doesn't cash.
+
+### 3.5 Settings: fill or hide
+
+Ten sections, several nearly empty. An empty section reads as broken; a missing
+one doesn't. Priority: **Terminal → Appearance → Keyboard → Shell → Agents →
+Advanced.** Also style the browser-default blue focus ring on the nav.
+
+### 3.6 Command history search
+
+You already parse every command into blocks. Make them searchable across all
+hosts and all time — "what was that docker command I ran on the VPS in June."
+Warp has this locally; you'd have it fleet-wide. Cheap given blocks exist, and
+distinctive.
+
+Also ship plain terminal search (⌘F, `@xterm/addon-search`) — currently missing.
+
+### 3.7 Code signing
+
+macOS: Apple Developer $99/yr, Developer ID + notarization via `tauri-action`.
+Windows: check **Azure Trusted Signing** jurisdiction eligibility (US/CA/EU/UK
+registered entities) at $9.99/mo; if ineligible, a Certum OV cert ~$99/yr is
+issued to individuals worldwide. Neither skips SmartScreen reputation warmup
+except EV.
+
+### 3.8 Windows as a first-class target
+
+Specced in [`docs/M12.5.md`](docs/M12.5.md) Track C, not built. A `ChromeStyle`
+abstraction (`'mac' | 'win' | 'linux'`) resolved once, not `if (isWindows)`
+scattered through components. Segoe UI Variable, Mica, right-side caption buttons,
+system accent, Fluent settings page.
+
+**⚠️ The trap:** `decorations: false` silently breaks Windows 11 Snap Layouts.
+Use `tauri-plugin-decoration` (native `HTMAXBUTTON` overlay) — it also handles the
+macOS traffic-light inset, so one crate covers both.
+
+### 3.9 Design polish
+
+From M12.5 Track D. Highest ratio of identity to effort: **promote `Host.color`
+from a 1px border to ambient identity** — collapsed rail indicator, active tab
+underline, terminal viewport hairline. You have three hosts in three colors and
+can't tell which machine you're on without reading. It's a safety property.
+
+Also: reduce host-card button weight, fix inverted type hierarchy, enforce the
+mono-for-machine-strings / sans-for-labels rule, real empty states.
+
+---
+
+## Part 4 — Release plan
+
+| Version | Contents | Why |
+|---|---|---|
+| **v0.2.11** | Paste/Enter bugs, tmux config, copy sweep | Bugs + first auto-update test — [`NEXT-v0.2.11.md`](NEXT-v0.2.11.md) |
+| **v0.3.0** | Agent notifications, BYOK injection, agent forwarding, Launcher Running, Settings fill | Completes the wedge |
+| **v0.4.0** | Code signing, port forwarding, SFTP recursive, terminal search, onboarding | Table stakes for strangers |
+| **v0.5.0** | Windows native chrome, design polish, command history search | Platform quality |
+| **v0.6.0** | Live ProxyJump, FleetExec, snippets, cross-device scrollback | Fleet features |
+| **Later** | Hosted sync tier, mobile | See Part 5 |
+
+**Everything in v0.3.0 serves the wedge.** Nothing in v0.4.0 does, but it's what
+makes the app usable by someone who isn't you.
+
+---
+
+## Part 5 — Business model (unchanged from v4)
+
+**Phase 1 — free, BYOK, self-host.** Where you are. No account, no server, no
+payment. Public default is bring-your-own-key. Anthony's personal default is Azure
+OpenAI on startup credits — **preset in the catalog, key in local settings only,
+never committed.**
+
+**Phase 2 — hosted sync subscription.** We store ciphertext blobs and can't read
+them. Near-zero hosting cost, no content support burden, self-host stays free
+forever. Needs accounts, Stripe, server-side entitlements, one-click export.
+Azure credits could host the prototype — that's the one legitimate use for them.
+
+**Phase 3 — managed inference.** Deliberately last. It makes you an LLM reseller
+with thin margins, prepaid fraud exposure, and content liability — and it's the
+only feature that puts an asterisk on "we can't see anything," since Assist
+prompts would flow through your proxy. **Consider an OpenRouter affiliate
+arrangement instead:** users get credits, you get a cut, you never touch a prompt
+or a payment. Preserve the seam (`Transport::Managed`) either way.
+
+---
+
+## Part 6 — Hard rules
+
+1. No Tauri / wry / tao in `core` (CI checks the dep tree)
+2. Plaintext secrets never cross IPC; none in React state or web storage
+3. Session state in Rust by ID; layout is frontend; closing a window ≠ killing sessions
+4. Host agents, don't become one — Assist stays small
+5. Shell out to tmux/zellij; never build a multiplexer
+6. Private keys stay device-local; passwords use `sync_secret`
+7. Stay on Radix and xterm.js
+8. Catalogs are data
+9. Tab close = detach; Kill = kill mux
+10. The vault key never leaves the device
+11. Accounts are additive — everything that works without one keeps working
+12. No personal credentials in the repo, ever
+
+---
+
+## Part 7 — Open decisions
+
+- **Apple Developer $99/yr** — gates macOS adoption by anyone but you
+- **Windows cert path** — depends on Trusted Signing jurisdiction eligibility
+- **Public catalog hosting** — bundled JSON only today; a public URL means
+  strangers get new agent presets without waiting for a release
+- **Zellij parity** — supported as a fallback; tmux gets all the attention
+- **When to announce** — the repo is public but unannounced. v0.3.0 with
+  notifications working is the version worth showing people

@@ -740,7 +740,8 @@ function AgentsSection({
         </div>
       )}
       <p className="m-0 text-micro text-fg-subtle">
-        Custom presets and BYOK env injection are deferred.
+        Bundled agents only for now. Custom presets and injecting Assist keys
+        into agent launches are not available yet.
       </p>
     </div>
   );
@@ -838,7 +839,8 @@ function KeyboardSection({
         </div>
       ))}
       <p className="mt-2 mb-0 text-micro text-fg-subtle">
-        Rebindable keymap with conflict detection is a later Track A slice.
+        Shortcuts are fixed for now. Custom keybindings will land in a future
+        update.
       </p>
     </div>
   );

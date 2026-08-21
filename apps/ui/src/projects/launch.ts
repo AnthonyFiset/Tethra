@@ -1,4 +1,5 @@
 import type { AgentSpecDto } from "../lib/ipc";
+import { TETHRA_TMUX_CONF, TETHRA_TMUX_SOCKET } from "./tmuxConf";
 
 /** Escape a value for single-quoted POSIX shell use. */
 export function shellSingleQuote(value: string): string {
@@ -26,6 +27,10 @@ export function muxSessionName(projectId: string): string {
  * Persistent agents prefer `tmux new-session -A`, then zellij, else a plain
  * launch with a stderr warning. Windows local skips POSIX mux (in-app detach
  * + spawn cwd handle resume / working directory).
+ *
+ * tmux uses a dedicated socket (`-L tethra`) and an embedded Tethra config
+ * (`allow-passthrough`, no status bar) so OSC 133/52 work and we never load
+ * the user's `~/.tmux.conf`.
  */
 export function projectLaunchScript(options: {
   projectId: string;
@@ -61,6 +66,9 @@ export function projectLaunchScript(options: {
 
   const sessionQ = shellSingleQuote(muxSessionName(options.projectId));
   const inner = argv ?? "$SHELL";
+  const socketQ = shellSingleQuote(TETHRA_TMUX_SOCKET);
+  // Heredoc body — conf has no expansions.
+  const confHeredoc = TETHRA_TMUX_CONF;
 
   // Prefer a login-like PATH before probing / installing (Homebrew on macOS).
   const pathBootstrap = [
@@ -87,7 +95,12 @@ export function projectLaunchScript(options: {
     ...pathBootstrap,
     ...ensureRemote,
     `if command -v tmux >/dev/null 2>&1; then`,
-    `  tmux new-session -A -s ${sessionQ} -c ${pathQ} -- ${inner}`,
+    `  _tethra_tmux_conf=$(mktemp "\${TMPDIR:-/tmp}/tethra-tmux.XXXXXX") || exit 1`,
+    `  cat > "\$_tethra_tmux_conf" <<'TETHRA_TMUX_EOF'`,
+    confHeredoc,
+    `TETHRA_TMUX_EOF`,
+    `  tmux -L ${socketQ} -f "\$_tethra_tmux_conf" new-session -A -s ${sessionQ} -c ${pathQ} -- ${inner}`,
+    `  rm -f "\$_tethra_tmux_conf"`,
     `elif command -v zellij >/dev/null 2>&1; then`,
     `  cd ${pathQ} && zellij attach -c ${sessionQ} -- ${inner}`,
     `else`,

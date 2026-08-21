@@ -123,12 +123,6 @@ export function armClickShield(durationMs = 400): void {
   window.setTimeout(() => el.remove(), durationMs);
 }
 
-bindInjectGates({
-  suppressAll: suppressAllTerminalUserInput,
-  armShield: armClickShield,
-  blurAll: blurAllTerminals,
-});
-
 export function createTerminal(
   sessionId: string,
   callbacks: TerminalCallbacks,
@@ -340,6 +334,13 @@ export function writeTerminalMessage(sessionId: string, message: string): void {
 export function focusTerminal(sessionId: string): void {
   terminals.get(sessionId)?.terminal.focus();
 }
+
+bindInjectGates({
+  suppressAll: suppressAllTerminalUserInput,
+  armShield: armClickShield,
+  blurAll: blurAllTerminals,
+  focus: focusTerminal,
+});
 
 export function getTerminalCwd(sessionId: string): string | undefined {
   return terminals.get(sessionId)?.cwd;
