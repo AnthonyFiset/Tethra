@@ -24,7 +24,12 @@ subscription identifiers belong in this file — see hard rule 12._
   preset ships in the catalog; the key lives in local app settings only
   ([`ROADMAP.md`](../ROADMAP.md) Part 5, Phase 1).
 - The one legitimate product use for the credits is **hosting the Phase 2
-  ciphertext-only sync prototype**.
+  ciphertext-only sync prototype** — live as of 2026-08-21: `tethra-sync-server`
+  runs on Container Apps (min replicas 1, Azure Files volume for the data dir,
+  Azure-terminated TLS), image built and pushed to ACR by the
+  `sync-server-image` workflow. Deployment note: the container needs
+  `TETHRA_SYNC_ALLOW_ENROLL=true` (or `TETHRA_SYNC_TOKEN`) — `serve` refuses to
+  start with neither.
 - **Azure Artifact Signing** (renamed from Trusted Signing; $9.99/mo, Windows
   code signing) accepts individual developers in the US or Canada, and orgs in
   US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL. Identity validation takes 1–20 business
