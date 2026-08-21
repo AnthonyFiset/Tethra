@@ -1345,6 +1345,12 @@ function Workspace({
     // reattachSession closes over projects — refresh when unlocked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.unlocked, projects]);
+
+  useEffect(() => {
+    if (!status.unlocked || runningSessions.length === 0) {
+      void setDockBadge(0).catch(() => undefined);
+      return;
+    }
     const badge = runningSessions.filter((session) => {
       const state = sessionAttention[session.id]?.state;
       return state === "waiting" || state === "failed";
