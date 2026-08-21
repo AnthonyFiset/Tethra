@@ -51,6 +51,8 @@ pub struct SyncStatusDto {
     pub configured: bool,
     pub backend_kind: String,
     pub detail: Option<String>,
+    /// Device-auth status for HTTP backends (enrolled / authenticated / legacy).
+    pub device_auth: Option<String>,
     pub last_cursor: Option<String>,
     pub last_synced_at: Option<String>,
     pub last_error: Option<String>,
@@ -85,6 +87,7 @@ impl From<&CoreSyncStatus> for SyncStatusDto {
             configured: status.configured,
             backend_kind: status.backend_kind.clone(),
             detail: None,
+            device_auth: None,
             last_cursor: status.last_cursor.clone(),
             last_synced_at: status.last_synced_at.clone(),
             last_error: status.last_error.clone(),
@@ -130,7 +133,9 @@ pub fn save_settings(data_dir: &std::path::Path, settings: &SyncSettings) -> Res
 pub fn build_engine(
     vault: Arc<ssh_client_core::vault::Vault>,
     settings: &SyncSettings,
+    http_slot: &mut Option<Arc<HttpBackend>>,
 ) -> Option<Arc<SyncEngine>> {
+    *http_slot = None;
     match &settings.backend {
         SyncBackendConfig::Disabled => None,
         SyncBackendConfig::File { path } => {
@@ -139,8 +144,26 @@ pub fn build_engine(
         }
         SyncBackendConfig::Http { url, token } => {
             let backend = Arc::new(HttpBackend::new(url, token.clone()));
+            *http_slot = Some(Arc::clone(&backend));
             Some(Arc::new(SyncEngine::new(vault, backend, "http")))
         }
+    }
+}
+
+/// Attach vault auth_key to the live HTTP backend after unlock / configure.
+pub async fn wire_vault_auth(state: &AppState) {
+    let vault = state.repo.vault();
+    let Ok(key) = vault.auth_key().await else {
+        return;
+    };
+    let http = state.http_backend.lock().await.clone();
+    let Some(http) = http else {
+        return;
+    };
+    http.set_auth_key(key).await;
+    match http.enroll().await {
+        Ok(()) => tracing::debug!("sync device auth enrolled or already present"),
+        Err(err) => tracing::debug!(%err, "sync enroll skipped"),
     }
 }
 
@@ -154,23 +177,7 @@ fn detail_for(settings: &SyncSettings) -> Option<String> {
 
 #[tauri::command]
 pub async fn sync_status(state: State<'_, AppState>) -> Result<SyncStatusDto, String> {
-    let settings = state.sync_settings.lock().await.clone();
-    if let Some(engine) = state.sync_engine.lock().await.as_ref() {
-        let mut dto = SyncStatusDto::from(&engine.status().await);
-        dto.detail = detail_for(&settings);
-        return Ok(dto);
-    }
-    Ok(SyncStatusDto {
-        configured: false,
-        backend_kind: "disabled".into(),
-        detail: None,
-        last_cursor: None,
-        last_synced_at: None,
-        last_error: None,
-        last_pulled: 0,
-        last_pushed: 0,
-        last_applied: 0,
-    })
+    sync_status_snapshot(&state).await
 }
 
 #[tauri::command]
@@ -203,21 +210,55 @@ pub async fn sync_configure_http(
 
 /// Join an existing sync server before this device has a vault: adopt the
 /// shared header so the same master password unlocks the synced rows.
+///
+/// Prefer `password` (vault-derived device auth). `token` is the legacy
+/// shared secret path.
 #[tauri::command]
 pub async fn sync_join_http(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     url: String,
     token: Option<String>,
+    password: Option<String>,
     reset_existing: Option<bool>,
 ) -> Result<SyncJoinResultDto, String> {
     let settings = SyncSettings {
         backend: SyncBackendConfig::Http {
-            url,
+            url: url.clone(),
             token: token.filter(|value| !value.is_empty()),
         },
     };
     let status = apply_settings(&app, &state, settings).await?;
+
+    if let Some(password) = password.filter(|p| !p.is_empty()) {
+        let http = state
+            .http_backend
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| "HTTP sync is not configured".to_string())?;
+        let public = http
+            .fetch_vault_header_public()
+            .await
+            .map_err(|e| e.to_string())?;
+        let derived =
+            ssh_client_core::vault::derive_keys(password.as_bytes(), &public.salt, &public.argon2)
+                .map_err(|e| e.to_string())?;
+        http.set_auth_key(derived.auth_key).await;
+        drop(derived);
+        // Warm the session so bootstrap auth errors are clear.
+        if let Err(err) = http.ensure_session().await {
+            // Not enrolled yet — try enroll (needs allow-enroll or legacy token).
+            let _ = http.enroll().await;
+            http.ensure_session().await.map_err(|e| {
+                format!(
+                    "device auth failed ({e}). If this is the first device, enable \
+                     --allow-enroll on the server or supply the legacy token once. \
+                     Prior enroll error context: {err}"
+                )
+            })?;
+        }
+    }
 
     let engine = {
         let guard = state.sync_engine.lock().await;
@@ -374,26 +415,37 @@ async fn apply_settings(
     let data_dir = state.paths.data_dir();
     save_settings(&data_dir, &settings)?;
     *state.sync_settings.lock().await = settings.clone();
-    let engine = build_engine(Arc::clone(state.repo.vault()), &settings);
-    if let Some(ref engine) = engine {
+    let engine = {
+        let mut http_slot = state.http_backend.lock().await;
+        build_engine(Arc::clone(state.repo.vault()), &settings, &mut http_slot)
+    };
+    *state.sync_engine.lock().await = engine;
+    wire_vault_auth(state).await;
+    if let Some(engine) = state.sync_engine.lock().await.as_ref() {
         let _ = engine.bootstrap_from_backend_if_needed().await;
     }
-    *state.sync_engine.lock().await = engine;
     let _ = app.emit("sync-status", sync_status_snapshot(state).await?);
     sync_status_snapshot(state).await
 }
 
 async fn sync_status_snapshot(state: &AppState) -> Result<SyncStatusDto, String> {
     let settings = state.sync_settings.lock().await.clone();
+    let device_auth = if let Some(http) = state.http_backend.lock().await.as_ref() {
+        Some(http.auth_status().await)
+    } else {
+        None
+    };
     if let Some(engine) = state.sync_engine.lock().await.as_ref() {
         let mut dto = SyncStatusDto::from(&engine.status().await);
         dto.detail = detail_for(&settings);
+        dto.device_auth = device_auth;
         return Ok(dto);
     }
     Ok(SyncStatusDto {
         configured: false,
         backend_kind: "disabled".into(),
         detail: None,
+        device_auth: None,
         last_cursor: None,
         last_synced_at: None,
         last_error: None,

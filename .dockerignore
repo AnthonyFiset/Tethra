@@ -1,0 +1,13 @@
+# Build context for crates/sync-server/Dockerfile (from repo root).
+.git
+.github
+target
+**/target
+apps/ui/node_modules
+apps/ui/dist
+docs
+*.md
+!README.md
+AZURE-PLAN.md
+_to_delete
+**/*.rs.bk

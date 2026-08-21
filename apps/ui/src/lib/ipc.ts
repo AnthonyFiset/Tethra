@@ -597,10 +597,12 @@ export function syncJoinHttp(
   url: string,
   token?: string,
   resetExisting = false,
+  password?: string,
 ): Promise<SyncJoinResultDto> {
   return invoke<SyncJoinResultDto>("sync_join_http", {
     url,
     token,
+    password,
     resetExisting,
   });
 }

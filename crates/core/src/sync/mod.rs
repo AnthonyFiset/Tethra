@@ -22,7 +22,7 @@ pub use conflict::wins_over;
 pub use encode::{item_row_from_sync, sync_item_from_row};
 pub use engine::{SyncEngine, SyncReport, SyncStatus};
 pub use file::FileBackend;
-pub use http::HttpBackend;
+pub use http::{HttpBackend, VaultHeaderPublic};
 pub use types::{RekeyFrom, SyncCursor, SyncItem, SyncedVaultHeader, TOMBSTONE_RETENTION_DAYS};
 
 use async_trait::async_trait;

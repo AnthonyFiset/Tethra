@@ -89,6 +89,7 @@ pub fn run_wizard() -> Result<Config, String> {
         listen,
         token: token.clone(),
         client_url: Some(client_url.clone()),
+        allow_enroll: false,
     };
 
     println!("\nSummary");

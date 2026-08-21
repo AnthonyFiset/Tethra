@@ -30,6 +30,7 @@ export function SyncSettingsPanel({
   const [mode, setMode] = useState<"file" | "http">("http");
   const [httpUrl, setHttpUrl] = useState("");
   const [httpToken, setHttpToken] = useState("");
+  const [showLegacyToken, setShowLegacyToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
@@ -176,6 +177,9 @@ export function SyncSettingsPanel({
             {status.detail}
           </div>
         )}
+        {status?.deviceAuth && (
+          <div className="mt-1">Device auth: {status.deviceAuth}</div>
+        )}
         {status?.lastSyncedAt && (
           <div className="mt-1">Last sync: {status.lastSyncedAt}</div>
         )}
@@ -202,19 +206,35 @@ export function SyncSettingsPanel({
             placeholder="http://sync.example:8787"
             disabled={busy}
           />
-          <label className="flex flex-col gap-1.5">
-            <span className="text-micro font-medium text-fg-muted">
-              Token (optional)
-            </span>
-            <input
-              type="password"
-              value={httpToken}
-              onChange={(event) => setHttpToken(event.target.value)}
-              disabled={busy}
-              className={inputClass}
-              placeholder="Same value as TETHRA_SYNC_TOKEN on the server"
-            />
-          </label>
+          <p className="m-0 text-micro text-fg-muted">
+            After unlock, this device authenticates with your master password
+            (vault-derived). No token paste needed once the server has enrolled
+            a vault.
+          </p>
+          <button
+            type="button"
+            className="self-start border-0 bg-transparent p-0 text-micro text-fg-subtle underline-offset-2 hover:underline"
+            onClick={() => setShowLegacyToken((v) => !v)}
+          >
+            {showLegacyToken
+              ? "Hide legacy token"
+              : "Use legacy shared token"}
+          </button>
+          {showLegacyToken && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-micro font-medium text-fg-muted">
+                Legacy token
+              </span>
+              <input
+                type="password"
+                value={httpToken}
+                onChange={(event) => setHttpToken(event.target.value)}
+                disabled={busy}
+                className={inputClass}
+                placeholder="Same value as TETHRA_SYNC_TOKEN on the server"
+              />
+            </label>
+          )}
           <Button
             variant="primary"
             disabled={busy || !httpUrl.trim()}

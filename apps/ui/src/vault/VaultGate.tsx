@@ -40,6 +40,8 @@ export function VaultGate({
   const [enableRecovery, setEnableRecovery] = useState(true);
   const [joinUrl, setJoinUrl] = useState("");
   const [joinToken, setJoinToken] = useState("");
+  const [joinPassword, setJoinPassword] = useState("");
+  const [showLegacyToken, setShowLegacyToken] = useState(false);
   const [needsReset, setNeedsReset] = useState(false);
 
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -54,6 +56,7 @@ export function VaultGate({
         joinUrl.trim(),
         joinToken.trim() || undefined,
         reset,
+        joinPassword || undefined,
       );
       const next = await vaultStatus();
       if (result.adopted || next.exists) {
@@ -180,17 +183,40 @@ export function VaultGate({
             />
             <label className="flex flex-col gap-1.5">
               <span className="text-micro font-medium text-fg-muted">
-                Token
+                Master password
               </span>
               <input
                 type="password"
-                value={joinToken}
-                onChange={(event) => setJoinToken(event.target.value)}
+                value={joinPassword}
+                onChange={(event) => setJoinPassword(event.target.value)}
                 disabled={busy}
                 className={inputClass}
-                placeholder="Same token as the sync server"
+                placeholder="Same master password as your other devices"
+                autoComplete="current-password"
               />
             </label>
+            <button
+              type="button"
+              className="self-start border-0 bg-transparent p-0 text-micro text-fg-subtle underline-offset-2 hover:underline"
+              onClick={() => setShowLegacyToken((v) => !v)}
+            >
+              {showLegacyToken ? "Hide legacy token" : "Use legacy token instead"}
+            </button>
+            {showLegacyToken && (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-micro font-medium text-fg-muted">
+                  Legacy token
+                </span>
+                <input
+                  type="password"
+                  value={joinToken}
+                  onChange={(event) => setJoinToken(event.target.value)}
+                  disabled={busy}
+                  className={inputClass}
+                  placeholder="Shared bearer from server setup"
+                />
+              </label>
+            )}
 
             {needsReset && (
               <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2">

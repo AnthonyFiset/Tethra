@@ -58,6 +58,7 @@ pub(crate) struct AppState {
     prompts: Arc<PromptBroker>,
     sync_settings: Arc<Mutex<sync::SyncSettings>>,
     sync_engine: Arc<Mutex<Option<Arc<ssh_client_core::sync::SyncEngine>>>>,
+    http_backend: Arc<Mutex<Option<Arc<ssh_client_core::sync::HttpBackend>>>>,
     background_sync_gen: Arc<AtomicU64>,
 }
 
@@ -458,6 +459,7 @@ async fn vault_create(
         .map_err(redacted_error)?;
     let dto = VaultStatusDto::from(&status);
     let _ = app.emit("vault-status", dto.clone());
+    sync::wire_vault_auth(&state).await;
     Ok(dto)
 }
 
@@ -476,6 +478,7 @@ async fn vault_unlock(
         .map_err(redacted_error)?;
     let dto = VaultStatusDto::from(&status);
     let _ = app.emit("vault-status", dto.clone());
+    sync::wire_vault_auth(&state).await;
     sync::schedule_background_sync(app.clone(), &state);
     Ok(dto)
 }
@@ -495,6 +498,7 @@ async fn vault_recover(
         .map_err(redacted_error)?;
     let dto = VaultStatusDto::from(&status);
     let _ = app.emit("vault-status", dto.clone());
+    sync::wire_vault_auth(&state).await;
     Ok(dto)
 }
 
@@ -518,6 +522,7 @@ async fn vault_change_password(
     if let Some(previous) = previous.as_ref() {
         sync::publish_rekey_if_configured(&state, previous).await?;
     }
+    sync::wire_vault_auth(&state).await;
     sync::schedule_background_sync(app, &state);
     Ok(())
 }
@@ -1149,7 +1154,13 @@ pub fn run() {
                 )
                 .map_err(|e| std::io::Error::other(e.to_string()))?,
             );
-            let sync_engine = sync::build_engine(Arc::clone(&vault), &sync_settings);
+            let http_backend = Arc::new(Mutex::new(None));
+            let sync_engine = {
+                let mut slot = http_backend
+                    .try_lock()
+                    .expect("http_backend unused during setup");
+                sync::build_engine(Arc::clone(&vault), &sync_settings, &mut slot)
+            };
             let repo = Arc::new(VaultRepository::new(Arc::clone(&vault)));
 
             // A device that has sync configured but no vault yet (fresh install
@@ -1199,6 +1210,7 @@ pub fn run() {
                 prompts: Arc::clone(&prompts),
                 sync_settings: Arc::new(Mutex::new(sync_settings)),
                 sync_engine: Arc::new(Mutex::new(sync_engine)),
+                http_backend,
                 background_sync_gen: Arc::new(AtomicU64::new(0)),
             });
 

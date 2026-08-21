@@ -7,6 +7,7 @@
 //! ```
 
 mod config;
+mod device_auth;
 mod mirror;
 mod server;
 mod service;
@@ -49,6 +50,10 @@ struct Cli {
     /// Client URL hint for the TUI / paste block.
     #[arg(long, env = "TETHRA_SYNC_CLIENT_URL", global = true)]
     client_url: Option<String>,
+
+    /// Allow first-device vault enroll when no verifier exists yet.
+    #[arg(long, env = "TETHRA_SYNC_ALLOW_ENROLL", action = clap::ArgAction::SetTrue)]
+    allow_enroll: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -139,8 +144,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     apply_cli(setup::run_wizard()?, &cli)
                 }
             };
-            if config.token.is_empty() {
-                return Err("token is empty; run `tethra-sync-server setup`".into());
+            if config.token.is_empty() && !config.allow_enroll {
+                return Err(
+                    "token is empty; run `tethra-sync-server setup` or pass --allow-enroll".into(),
+                );
             }
             tui::run(config).await?;
         }
@@ -149,28 +156,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn resolve_config(cli: &Cli, require_token: bool) -> Result<Config, String> {
+fn resolve_config(cli: &Cli, require_legacy_token: bool) -> Result<Config, String> {
     let base = config::load_if_present()?.unwrap_or_default();
     let config = apply_cli(base, cli);
-    if require_token && config.token.is_empty() && cli.token.is_none() {
-        // Allow empty only if explicitly overridden? Prefer fail for serve.
-        if config.token.is_empty() {
-            return Err(
-                "no token configured; run `tethra-sync-server setup` or set TETHRA_SYNC_TOKEN"
-                    .into(),
-            );
-        }
+    if require_legacy_token && config.token.is_empty() && !config.allow_enroll {
+        return Err(
+            "no token configured; run `tethra-sync-server setup`, set TETHRA_SYNC_TOKEN, \
+             or pass --allow-enroll for vault-derived device auth"
+                .into(),
+        );
     }
     Ok(config)
 }
 
 fn apply_cli(base: Config, cli: &Cli) -> Config {
+    let listen = config::listen_from_env(cli.listen.clone());
     config::apply_overrides(
         base,
         cli.data_dir.clone(),
-        cli.listen.clone(),
+        listen,
         cli.token.clone(),
         cli.client_url.clone(),
+        if cli.allow_enroll { Some(true) } else { None },
     )
 }
 

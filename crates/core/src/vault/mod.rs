@@ -26,7 +26,7 @@ use crate::model::SecretString;
 use crate::{Error, Result};
 
 pub use crypto::EncryptedBlob;
-pub use kdf::Argon2Params;
+pub use kdf::{Argon2Params, DerivedKeys, derive_keys};
 pub use records::{
     ApiKeyRecord, HostRecord, PasswordIdentityRecord, ProjectRecord, RunningSessionRecord,
 };
@@ -54,6 +54,8 @@ enum LockState {
     Locked,
     Unlocked {
         vault_key: VaultKey,
+        /// HKDF auth_key retained for sync device auth; never crosses IPC.
+        auth_key: [u8; kdf::KEY_LEN],
         last_activity: Instant,
     },
 }
@@ -184,6 +186,7 @@ impl Vault {
 
         *self.state.lock().await = LockState::Unlocked {
             vault_key,
+            auth_key: derived.auth_key,
             last_activity: Instant::now(),
         };
 
@@ -219,10 +222,12 @@ impl Vault {
 
         let derived = kdf::derive_keys(password.expose().as_bytes(), &header.salt, &header.argon2)?;
         let vault_key = crypto::unwrap_key(&derived.enc_key, &header.wrapped_vault_key)?;
+        let auth_key = derived.auth_key;
         drop(derived);
 
         *self.state.lock().await = LockState::Unlocked {
             vault_key,
+            auth_key,
             last_activity: Instant::now(),
         };
         self.status().await
@@ -265,6 +270,7 @@ impl Vault {
         let params = Argon2Params::default();
         let derived = kdf::derive_keys(new_password.expose().as_bytes(), &salt, &params)?;
         let wrapped = crypto::wrap_key(&derived.enc_key, &vault_key)?;
+        let auth_key = derived.auth_key;
         drop(derived);
 
         header.salt = salt.to_vec();
@@ -278,6 +284,7 @@ impl Vault {
 
         *self.state.lock().await = LockState::Unlocked {
             vault_key,
+            auth_key,
             last_activity: Instant::now(),
         };
         self.status().await
@@ -300,6 +307,7 @@ impl Vault {
         let params = Argon2Params::default();
         let new_derived = kdf::derive_keys(new_password.expose().as_bytes(), &salt, &params)?;
         let wrapped = crypto::wrap_key(&new_derived.enc_key, &vault_key)?;
+        let auth_key = new_derived.auth_key;
         drop(new_derived);
 
         let mut header = header;
@@ -314,6 +322,7 @@ impl Vault {
 
         *self.state.lock().await = LockState::Unlocked {
             vault_key,
+            auth_key,
             last_activity: Instant::now(),
         };
         Ok(())
@@ -340,9 +349,27 @@ impl Vault {
             LockState::Unlocked {
                 vault_key,
                 last_activity,
+                ..
             } => {
                 *last_activity = Instant::now();
                 Ok(vault_key.clone())
+            }
+        }
+    }
+
+    /// Copy of the vault-derived sync auth key (PROJECT.md §6.1). Never log.
+    pub async fn auth_key(&self) -> Result<[u8; kdf::KEY_LEN]> {
+        self.touch_idle().await?;
+        let mut state = self.state.lock().await;
+        match &mut *state {
+            LockState::Locked => Err(Error::VaultLocked),
+            LockState::Unlocked {
+                auth_key,
+                last_activity,
+                ..
+            } => {
+                *last_activity = Instant::now();
+                Ok(*auth_key)
             }
         }
     }

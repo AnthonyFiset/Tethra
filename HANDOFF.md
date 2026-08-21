@@ -4,9 +4,9 @@ _Paste this into a new agent session with [`ROADMAP.md`](ROADMAP.md) / [`PROJECT
 
 **As of:** 2026-08-21  
 **Repo:** https://github.com/AnthonyFiset/Tethra (public)  
-**Branch / commit:** `main` @ `73ba369`  
+**Branch / commit:** `main` (push after this work)  
 **Latest tag:** `v0.3.1`  
-**Current task:** [`NEXT.md`](NEXT.md) — sync server on Azure + vault-derived device auth  
+**Current task:** [`NEXT.md`](NEXT.md) — no active brief (last: Azure sync + device auth)  
 **Status / plan:** [`ROADMAP.md`](ROADMAP.md) — **only** place milestone status lives
 
 ---

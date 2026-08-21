@@ -19,6 +19,9 @@ pub struct Config {
     /// Hint shown to clients / TUI, e.g. `http://sync.example:8787`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_url: Option<String>,
+    /// Allow `POST /v1/enroll` when no device verifier exists yet (or with legacy token).
+    #[serde(default)]
+    pub allow_enroll: bool,
 }
 
 impl Default for Config {
@@ -28,6 +31,7 @@ impl Default for Config {
             listen: "0.0.0.0:8787".into(),
             token: String::new(),
             client_url: None,
+            allow_enroll: false,
         }
     }
 }
@@ -123,6 +127,7 @@ pub fn apply_overrides(
     listen: Option<String>,
     token: Option<String>,
     client_url: Option<String>,
+    allow_enroll: Option<bool>,
 ) -> Config {
     if let Some(dir) = data_dir {
         base.data_dir = dir;
@@ -136,7 +141,30 @@ pub fn apply_overrides(
     if let Some(url) = client_url.filter(|u| !u.is_empty()) {
         base.client_url = Some(url);
     }
+    if let Some(flag) = allow_enroll {
+        base.allow_enroll = flag;
+    }
     base
+}
+
+/// Resolve listen from `TETHRA_SYNC_LISTEN`, or compose from
+/// `TETHRA_SYNC_ADDR` + `TETHRA_SYNC_PORT` when listen is unset.
+pub fn listen_from_env(existing: Option<String>) -> Option<String> {
+    if let Some(listen) = existing.filter(|s| !s.is_empty()) {
+        return Some(listen);
+    }
+    let addr = std::env::var("TETHRA_SYNC_ADDR")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let port = std::env::var("TETHRA_SYNC_PORT")
+        .ok()
+        .filter(|s| !s.is_empty());
+    match (addr, port) {
+        (Some(a), Some(p)) => Some(format!("{a}:{p}")),
+        (Some(a), None) => Some(format!("{a}:8787")),
+        (None, Some(p)) => Some(format!("0.0.0.0:{p}")),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +181,7 @@ mod tests {
             listen: "0.0.0.0:8787".into(),
             token: "secret".into(),
             client_url: Some("http://sync.example:8787".into()),
+            allow_enroll: false,
         };
         save(&path, &config).unwrap();
         let loaded = load(&path).unwrap();
@@ -168,10 +197,12 @@ mod tests {
             Some("127.0.0.1:9".into()),
             Some("tok".into()),
             Some("http://x:9".into()),
+            Some(true),
         );
         assert_eq!(merged.data_dir, PathBuf::from("/data"));
         assert_eq!(merged.listen, "127.0.0.1:9");
         assert_eq!(merged.token, "tok");
         assert_eq!(merged.client_url.as_deref(), Some("http://x:9"));
+        assert!(merged.allow_enroll);
     }
 }

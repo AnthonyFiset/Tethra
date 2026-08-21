@@ -69,6 +69,16 @@ real empty states. Brief: [`docs/archive/NEXT-v0.3.0.md`](docs/archive/NEXT-v0.3
   matrix, auto-publish on tag, no mirror, no `dangerousInsecureTransportProtocol`
 - ThinkPad mirror retired; it is now purely a vault sync server
 
+### Sync server (Azure-ready) — completed 2026-08-21
+- `crates/sync-server/Dockerfile` multi-stage image; `GET /healthz` returns version
+- Env bind/data (`TETHRA_SYNC_LISTEN` / `ADDR`+`PORT` / `DATA`); workflow
+  `.github/workflows/sync-server-image.yml` (push skips politely without ACR secrets)
+- Vault-derived device auth: `GET /v1/vault-header`, `POST /v1/enroll`, `POST /v1/auth`
+  (argon2id verifier, 24h session, rate limit); legacy bearer still works
+- Client: `HttpBackend` 401 → `/v1/auth` retry; Settings/VaultGate URL + master
+  password first (legacy token opt-in). Brief:
+  [`docs/archive/NEXT-azure-sync-device-auth.md`](docs/archive/NEXT-azure-sync-device-auth.md)
+
 **Proven 2026-08-21:** end-to-end auto-update over the GitHub endpoint with the
 rotated key — v0.2.11 machines updated to v0.3.1 cleanly. (The `v0.3.0` tag
 exists but never published installers; its release run stalled and v0.3.1 was
