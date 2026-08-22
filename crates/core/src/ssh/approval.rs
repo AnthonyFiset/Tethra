@@ -18,6 +18,9 @@ pub enum Action {
     Sftp {
         host_id: Uuid,
     },
+    Tunnel {
+        host_id: Uuid,
+    },
     OpenLocalPty {
         program: String,
     },
@@ -33,9 +36,10 @@ pub enum Action {
 impl Action {
     pub fn host_id(&self) -> Option<Uuid> {
         match self {
-            Self::OpenPty { host_id } | Self::Exec { host_id, .. } | Self::Sftp { host_id } => {
-                Some(*host_id)
-            }
+            Self::OpenPty { host_id }
+            | Self::Exec { host_id, .. }
+            | Self::Sftp { host_id }
+            | Self::Tunnel { host_id } => Some(*host_id),
             Self::OpenLocalPty { .. } | Self::LocalExec { .. } | Self::AssistInsert { .. } => None,
         }
     }

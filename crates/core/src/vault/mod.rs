@@ -573,6 +573,7 @@ mod tests {
                 tags: vec![],
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             },
         )
         .await

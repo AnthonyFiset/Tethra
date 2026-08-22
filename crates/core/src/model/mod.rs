@@ -6,6 +6,7 @@ mod host;
 mod identity;
 mod project;
 mod shell_integration;
+mod tunnel;
 
 pub use api_key::{ApiKey, AssistProviderKind};
 pub use auth::{AuthMaterial, SecretBytes, SecretString};
@@ -16,3 +17,4 @@ pub use project::{
     mux_session_name,
 };
 pub use shell_integration::ShellIntegration;
+pub use tunnel::{TunnelDefinition, TunnelDirection};

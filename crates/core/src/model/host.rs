@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::model::ShellIntegration;
+use crate::model::TunnelDefinition;
 
 /// Saved SSH host. Credentials live in [`super::Identity`], referenced by ID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +23,9 @@ pub struct Host {
     /// OSC 133 / OSC 7 injection preference. Default [`ShellIntegration::Auto`].
     #[serde(default)]
     pub shell_integration: ShellIntegration,
+    /// Port-forward definitions (no secrets). Default empty.
+    #[serde(default)]
+    pub tunnels: Vec<TunnelDefinition>,
 }
 
 impl Host {
@@ -43,6 +47,7 @@ impl Host {
             tags: Vec::new(),
             color: None,
             shell_integration: ShellIntegration::Auto,
+            tunnels: Vec::new(),
         }
     }
 

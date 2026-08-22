@@ -5,6 +5,7 @@ mod fingerprint;
 mod handler;
 mod session;
 mod sftp;
+mod tunnel;
 
 pub use approval::{Action, AlwaysApprove, AlwaysDeny, ApprovalGate};
 pub use fingerprint::{PresentedHostKey, fingerprint_sha256, presented_from_public_key};
@@ -17,3 +18,4 @@ pub use sftp::{
     RemoteDirEntry, RemoteFileStat, RemoteFileType, SftpSession, TransferControl, TransferProgress,
     TreeTransferProgress, TreeTransferResult,
 };
+pub use tunnel::{TunnelHandle, TunnelOpener, TunnelState};

@@ -40,6 +40,7 @@ mod output_pump;
 mod sftp;
 mod shell_integration;
 mod sync;
+mod tunnel;
 mod updater;
 mod webview_chrome;
 
@@ -58,6 +59,8 @@ pub(crate) struct AppState {
     pub(crate) approval_gate: Arc<dyn ApprovalGate>,
     sftp_sessions: sftp::SftpSessions,
     active_transfers: sftp::ActiveTransfers,
+    tunnels: tunnel::TunnelRuntimes,
+    session_hosts: tunnel::SessionHosts,
     prompts: Arc<PromptBroker>,
     sync_settings: Arc<Mutex<sync::SyncSettings>>,
     sync_engine: Arc<Mutex<Option<Arc<ssh_client_core::sync::SyncEngine>>>>,
@@ -83,6 +86,7 @@ struct HostSummaryDto {
     tags: Vec<String>,
     /// When true, inject OSC 133 / OSC 7 via connect wrapper.
     shell_integration: bool,
+    tunnels: Vec<tunnel::TunnelDefinitionDto>,
 }
 
 impl From<&CoreHostSummary> for HostSummaryDto {
@@ -101,6 +105,11 @@ impl From<&CoreHostSummary> for HostSummaryDto {
             tags: host.tags.clone(),
             shell_integration: host.shell_integration
                 != ssh_client_core::model::ShellIntegration::Disabled,
+            tunnels: host
+                .tunnels
+                .iter()
+                .map(tunnel::TunnelDefinitionDto::from)
+                .collect(),
         }
     }
 }
@@ -460,6 +469,8 @@ struct HostMutation {
     /// When false, skip OSC 133 wrapper. Default true (Auto).
     #[serde(default)]
     shell_integration: Option<bool>,
+    #[serde(default)]
+    tunnels: Option<Vec<tunnel::TunnelDefinitionDto>>,
 }
 
 #[derive(Deserialize)]
@@ -903,6 +914,31 @@ async fn import_ssh_config(
     Ok(imported.iter().map(HostSummaryDto::from).collect())
 }
 
+fn parse_host_tunnels(
+    tunnels: Option<Vec<tunnel::TunnelDefinitionDto>>,
+) -> Result<Option<Vec<ssh_client_core::model::TunnelDefinition>>, String> {
+    match tunnels {
+        None => Ok(None),
+        Some(list) => {
+            let mut out = Vec::with_capacity(list.len());
+            for dto in list {
+                out.push(dto.into_core()?);
+            }
+            Ok(Some(out))
+        }
+    }
+}
+
+fn shell_integration_from_mutation(
+    value: Option<bool>,
+) -> ssh_client_core::model::ShellIntegration {
+    if value.unwrap_or(true) {
+        ssh_client_core::model::ShellIntegration::Auto
+    } else {
+        ssh_client_core::model::ShellIntegration::Disabled
+    }
+}
+
 #[tauri::command]
 async fn create_host(
     app: AppHandle,
@@ -910,6 +946,7 @@ async fn create_host(
     host: HostMutation,
 ) -> Result<HostSummaryDto, String> {
     let identity_id = parse_optional_uuid(host.identity_id.as_deref(), "identity")?;
+    let tunnels = parse_host_tunnels(host.tunnels)?.unwrap_or_default();
     let created = state
         .repo
         .create_host(CreateHostRequest {
@@ -921,11 +958,8 @@ async fn create_host(
             identity_id,
             sync_secret: host.sync_secret.unwrap_or(false),
             color: host.color,
-            shell_integration: if host.shell_integration.unwrap_or(true) {
-                ssh_client_core::model::ShellIntegration::Auto
-            } else {
-                ssh_client_core::model::ShellIntegration::Disabled
-            },
+            shell_integration: shell_integration_from_mutation(host.shell_integration),
+            tunnels,
         })
         .await
         .map_err(redacted_error)?;
@@ -942,6 +976,15 @@ async fn update_host(
 ) -> Result<HostSummaryDto, String> {
     let host_id = parse_uuid(&id, "host")?;
     let identity_id = parse_optional_uuid(host.identity_id.as_deref(), "identity")?;
+    let tunnels = match parse_host_tunnels(host.tunnels)? {
+        Some(tunnels) => tunnels,
+        None => state
+            .repo
+            .get_host(host_id)
+            .await
+            .map(|h| h.tunnels)
+            .unwrap_or_default(),
+    };
     let updated = state
         .repo
         .update_host(
@@ -955,11 +998,8 @@ async fn update_host(
                 identity_id,
                 sync_secret: host.sync_secret.unwrap_or(false),
                 color: host.color,
-                shell_integration: if host.shell_integration.unwrap_or(true) {
-                    ssh_client_core::model::ShellIntegration::Auto
-                } else {
-                    ssh_client_core::model::ShellIntegration::Disabled
-                },
+                shell_integration: shell_integration_from_mutation(host.shell_integration),
+                tunnels,
             },
         )
         .await
@@ -1158,6 +1198,7 @@ async fn open_terminal(
         .map_err(redacted_error)?;
 
     state.sessions.lock().await.insert(session_id, handle);
+    tunnel::auto_start_for_session(&app, &state, session_id, host_id).await;
     tauri::async_runtime::spawn(output_pump::forward_output(session_id, receiver, app));
     Ok(session_id.to_string())
 }
@@ -1260,6 +1301,7 @@ async fn resize_terminal(
 #[tauri::command]
 async fn close_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     let session_id = parse_uuid(&session_id, "session")?;
+    tunnel::stop_session_tunnels(&state, session_id).await;
     if let Some(handle) = state.sessions.lock().await.remove(&session_id) {
         return handle.close().await.map_err(redacted_error);
     }
@@ -1325,6 +1367,7 @@ async fn lock_vault(app: &AppHandle, state: &AppState) -> Result<VaultStatusDto,
         let _ = handle.close().await;
     }
     sftp::close_all_sftp(state).await;
+    tunnel::close_all_tunnels(state).await;
     state.prompts.clear().await;
     state.repo.vault().lock().await.map_err(redacted_error)?;
     let status = state.repo.vault().status().await.map_err(redacted_error)?;
@@ -1451,6 +1494,8 @@ pub fn run() {
             let local_sessions: LocalSessions = Arc::new(Mutex::new(HashMap::new()));
             let sftp_sessions = Arc::new(Mutex::new(HashMap::new()));
             let active_transfers = Arc::new(Mutex::new(HashMap::new()));
+            let tunnels = Arc::new(Mutex::new(HashMap::new()));
+            let session_hosts = Arc::new(Mutex::new(HashMap::new()));
             app.manage(AppState {
                 paths: Arc::clone(&paths) as Arc<dyn platform::AppPaths>,
                 repo: Arc::clone(&repo),
@@ -1461,6 +1506,8 @@ pub fn run() {
                 approval_gate,
                 sftp_sessions: Arc::clone(&sftp_sessions),
                 active_transfers: Arc::clone(&active_transfers),
+                tunnels: Arc::clone(&tunnels),
+                session_hosts: Arc::clone(&session_hosts),
                 prompts: Arc::clone(&prompts),
                 sync_settings: Arc::new(Mutex::new(sync_settings)),
                 sync_engine: Arc::new(Mutex::new(sync_engine)),
@@ -1503,6 +1550,8 @@ pub fn run() {
             let idle_sessions = Arc::clone(&sessions);
             let idle_sftp_sessions = Arc::clone(&sftp_sessions);
             let idle_active_transfers = Arc::clone(&active_transfers);
+            let idle_tunnels = Arc::clone(&tunnels);
+            let idle_session_hosts = Arc::clone(&session_hosts);
             let idle_prompts = Arc::clone(&prompts);
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(IDLE_CHECK);
@@ -1535,7 +1584,16 @@ pub fn run() {
                         let sftp = browser.session.into_inner();
                         let _ = sftp.close().await;
                     }
-                    if had_sessions || had_sftp {
+                    let tunnel_taken = {
+                        let mut guard = idle_tunnels.lock().await;
+                        std::mem::take(&mut *guard)
+                    };
+                    let had_tunnels = !tunnel_taken.is_empty();
+                    for (_key, live) in tunnel_taken {
+                        live.handle.stop().await;
+                    }
+                    idle_session_hosts.lock().await.clear();
+                    if had_sessions || had_sftp || had_tunnels {
                         idle_prompts.clear().await;
                         let status = idle_vault.status().await.unwrap_or(VaultStatus {
                             exists: true,
@@ -1558,6 +1616,8 @@ pub fn run() {
                 let power_sessions = Arc::clone(&sessions);
                 let power_sftp_sessions = Arc::clone(&sftp_sessions);
                 let power_active_transfers = Arc::clone(&active_transfers);
+                let power_tunnels = Arc::clone(&tunnels);
+                let power_session_hosts = Arc::clone(&session_hosts);
                 let power_prompts = Arc::clone(&prompts);
                 std::thread::spawn(move || {
                     while let Ok(event) = rx.recv() {
@@ -1570,6 +1630,8 @@ pub fn run() {
                             let sessions = Arc::clone(&power_sessions);
                             let sftp_sessions = Arc::clone(&power_sftp_sessions);
                             let active_transfers = Arc::clone(&power_active_transfers);
+                            let tunnels = Arc::clone(&power_tunnels);
+                            let session_hosts = Arc::clone(&power_session_hosts);
                             let prompts = Arc::clone(&power_prompts);
                             tauri::async_runtime::block_on(async move {
                                 let taken = {
@@ -1591,6 +1653,14 @@ pub fn run() {
                                     let sftp = browser.session.into_inner();
                                     let _ = sftp.close().await;
                                 }
+                                let tunnel_taken = {
+                                    let mut guard = tunnels.lock().await;
+                                    std::mem::take(&mut *guard)
+                                };
+                                for (_key, live) in tunnel_taken {
+                                    live.handle.stop().await;
+                                }
+                                session_hosts.lock().await.clear();
                                 prompts.clear().await;
                                 let _ = vault.lock().await;
                                 if let Ok(status) = vault.status().await {
@@ -1688,6 +1758,9 @@ pub fn run() {
             sftp::sftp_remote_create_dir_entry,
             sftp::sftp_transfer,
             sftp::sftp_cancel_transfer,
+            tunnel::tunnel_list,
+            tunnel::tunnel_start,
+            tunnel::tunnel_stop,
             sync::sync_status,
             sync::sync_configure_file,
             sync::sync_configure_http,
@@ -1723,6 +1796,7 @@ mod tests {
         AgentAttentionState::export_all(&cfg).unwrap();
         assist::export_bindings(&cfg);
         mux::export_bindings(&cfg);
+        tunnel::export_bindings(&cfg);
         VaultStatusDto::export_all(&cfg).unwrap();
         SshConfigHostDto::export_all(&cfg).unwrap();
         SshConfigPreviewDto::export_all(&cfg).unwrap();
@@ -1782,6 +1856,7 @@ mod tests {
             color: Some("#70A5F5".into()),
             tags: vec!["lab".into()],
             shell_integration: true,
+            tunnels: vec![],
         };
         assert!(dto.has_password);
         let debug = format!("{dto:?}");

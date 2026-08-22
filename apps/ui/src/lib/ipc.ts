@@ -41,6 +41,8 @@ import type { ToolsProbeDto } from "./generated/ToolsProbeDto";
 import { getDefaultShell, getLoginShell } from "./prefs";
 import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
+import type { TunnelDefinitionDto } from "./generated/TunnelDefinitionDto";
+import type { TunnelStatusDto } from "./generated/TunnelStatusDto";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
 
 export type {
@@ -72,6 +74,8 @@ export type {
   ToolsProbeDto,
   UpdateInfoDto,
   TransferEvent,
+  TunnelDefinitionDto,
+  TunnelStatusDto,
   VaultStatusDto,
 };
 
@@ -88,6 +92,8 @@ export interface HostMutation {
   color?: string;
   /** Inject OSC 133 / OSC 7 via connect wrapper. Default on. */
   shellIntegration?: boolean;
+  /** Port-forward definitions (no secrets). Omit to leave unchanged on update. */
+  tunnels?: TunnelDefinitionDto[];
 }
 
 export function vaultStatus(): Promise<VaultStatusDto> {
@@ -461,6 +467,32 @@ export function openTerminal(
     hostId,
     cols,
     rows,
+  });
+}
+
+export function tunnelList(sessionId: string): Promise<TunnelStatusDto[]> {
+  return invoke<TunnelStatusDto[]>("tunnel_list", { sessionId });
+}
+
+export function tunnelStart(
+  sessionId: string,
+  tunnelId: string,
+): Promise<TunnelStatusDto> {
+  return invoke<TunnelStatusDto>("tunnel_start", { sessionId, tunnelId });
+}
+
+export function tunnelStop(
+  sessionId: string,
+  tunnelId: string,
+): Promise<TunnelStatusDto> {
+  return invoke<TunnelStatusDto>("tunnel_stop", { sessionId, tunnelId });
+}
+
+export function onTunnelChanged(
+  handler: (status: TunnelStatusDto) => void,
+): Promise<UnlistenFn> {
+  return listen<TunnelStatusDto>("tunnel-changed", (event) => {
+    handler(event.payload);
   });
 }
 

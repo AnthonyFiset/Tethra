@@ -9,6 +9,7 @@ import {
   type HostMutation,
   type HostSummaryDto,
   type IdentitySummaryDto,
+  type TunnelDefinitionDto,
 } from "../lib/ipc";
 import { HostAvatar } from "../components/HostAvatar";
 import { Button } from "../components/ui/Button";
@@ -72,6 +73,9 @@ export function HostFormModal({
   const [syncSecret, setSyncSecret] = useState(initial?.syncSecret ?? false);
   const [shellIntegration, setShellIntegration] = useState(
     initial?.shellIntegration ?? true,
+  );
+  const [tunnels, setTunnels] = useState<TunnelDefinitionDto[]>(
+    () => initial?.tunnels ?? [],
   );
   const [authMode, setAuthMode] = useState<AuthMode>(
     initial?.authKind === "sshKey" ? "sshKey" : "password",
@@ -168,6 +172,7 @@ export function HostFormModal({
         color,
         syncSecret: authMode === "password" ? syncSecret : false,
         shellIntegration,
+        tunnels,
       };
 
       if (authMode === "sshKey") {
@@ -516,6 +521,191 @@ export function HostFormModal({
             </span>
           </span>
         </label>
+
+        <div className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-ui font-medium text-fg">Tunnels</div>
+              <p className="text-micro text-fg-subtle">
+                Local (-L) and remote (-R) port forwards. Start them from a
+                connected session; mark Auto-start to open on connect.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="subtle"
+              disabled={busy}
+              onClick={() => {
+                const id = crypto.randomUUID();
+                setTunnels((current) => [
+                  ...current,
+                  {
+                    id,
+                    label: "",
+                    direction: "local",
+                    bindPort: 8000,
+                    targetHost: "localhost",
+                    targetPort: 8000,
+                    autoStart: false,
+                    allowLan: false,
+                  },
+                ]);
+              }}
+            >
+              Add
+            </Button>
+          </div>
+          {tunnels.length === 0 ? (
+            <p className="text-micro text-fg-subtle">No tunnels yet.</p>
+          ) : (
+            tunnels.map((tunnel, index) => (
+              <div
+                key={tunnel.id}
+                className="flex flex-col gap-2 rounded border border-line bg-elevated/40 px-2.5 py-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className={cn(inputClass, "w-auto")}
+                    value={tunnel.direction}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const direction = event.target.value;
+                      setTunnels((current) =>
+                        current.map((entry, i) =>
+                          i === index ? { ...entry, direction } : entry,
+                        ),
+                      );
+                    }}
+                  >
+                    <option value="local">Local (-L)</option>
+                    <option value="remote">Remote (-R)</option>
+                  </select>
+                  <input
+                    className={cn(inputClass, "min-w-[8rem] flex-1")}
+                    placeholder="Label"
+                    value={tunnel.label}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const labelValue = event.target.value;
+                      setTunnels((current) =>
+                        current.map((entry, i) =>
+                          i === index ? { ...entry, label: labelValue } : entry,
+                        ),
+                      );
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="subtle"
+                    disabled={busy}
+                    onClick={() =>
+                      setTunnels((current) =>
+                        current.filter((_, i) => i !== index),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-micro text-fg-muted">
+                  <span>Bind</span>
+                  <input
+                    className={cn(inputClass, "w-20")}
+                    inputMode="numeric"
+                    value={String(tunnel.bindPort)}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const bindPort = Number.parseInt(event.target.value, 10) || 0;
+                      setTunnels((current) =>
+                        current.map((entry, i) => {
+                          if (i !== index) return entry;
+                          const next = { ...entry, bindPort };
+                          if (
+                            !entry.label.trim() &&
+                            entry.targetPort === entry.bindPort
+                          ) {
+                            next.targetPort = bindPort || entry.targetPort;
+                          }
+                          return next;
+                        }),
+                      );
+                    }}
+                  />
+                  <span>→</span>
+                  <input
+                    className={cn(inputClass, "min-w-[7rem] flex-1")}
+                    placeholder="localhost"
+                    value={tunnel.targetHost}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const targetHost = event.target.value;
+                      setTunnels((current) =>
+                        current.map((entry, i) =>
+                          i === index ? { ...entry, targetHost } : entry,
+                        ),
+                      );
+                    }}
+                  />
+                  <input
+                    className={cn(inputClass, "w-20")}
+                    inputMode="numeric"
+                    value={String(tunnel.targetPort)}
+                    disabled={busy}
+                    onChange={(event) => {
+                      const targetPort =
+                        Number.parseInt(event.target.value, 10) || 0;
+                      setTunnels((current) =>
+                        current.map((entry, i) =>
+                          i === index ? { ...entry, targetPort } : entry,
+                        ),
+                      );
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  <label className="flex cursor-pointer items-center gap-2 text-micro text-fg-muted">
+                    <input
+                      type="checkbox"
+                      checked={tunnel.autoStart}
+                      disabled={busy}
+                      onChange={(event) => {
+                        const autoStart = event.target.checked;
+                        setTunnels((current) =>
+                          current.map((entry, i) =>
+                            i === index ? { ...entry, autoStart } : entry,
+                          ),
+                        );
+                      }}
+                    />
+                    Auto-start on connect
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-micro text-fg-muted">
+                    <input
+                      type="checkbox"
+                      checked={tunnel.allowLan}
+                      disabled={busy}
+                      onChange={(event) => {
+                        const allowLan = event.target.checked;
+                        setTunnels((current) =>
+                          current.map((entry, i) =>
+                            i === index ? { ...entry, allowLan } : entry,
+                          ),
+                        );
+                      }}
+                    />
+                    Allow other devices (0.0.0.0)
+                  </label>
+                </div>
+                {tunnel.allowLan && (
+                  <p className="text-micro text-warning">
+                    Binding on all interfaces exposes this port on your LAN.
+                    Prefer 127.0.0.1 unless you need it.
+                  </p>
+                )}
+              </div>
+            ))
+          )}
+        </div>
 
         <div className="mt-2 flex justify-end gap-2">
           <Button

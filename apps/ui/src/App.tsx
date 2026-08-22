@@ -19,6 +19,7 @@ import {
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { TunnelsPanel } from "./components/TunnelsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Button } from "./components/ui/Button";
 import { Dialog } from "./components/ui/Dialog";
@@ -51,6 +52,7 @@ import {
   onMenuCommand,
   onSyncCompleted,
   onTerminalEvent,
+  onTunnelChanged,
   onVaultLocked,
   onVaultStatus,
   pollSessionWatches,
@@ -70,6 +72,7 @@ import {
   sendTerminalInput,
   syncNow,
   touchProjectOpened,
+  tunnelList,
   updateCheck,
   updateProject,
   vaultLock,
@@ -268,6 +271,9 @@ function Workspace({
   const [layout, setLayout] = useState<LayoutNode | null>(null);
   const [zoomedId, setZoomedId] = useState<string>();
   const [findSessionId, setFindSessionId] = useState<string>();
+  const [tunnelActiveBySession, setTunnelActiveBySession] = useState<
+    Record<string, number>
+  >({});
   const [narrow, setNarrow] = useState(() =>
     window.matchMedia("(max-width: 767px)").matches,
   );
@@ -365,6 +371,33 @@ function Workspace({
     let unlisten: (() => void) | undefined;
     void onTerminalEvent((sessionId, event) => {
       outputHandlers.current.get(sessionId)?.(event);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onTunnelChanged((status) => {
+      void tunnelList(status.sessionId)
+        .then((list) => {
+          if (cancelled) return;
+          const active = list.filter((t) => t.state === "active").length;
+          setTunnelActiveBySession((current) => ({
+            ...current,
+            [status.sessionId]: active,
+          }));
+        })
+        .catch(() => undefined);
     }).then((fn) => {
       if (cancelled) {
         fn();
@@ -1608,6 +1641,12 @@ function Workspace({
   }
 
   async function closeTab(sessionId: string): Promise<void> {
+    setTunnelActiveBySession((current) => {
+      if (!(sessionId in current)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
     const tab = tabs.find((entry) => entry.sessionId === sessionId);
     const index = tabs.findIndex((entry) => entry.sessionId === sessionId);
     const nextTabs = tabs.filter((entry) => entry.sessionId !== sessionId);
@@ -1907,7 +1946,12 @@ function Workspace({
     }
     const host = hosts.find((entry) => entry.id === activeTab.hostId);
     const name = host?.label ?? activeTab.title;
-    return activeTab.connected ? name : `${name} · closed`;
+    const tunnels = tunnelActiveBySession[activeTab.sessionId] ?? 0;
+    if (!activeTab.connected) return `${name} · closed`;
+    if (tunnels > 0) {
+      return `${name} · ${tunnels} tunnel${tunnels === 1 ? "" : "s"}`;
+    }
+    return name;
   })();
 
   // Tab selection is source of truth for what to show. Layout only wins when
@@ -2080,6 +2124,15 @@ function Workspace({
                     />
                   );
                 })()}
+
+              {activeTab &&
+                activeTab.kind === "terminal" &&
+                activeTab.connected && (
+                  <TunnelsPanel
+                    sessionId={activeTab.sessionId}
+                    connected={activeTab.connected}
+                  />
+                )}
 
               <section className="relative min-h-0 flex-1">
                 {zoomedId && (

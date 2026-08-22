@@ -15,7 +15,7 @@ use super::store::{ItemKind, ItemRow};
 use super::{Vault, get_encrypted_json, put_encrypted_json};
 use crate::model::{
     ApiKey, AssistProviderKind, AuthMaterial, Host, KnownHostKey, Project, ProjectLocation,
-    RunningSession, SecretBytes, SecretString, ShellIntegration,
+    RunningSession, SecretBytes, SecretString, ShellIntegration, TunnelDefinition,
 };
 use crate::ssh::{
     AuthProvider, HostStore, parse_private_key_bytes, presented_from_public_key,
@@ -42,6 +42,7 @@ pub struct HostSummary {
     pub color: Option<String>,
     pub tags: Vec<String>,
     pub shell_integration: ShellIntegration,
+    pub tunnels: Vec<TunnelDefinition>,
 }
 
 impl From<&Host> for HostSummary {
@@ -63,6 +64,7 @@ impl From<&Host> for HostSummary {
             color: host.color.clone(),
             tags: host.tags.clone(),
             shell_integration: host.shell_integration,
+            tunnels: host.tunnels.clone(),
         }
     }
 }
@@ -81,6 +83,7 @@ pub struct CreateHostRequest {
     pub sync_secret: bool,
     pub color: Option<String>,
     pub shell_integration: ShellIntegration,
+    pub tunnels: Vec<TunnelDefinition>,
 }
 
 /// Non-secret identity metadata for UI / IPC.
@@ -236,6 +239,7 @@ impl VaultRepository {
             Host::new(request.label, request.hostname, request.username).with_port(request.port);
         host.color = validate_host_color(request.color)?;
         host.shell_integration = request.shell_integration;
+        host.tunnels = request.tunnels;
 
         if let Some(identity_id) = request.identity_id {
             let (identity, _) = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -395,6 +399,7 @@ impl VaultRepository {
         record.username = request.username;
         record.color = validate_host_color(request.color)?;
         record.shell_integration = request.shell_integration;
+        record.tunnels = request.tunnels;
 
         if let Some(identity_id) = request.identity_id {
             let _ = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -1295,6 +1300,7 @@ mod tests {
                 sync_secret: false,
                 color: Some("#70A5F5".into()),
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -1328,6 +1334,7 @@ mod tests {
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -1371,6 +1378,7 @@ mod tests {
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -1460,6 +1468,7 @@ mod tests {
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -1499,6 +1508,7 @@ mod tests {
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -1516,6 +1526,7 @@ mod tests {
                     sync_secret: false,
                     color: Some("#CF718B".into()),
                     shell_integration: Default::default(),
+                    tunnels: Vec::new(),
                 },
             )
             .await
@@ -1546,6 +1557,7 @@ mod tests {
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -1634,6 +1646,7 @@ ZPzL/y8ftsnYTWVDR71ZAAAAEHRlc3RAdGV0aHJhLmxvY2FsAQIDBA==
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();

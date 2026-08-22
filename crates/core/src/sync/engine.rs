@@ -384,6 +384,7 @@ mod tests {
                 sync_secret: false,
                 color: Some("#4C8DF6".into()),
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -435,6 +436,7 @@ mod tests {
                     sync_secret: true,
                     color: Some("#4C8DF6".into()),
                     shell_integration: Default::default(),
+                    tunnels: Vec::new(),
                 },
             )
             .await
@@ -473,6 +475,7 @@ mod tests {
                 sync_secret: true,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();
@@ -551,6 +554,7 @@ mod tests {
                 sync_secret: false,
                 color: None,
                 shell_integration: Default::default(),
+                tunnels: Vec::new(),
             })
             .await
             .unwrap();

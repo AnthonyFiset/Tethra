@@ -455,7 +455,10 @@ async fn run_pty_loop(
         .await;
 }
 
-fn load_private_key(key: &SecretBytes, passphrase: Option<&SecretString>) -> Result<PrivateKey> {
+pub(crate) fn load_private_key(
+    key: &SecretBytes,
+    passphrase: Option<&SecretString>,
+) -> Result<PrivateKey> {
     parse_private_key_bytes(key.expose(), passphrase.map(SecretString::expose))
 }
 

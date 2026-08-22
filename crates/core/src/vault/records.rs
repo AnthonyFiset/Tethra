@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::model::{
     ApiKey, AssistProviderKind, Host, KnownHostKey, Project, ProjectLocation, RunningSession,
-    ShellIntegration,
+    ShellIntegration, TunnelDefinition,
 };
 use chrono::{DateTime, Utc};
 
@@ -27,6 +27,8 @@ pub struct HostRecord {
     pub color: Option<String>,
     #[serde(default)]
     pub shell_integration: ShellIntegration,
+    #[serde(default)]
+    pub tunnels: Vec<TunnelDefinition>,
 }
 
 impl From<&Host> for HostRecord {
@@ -44,6 +46,7 @@ impl From<&Host> for HostRecord {
             tags: host.tags.clone(),
             color: host.color.clone(),
             shell_integration: host.shell_integration,
+            tunnels: host.tunnels.clone(),
         }
     }
 }
@@ -63,6 +66,7 @@ impl From<HostRecord> for Host {
             tags: record.tags,
             color: record.color,
             shell_integration: record.shell_integration,
+            tunnels: record.tunnels,
         }
     }
 }

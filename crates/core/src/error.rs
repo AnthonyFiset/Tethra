@@ -35,6 +35,9 @@ pub enum Error {
     #[error("SFTP error: {0}")]
     Sftp(String),
 
+    #[error("{0}")]
+    Tunnel(String),
+
     #[error("SSH config error: {0}")]
     SshConfig(String),
 
