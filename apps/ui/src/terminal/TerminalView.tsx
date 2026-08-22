@@ -9,6 +9,7 @@ import {
   fitTerminal,
   getTerminalSelectionForCopy,
 } from "./registry";
+import { TerminalFindBar } from "./TerminalFindBar";
 
 interface TerminalViewProps {
   sessionId: string;
@@ -19,6 +20,10 @@ interface TerminalViewProps {
   color: string;
   /** Fill a split pane instead of absolute stacking. */
   pane?: boolean;
+  /** Show the find bar for this session. */
+  findOpen?: boolean;
+  onFindOpen?: () => void;
+  onFindClose?: () => void;
   onPaste?: (text: string) => void;
   onSplitRight?: () => void;
   onSplitDown?: () => void;
@@ -45,6 +50,9 @@ export function TerminalView({
   visible = true,
   color,
   pane = false,
+  findOpen = false,
+  onFindOpen,
+  onFindClose,
   onPaste,
   onSplitRight,
   onSplitDown,
@@ -160,6 +168,12 @@ export function TerminalView({
         className="size-full overflow-hidden px-3 py-2"
       />
 
+      <TerminalFindBar
+        sessionId={sessionId}
+        open={findOpen}
+        onClose={() => onFindClose?.()}
+      />
+
       {menu &&
         createPortal(
           <div
@@ -202,6 +216,12 @@ export function TerminalView({
               Clear
               <span className="tethra-menu-shortcut">⇧⌘K</span>
             </button>
+            {onFindOpen && (
+              <button {...itemProps(onFindOpen)}>
+                Find
+                <span className="tethra-menu-shortcut">⌘F</span>
+              </button>
+            )}
             {onSplitRight && (
               <button {...itemProps(onSplitRight)}>
                 Split right

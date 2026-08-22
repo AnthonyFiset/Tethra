@@ -15,4 +15,5 @@ pub use session::{
 };
 pub use sftp::{
     RemoteDirEntry, RemoteFileStat, RemoteFileType, SftpSession, TransferControl, TransferProgress,
+    TreeTransferProgress, TreeTransferResult,
 };

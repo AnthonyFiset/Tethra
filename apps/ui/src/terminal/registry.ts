@@ -1,5 +1,6 @@
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -33,6 +34,7 @@ import {
 interface TerminalRecord {
   terminal: Terminal;
   fit: FitAddon;
+  search: SearchAddon;
   serialize: SerializeAddon;
   webgl?: WebglAddon;
   clipboard?: ClipboardAddon;
@@ -169,6 +171,9 @@ export function createTerminal(
   const serialize = new SerializeAddon();
   terminal.loadAddon(serialize);
 
+  const search = new SearchAddon();
+  terminal.loadAddon(search);
+
   const disposables: { dispose(): void }[] = [];
   disposables.push(
     terminal.parser.registerOscHandler(7, (data) => {
@@ -218,6 +223,7 @@ export function createTerminal(
   const record: TerminalRecord = {
     terminal,
     fit,
+    search,
     serialize,
     clipboard,
     unicode11,
@@ -454,6 +460,62 @@ export function disposeAllTerminals(): void {
 
 export function hasTerminal(sessionId: string): boolean {
   return terminals.has(sessionId);
+}
+
+const SEARCH_DECORATIONS = {
+  matchBackground: "#2c4a75",
+  matchBorder: "#3d8ef0",
+  matchOverviewRuler: "#3d8ef0",
+  activeMatchBackground: "#3d8ef0",
+  activeMatchBorder: "#5aa0f5",
+  activeMatchColorOverviewRuler: "#5aa0f5",
+};
+
+/** Find next match in scrollback. Returns whether a match was selected. */
+export function findTerminalNext(
+  sessionId: string,
+  term: string,
+  options?: { caseSensitive?: boolean; incremental?: boolean },
+): boolean {
+  const record = terminals.get(sessionId);
+  if (!record || !term) return false;
+  return record.search.findNext(term, {
+    caseSensitive: options?.caseSensitive ?? false,
+    incremental: options?.incremental ?? false,
+    decorations: SEARCH_DECORATIONS,
+  });
+}
+
+export function findTerminalPrevious(
+  sessionId: string,
+  term: string,
+  options?: { caseSensitive?: boolean },
+): boolean {
+  const record = terminals.get(sessionId);
+  if (!record || !term) return false;
+  return record.search.findPrevious(term, {
+    caseSensitive: options?.caseSensitive ?? false,
+    decorations: SEARCH_DECORATIONS,
+  });
+}
+
+export function clearTerminalSearch(sessionId: string): void {
+  const record = terminals.get(sessionId);
+  if (!record) return;
+  record.search.clearDecorations();
+  record.search.clearActiveDecoration();
+}
+
+export function onTerminalSearchResults(
+  sessionId: string,
+  handler: (resultIndex: number, resultCount: number) => void,
+): () => void {
+  const record = terminals.get(sessionId);
+  if (!record) return () => undefined;
+  const d = record.search.onDidChangeResults((event) => {
+    handler(event.resultIndex, event.resultCount);
+  });
+  return () => d.dispose();
 }
 
 /** Parse OSC 7 bodies like `file://hostname/path` or plain paths. */

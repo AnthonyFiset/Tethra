@@ -133,6 +133,7 @@ fn build_macos<R: Runtime>(
         .build()?;
 
     let terminal = SubmenuBuilder::new(app, "Terminal")
+        .item(&item("terminal.find", "Find…", Some("CmdOrCtrl+F"))?)
         .item(&item("terminal.clear", "Clear", Some("CmdOrCtrl+Shift+K"))?)
         .item(&item("terminal.reset", "Reset", None)?)
         .separator()

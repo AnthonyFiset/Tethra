@@ -164,7 +164,9 @@ export function FilePane({
               {sorted.map((entry) => (
                 <tr
                   key={entry.path}
-                  draggable={entry.fileType !== "dir"}
+                  draggable={
+                    entry.fileType === "file" || entry.fileType === "dir"
+                  }
                   onDragStart={(event) => {
                     const payload: DragPayload = {
                       side,

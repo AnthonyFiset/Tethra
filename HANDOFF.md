@@ -6,7 +6,7 @@ _Paste this into a new agent session with [`ROADMAP.md`](ROADMAP.md) / [`PROJECT
 **Repo:** https://github.com/AnthonyFiset/Tethra (public)  
 **Branch / commit:** `main` (push after this work)  
 **Latest tag:** `v0.3.2`  
-**Current task:** [`NEXT.md`](NEXT.md) — v0.4.0 brief 2 next (search + SFTP recursive); Windows signing CI wired  
+**Current task:** [`NEXT.md`](NEXT.md) — v0.4.0 brief 3 next (port forwarding); search + SFTP recursive shipped  
 **Status / plan:** [`ROADMAP.md`](ROADMAP.md) — **only** place milestone status lives
 
 ---

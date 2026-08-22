@@ -33,7 +33,7 @@ export function TransferQueuePanel({
   if (items.length === 0) {
     return (
       <section className="flex h-10 shrink-0 items-center justify-center border-t border-line bg-surface px-3 text-micro text-fg-subtle">
-        Drop files between panes to start a transfer.
+        Drop files or folders between panes to start a transfer.
       </section>
     );
   }
@@ -136,13 +136,28 @@ export function TransferQueuePanel({
                   />
                 </div>
                 <span className="shrink-0 font-mono text-micro text-fg-subtle">
+                  {item.filesTotal
+                    ? `${item.filesDone ?? 0}/${item.filesTotal} · `
+                    : ""}
                   {formatBytes(item.bytesTransferred)}
                   {item.totalBytes ? ` / ${formatBytes(item.totalBytes)}` : ""}
                 </span>
               </div>
 
-              {item.error && item.status !== "completed" && (
-                <p className="mt-1 mb-0 text-micro text-danger" data-selectable>
+              {item.currentFile && item.status === "running" && (
+                <p className="mt-1 mb-0 truncate text-micro text-fg-subtle">
+                  {item.currentFile}
+                </p>
+              )}
+
+              {item.error && (
+                <p
+                  className={cn(
+                    "mt-1 mb-0 whitespace-pre-wrap text-micro",
+                    item.status === "completed" ? "text-warning" : "text-danger",
+                  )}
+                  data-selectable
+                >
                   {item.error}
                 </p>
               )}

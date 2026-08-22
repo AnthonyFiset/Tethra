@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
-use ssh_client_core::ssh::{RemoteFileType, SftpSession, TransferControl, TransferProgress};
+use ssh_client_core::ssh::{
+    RemoteFileType, SftpSession, TransferControl, TransferProgress, TreeTransferResult,
+};
 use tauri::State;
 use tauri::ipc::Channel;
 use tokio::sync::Mutex;
@@ -32,6 +34,12 @@ pub struct TransferEvent {
     pub bytes_transferred: u64,
     pub total_bytes: Option<u64>,
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_done: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -301,36 +309,123 @@ pub async fn sftp_transfer(
         .await
         .insert(transfer_id, control.clone());
 
-    let emit = |kind: &str, bytes: u64, total: Option<u64>, message: Option<String>| {
+    let emit = |kind: &str,
+                bytes: u64,
+                total: Option<u64>,
+                message: Option<String>,
+                files_done: Option<u64>,
+                files_total: Option<u64>,
+                current_file: Option<String>| {
         let _ = progress.send(TransferEvent {
             transfer_id: transfer_id.to_string(),
             kind: kind.into(),
             bytes_transferred: bytes,
             total_bytes: total,
             message,
+            files_done,
+            files_total,
+            current_file,
         });
     };
 
-    emit("started", offset, None, None);
+    emit("started", offset, None, None, None, None, None);
 
-    let local = PathBuf::from(local_path);
-    let remote = remote_path;
+    let local = PathBuf::from(&local_path);
+    let remote = remote_path.clone();
     let manager = Arc::clone(&state.manager);
     let result = async {
         let sftp = manager.sftp(host_id).await.map_err(redacted_error)?;
-        let on_progress = |p: TransferProgress| {
-            emit("progress", p.bytes_transferred, p.total_bytes, None);
-            Ok(())
-        };
         match direction.as_str() {
-            "upload" => sftp
-                .put_with(&local, &remote, offset, &control, on_progress)
-                .await
-                .map_err(redacted_error),
-            "download" => sftp
-                .get_with(&remote, &local, offset, &control, on_progress)
-                .await
-                .map_err(redacted_error),
+            "upload" => {
+                let meta = tokio::fs::metadata(&local)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if meta.is_dir() {
+                    if offset > 0 {
+                        return Err(
+                            "folder transfers cannot resume; cancel and retry from the start"
+                                .into(),
+                        );
+                    }
+                    let tree = sftp
+                        .put_tree(&local, &remote, &control, |p| {
+                            emit(
+                                "progress",
+                                p.bytes_transferred,
+                                p.total_bytes,
+                                None,
+                                Some(p.files_done),
+                                Some(p.files_total),
+                                p.current_file.clone(),
+                            );
+                            Ok(())
+                        })
+                        .await
+                        .map_err(redacted_error)?;
+                    Ok(tree_outcome(tree))
+                } else {
+                    let on_progress = |p: TransferProgress| {
+                        emit(
+                            "progress",
+                            p.bytes_transferred,
+                            p.total_bytes,
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                        Ok(())
+                    };
+                    sftp.put_with(&local, &remote, offset, &control, on_progress)
+                        .await
+                        .map_err(redacted_error)
+                        .map(FileOrTree::File)
+                }
+            }
+            "download" => {
+                let remote_stat = sftp.stat(&remote).await.map_err(redacted_error)?;
+                if remote_stat.file_type == RemoteFileType::Dir {
+                    if offset > 0 {
+                        return Err(
+                            "folder transfers cannot resume; cancel and retry from the start"
+                                .into(),
+                        );
+                    }
+                    let tree = sftp
+                        .get_tree(&remote, &local, &control, |p| {
+                            emit(
+                                "progress",
+                                p.bytes_transferred,
+                                p.total_bytes,
+                                None,
+                                Some(p.files_done),
+                                Some(p.files_total),
+                                p.current_file.clone(),
+                            );
+                            Ok(())
+                        })
+                        .await
+                        .map_err(redacted_error)?;
+                    Ok(tree_outcome(tree))
+                } else {
+                    let on_progress = |p: TransferProgress| {
+                        emit(
+                            "progress",
+                            p.bytes_transferred,
+                            p.total_bytes,
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                        Ok(())
+                    };
+                    sftp.get_with(&remote, &local, offset, &control, on_progress)
+                        .await
+                        .map_err(redacted_error)
+                        .map(FileOrTree::File)
+                }
+            }
             _ => Err("invalid transfer direction".into()),
         }
     }
@@ -339,19 +434,120 @@ pub async fn sftp_transfer(
     state.active_transfers.lock().await.remove(&transfer_id);
 
     match result {
-        Ok(bytes) => {
-            emit("completed", bytes, Some(bytes), None);
+        Ok(FileOrTree::File(bytes)) => {
+            emit("completed", bytes, Some(bytes), None, None, None, None);
             Ok(bytes)
+        }
+        Ok(FileOrTree::Tree(tree)) => {
+            let message = tree_completion_message(&tree);
+            let kind = if tree.cancelled {
+                "paused"
+            } else if !tree.failures.is_empty() && tree.files_done == 0 {
+                "failed"
+            } else {
+                "completed"
+            };
+            emit(
+                kind,
+                tree.bytes_transferred,
+                Some(tree.bytes_transferred),
+                Some(message),
+                Some(tree.files_done),
+                Some(tree.files_total),
+                None,
+            );
+            if tree.cancelled {
+                Err("transfer cancelled".into())
+            } else if !tree.failures.is_empty() && tree.files_done == 0 {
+                Err(tree_completion_message(&tree))
+            } else {
+                Ok(tree.bytes_transferred)
+            }
         }
         Err(error) if error == "transfer cancelled" => {
             let partial = partial_bytes(&direction, &local).await;
-            emit("paused", partial, None, Some("transfer cancelled".into()));
+            emit(
+                "paused",
+                partial,
+                None,
+                Some("transfer cancelled".into()),
+                None,
+                None,
+                None,
+            );
             Err(error)
         }
         Err(error) => {
-            emit("failed", offset, None, Some(error.clone()));
+            emit(
+                "failed",
+                offset,
+                None,
+                Some(error.clone()),
+                None,
+                None,
+                None,
+            );
             Err(error)
         }
+    }
+}
+
+enum FileOrTree {
+    File(u64),
+    Tree(TreeTransferResult),
+}
+
+fn tree_outcome(tree: TreeTransferResult) -> FileOrTree {
+    FileOrTree::Tree(tree)
+}
+
+fn tree_completion_message(tree: &TreeTransferResult) -> String {
+    let mut parts = Vec::new();
+    if tree.cancelled {
+        parts.push("Cancelled — partial tree left on disk.".to_string());
+    }
+    if !tree.failures.is_empty() {
+        parts.push(format!(
+            "{} of {} failed",
+            tree.failures.len(),
+            tree.files_total
+        ));
+        for failure in tree.failures.iter().take(12) {
+            parts.push(failure.clone());
+        }
+        if tree.failures.len() > 12 {
+            parts.push(format!("…and {} more", tree.failures.len() - 12));
+        }
+    }
+    if !tree.notes.is_empty() {
+        parts.push(format!("{} skipped", tree.notes.len()));
+        for note in tree.notes.iter().take(6) {
+            parts.push(note.clone());
+        }
+    }
+    if parts.is_empty() {
+        format!(
+            "{} files · {}",
+            tree.files_done,
+            format_bytes(tree.bytes_transferred)
+        )
+    } else {
+        parts.join("\n")
+    }
+}
+
+fn format_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }
 

@@ -267,6 +267,7 @@ function Workspace({
   const [activeId, setActiveId] = useState<string>();
   const [layout, setLayout] = useState<LayoutNode | null>(null);
   const [zoomedId, setZoomedId] = useState<string>();
+  const [findSessionId, setFindSessionId] = useState<string>();
   const [narrow, setNarrow] = useState(() =>
     window.matchMedia("(max-width: 767px)").matches,
   );
@@ -916,6 +917,9 @@ function Workspace({
         break;
       case "terminal.clear":
         if (terminalActive && active) clearTerminal(active.sessionId);
+        break;
+      case "terminal.find":
+        if (terminalActive && active) setFindSessionId(active.sessionId);
         break;
       case "terminal.reset":
         if (terminalActive && active) resetTerminal(active.sessionId);
@@ -1794,6 +1798,26 @@ function Workspace({
         event.preventDefault();
         toggleSidebar();
       }
+      if (event.key.toLowerCase() === "f" && status.unlocked) {
+        const tab = tabsRef.current.find(
+          (entry) => entry.sessionId === activeIdRef.current,
+        );
+        const inTerminal =
+          tab &&
+          (tab.kind === "terminal" || tab.kind === "local") &&
+          !isEditableField(document.activeElement);
+        if (!inTerminal) return;
+        // macOS: ⌘F. Win/Linux: Ctrl+Shift+F (plain Ctrl+F stays with the shell).
+        const isMac = navigator.platform.toLowerCase().includes("mac");
+        const wantFind = isMac
+          ? event.metaKey && !event.ctrlKey && !event.shiftKey
+          : event.ctrlKey && event.shiftKey;
+        if (wantFind) {
+          event.preventDefault();
+          setFindSessionId(tab.sessionId);
+          return;
+        }
+      }
       if (event.key.toLowerCase() === "c" && !event.shiftKey && status.unlocked) {
         const tab = tabsRef.current.find(
           (entry) => entry.sessionId === activeIdRef.current,
@@ -2107,6 +2131,13 @@ function Workspace({
                           active={focused}
                           visible
                           color={tab.color ?? DEFAULT_HOST_COLOR}
+                          findOpen={findSessionId === tab.sessionId}
+                          onFindOpen={() => setFindSessionId(tab.sessionId)}
+                          onFindClose={() =>
+                            setFindSessionId((current) =>
+                              current === tab.sessionId ? undefined : current,
+                            )
+                          }
                           onPaste={(text) =>
                             pasteIntoTerminal(tab.sessionId, text)
                           }

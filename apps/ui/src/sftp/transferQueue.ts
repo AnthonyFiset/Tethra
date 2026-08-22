@@ -24,6 +24,9 @@ export interface TransferItem {
   totalBytes: number | null;
   offset: number;
   error?: string;
+  filesDone?: number;
+  filesTotal?: number;
+  currentFile?: string;
 }
 
 export class TransferQueueRunner {
@@ -145,6 +148,9 @@ export class TransferQueueRunner {
     if (event.totalBytes !== null) {
       item.totalBytes = Number(event.totalBytes);
     }
+    if (event.filesDone != null) item.filesDone = Number(event.filesDone);
+    if (event.filesTotal != null) item.filesTotal = Number(event.filesTotal);
+    if (event.currentFile) item.currentFile = event.currentFile;
     if (event.kind === "paused") {
       item.status = "paused";
       item.offset = item.bytesTransferred;
@@ -155,6 +161,9 @@ export class TransferQueueRunner {
     } else if (event.kind === "completed") {
       item.status = "completed";
       item.offset = item.bytesTransferred;
+      if (event.message) item.error = event.message;
+    } else if (event.kind === "progress" && event.message) {
+      item.error = undefined;
     }
     this.onChange();
   }

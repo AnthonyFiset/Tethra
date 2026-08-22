@@ -110,8 +110,8 @@ stamped on the same tree.)
 | Click-through agent installs (native / Node first) | ✅ Shipped | v0.3.2 |
 | Unsigned installers (Gatekeeper/SmartScreen) | Windows Authenticode wired (Artifact Signing); macOS Developer ID later; SmartScreen reputation still warms | v0.4.0 |
 | No port forwarding | Table stakes | v0.4.0 |
-| SFTP no recursive folder transfer | Table stakes | v0.4.0 |
-| No terminal search (⌘F) | Table stakes | v0.4.0 |
+| SFTP no recursive folder transfer | ✅ Recursive upload/download with aggregate progress | v0.4.0 |
+| No terminal search (⌘F) | ✅ `@xterm/addon-search` find bar | v0.4.0 |
 | **No SSH agent forwarding** | 🐛 High — see §3.2 | v0.4.0+ |
 | Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
 | Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |

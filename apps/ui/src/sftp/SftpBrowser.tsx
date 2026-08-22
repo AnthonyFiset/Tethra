@@ -157,10 +157,6 @@ export function SftpBrowser({
   }
 
   function enqueueTransfer(direction: "upload" | "download", payload: DragPayload) {
-    if (payload.fileType === "dir") {
-      window.alert("Folder transfers are not supported yet.");
-      return;
-    }
     const localPathValue =
       direction === "upload" ? payload.path : joinPath(localPath, payload.name);
     const remotePathValue =
@@ -173,12 +169,16 @@ export function SftpBrowser({
       direction,
       localPath: localPathValue,
       remotePath: remotePathValue,
-      label: payload.name,
+      label:
+        payload.fileType === "dir" ? `${payload.name}/` : payload.name,
     });
   }
 
   async function uploadSelected() {
-    if (!selectedLocal || selectedLocal.fileType === "dir") return;
+    if (!selectedLocal) return;
+    if (selectedLocal.fileType !== "file" && selectedLocal.fileType !== "dir") {
+      return;
+    }
     enqueueTransfer("upload", {
       side: "local",
       path: selectedLocal.path,
@@ -188,7 +188,13 @@ export function SftpBrowser({
   }
 
   async function downloadSelected() {
-    if (!selectedRemote || selectedRemote.fileType === "dir") return;
+    if (!selectedRemote) return;
+    if (
+      selectedRemote.fileType !== "file" &&
+      selectedRemote.fileType !== "dir"
+    ) {
+      return;
+    }
     enqueueTransfer("download", {
       side: "remote",
       path: selectedRemote.path,
@@ -212,7 +218,11 @@ export function SftpBrowser({
           variant="ghost"
           icon={<ArrowRight size={13} />}
           onClick={() => void uploadSelected()}
-          disabled={!selectedLocal || selectedLocal.fileType === "dir"}
+          disabled={
+            !selectedLocal ||
+            (selectedLocal.fileType !== "file" &&
+              selectedLocal.fileType !== "dir")
+          }
         >
           Upload selected
         </Button>
@@ -221,7 +231,11 @@ export function SftpBrowser({
           variant="ghost"
           icon={<ArrowLeft size={13} />}
           onClick={() => void downloadSelected()}
-          disabled={!selectedRemote || selectedRemote.fileType === "dir"}
+          disabled={
+            !selectedRemote ||
+            (selectedRemote.fileType !== "file" &&
+              selectedRemote.fileType !== "dir")
+          }
         >
           Download selected
         </Button>

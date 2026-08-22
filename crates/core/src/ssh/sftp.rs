@@ -56,6 +56,27 @@ pub struct TransferProgress {
     pub total_bytes: Option<u64>,
 }
 
+/// Aggregate progress for a recursive folder transfer.
+#[derive(Debug, Clone, Default)]
+pub struct TreeTransferProgress {
+    pub bytes_transferred: u64,
+    pub total_bytes: Option<u64>,
+    pub files_done: u64,
+    pub files_total: u64,
+    pub current_file: Option<String>,
+}
+
+/// Result of a recursive transfer (partial trees allowed).
+#[derive(Debug, Clone, Default)]
+pub struct TreeTransferResult {
+    pub bytes_transferred: u64,
+    pub files_done: u64,
+    pub files_total: u64,
+    pub failures: Vec<String>,
+    pub notes: Vec<String>,
+    pub cancelled: bool,
+}
+
 /// Cooperative cancellation handle for long-running transfers.
 #[derive(Clone, Debug)]
 pub struct TransferControl {
@@ -309,6 +330,253 @@ impl SftpSession {
         Ok(transferred)
     }
 
+    /// Upload a local directory tree to `remote_root` (created if missing).
+    /// Skips symlinks; continues after per-file failures.
+    pub async fn put_tree<F>(
+        &self,
+        local_root: impl AsRef<Path>,
+        remote_root: impl AsRef<Path>,
+        control: &TransferControl,
+        mut on_progress: F,
+    ) -> Result<TreeTransferResult>
+    where
+        F: FnMut(TreeTransferProgress) -> Result<()>,
+    {
+        let local_root = local_root.as_ref().to_path_buf();
+        let remote_root = remote_root.as_ref().to_path_buf();
+
+        let mut plan: Vec<(PathBuf, PathBuf, bool)> = Vec::new(); // local, remote, is_dir
+        let mut notes = Vec::new();
+        walk_local_tree(&local_root, &remote_root, &mut plan, &mut notes)?;
+
+        let files_total = plan.iter().filter(|(_, _, is_dir)| !*is_dir).count() as u64;
+        let total_bytes = plan
+            .iter()
+            .filter(|(_, _, is_dir)| !*is_dir)
+            .map(|(local, _, _)| std::fs::metadata(local).map(|m| m.len()).unwrap_or(0))
+            .sum::<u64>();
+
+        let mut result = TreeTransferResult {
+            files_total,
+            notes,
+            ..Default::default()
+        };
+        let mut bytes_done = 0u64;
+
+        // Ensure root exists.
+        let _ = self.mkdir(&remote_root).await;
+
+        for (local, remote, is_dir) in plan {
+            if control.is_cancelled() {
+                result.cancelled = true;
+                break;
+            }
+            let current = remote
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            on_progress(TreeTransferProgress {
+                bytes_transferred: bytes_done,
+                total_bytes: Some(total_bytes),
+                files_done: result.files_done,
+                files_total,
+                current_file: Some(current.clone()),
+            })?;
+
+            if is_dir {
+                if let Err(err) = self.mkdir(&remote).await {
+                    // Exists is fine — russh may not distinguish; record other errors.
+                    let msg = err.to_string();
+                    if !msg.to_lowercase().contains("exist") {
+                        result.failures.push(format!("{}: {msg}", remote.display()));
+                    }
+                }
+                continue;
+            }
+
+            let file_bytes = match self
+                .put_with(&local, &remote, 0, control, |p| {
+                    on_progress(TreeTransferProgress {
+                        bytes_transferred: bytes_done + p.bytes_transferred,
+                        total_bytes: Some(total_bytes),
+                        files_done: result.files_done,
+                        files_total,
+                        current_file: Some(current.clone()),
+                    })
+                })
+                .await
+            {
+                Ok(n) => n,
+                Err(Error::TransferCancelled) => {
+                    result.cancelled = true;
+                    break;
+                }
+                Err(err) => {
+                    result.failures.push(format!("{}: {err}", remote.display()));
+                    continue;
+                }
+            };
+            bytes_done += file_bytes;
+            result.files_done += 1;
+            result.bytes_transferred = bytes_done;
+            on_progress(TreeTransferProgress {
+                bytes_transferred: bytes_done,
+                total_bytes: Some(total_bytes),
+                files_done: result.files_done,
+                files_total,
+                current_file: Some(current),
+            })?;
+        }
+
+        Ok(result)
+    }
+
+    /// Download a remote directory tree to `local_root` (created if missing).
+    pub async fn get_tree<F>(
+        &self,
+        remote_root: impl AsRef<Path>,
+        local_root: impl AsRef<Path>,
+        control: &TransferControl,
+        mut on_progress: F,
+    ) -> Result<TreeTransferResult>
+    where
+        F: FnMut(TreeTransferProgress) -> Result<()>,
+    {
+        let remote_root = remote_root.as_ref().to_path_buf();
+        let local_root = local_root.as_ref().to_path_buf();
+
+        // Safety: refuse downloading into a path that is the remote path string
+        // mirrored onto local in a self-overwrite way when they share a prefix
+        // after join — classic "copy into itself" for same-path mistakes.
+        if paths_would_nest(&remote_root, &local_root) {
+            return Err(Error::InvalidArgument(
+                "refusing to download a folder into a path that would overwrite itself".into(),
+            ));
+        }
+
+        let mut plan: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
+        let mut notes = Vec::new();
+        self.walk_remote_tree(&remote_root, &local_root, &mut plan, &mut notes)
+            .await?;
+
+        let files_total = plan.iter().filter(|(_, _, is_dir)| !*is_dir).count() as u64;
+        let mut total_bytes = 0u64;
+        for (remote, _, is_dir) in &plan {
+            if *is_dir {
+                continue;
+            }
+            if let Ok(stat) = self.stat(remote).await {
+                total_bytes += stat.size.unwrap_or(0);
+            }
+        }
+
+        let mut result = TreeTransferResult {
+            files_total,
+            notes,
+            ..Default::default()
+        };
+        let mut bytes_done = 0u64;
+
+        tokio::fs::create_dir_all(&local_root).await?;
+
+        for (remote, local, is_dir) in plan {
+            if control.is_cancelled() {
+                result.cancelled = true;
+                break;
+            }
+            let current = remote
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            on_progress(TreeTransferProgress {
+                bytes_transferred: bytes_done,
+                total_bytes: Some(total_bytes),
+                files_done: result.files_done,
+                files_total,
+                current_file: Some(current.clone()),
+            })?;
+
+            if is_dir {
+                if let Err(err) = tokio::fs::create_dir_all(&local).await {
+                    result.failures.push(format!("{}: {err}", local.display()));
+                }
+                continue;
+            }
+
+            if let Some(parent) = local.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+
+            let file_bytes = match self
+                .get_with(&remote, &local, 0, control, |p| {
+                    on_progress(TreeTransferProgress {
+                        bytes_transferred: bytes_done + p.bytes_transferred,
+                        total_bytes: Some(total_bytes),
+                        files_done: result.files_done,
+                        files_total,
+                        current_file: Some(current.clone()),
+                    })
+                })
+                .await
+            {
+                Ok(n) => n,
+                Err(Error::TransferCancelled) => {
+                    result.cancelled = true;
+                    break;
+                }
+                Err(err) => {
+                    result.failures.push(format!("{}: {err}", remote.display()));
+                    continue;
+                }
+            };
+            bytes_done += file_bytes;
+            result.files_done += 1;
+            result.bytes_transferred = bytes_done;
+            on_progress(TreeTransferProgress {
+                bytes_transferred: bytes_done,
+                total_bytes: Some(total_bytes),
+                files_done: result.files_done,
+                files_total,
+                current_file: Some(current),
+            })?;
+        }
+
+        Ok(result)
+    }
+
+    async fn walk_remote_tree(
+        &self,
+        remote_dir: &Path,
+        local_dir: &Path,
+        plan: &mut Vec<(PathBuf, PathBuf, bool)>,
+        notes: &mut Vec<String>,
+    ) -> Result<()> {
+        plan.push((remote_dir.to_path_buf(), local_dir.to_path_buf(), true));
+        let entries = self.list(remote_dir).await?;
+        for entry in entries {
+            if entry.name == "." || entry.name == ".." {
+                continue;
+            }
+            let remote_child = remote_dir.join(&entry.name);
+            let local_child = local_dir.join(&entry.name);
+            match entry.file_type {
+                RemoteFileType::Dir => {
+                    Box::pin(self.walk_remote_tree(&remote_child, &local_child, plan, notes))
+                        .await?;
+                }
+                RemoteFileType::Symlink => {
+                    notes.push(format!("skipped symlink {}", remote_child.display()));
+                }
+                RemoteFileType::File | RemoteFileType::Other => {
+                    plan.push((remote_child, local_child, false));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn canonicalize(&self, path: impl AsRef<Path>) -> Result<PathBuf> {
         let path = path_to_str(path.as_ref())?;
         let resolved = self
@@ -349,4 +617,48 @@ fn stat_from_metadata(meta: russh_sftp::client::fs::Metadata) -> RemoteFileStat 
 fn path_to_str(path: &Path) -> Result<&str> {
     path.to_str()
         .ok_or_else(|| Error::InvalidArgument("path is not valid UTF-8".into()))
+}
+
+fn walk_local_tree(
+    local_dir: &Path,
+    remote_dir: &Path,
+    plan: &mut Vec<(PathBuf, PathBuf, bool)>,
+    notes: &mut Vec<String>,
+) -> Result<()> {
+    plan.push((local_dir.to_path_buf(), remote_dir.to_path_buf(), true));
+    let entries = std::fs::read_dir(local_dir)?;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str == "." || name_str == ".." {
+            continue;
+        }
+        let local_child = entry.path();
+        let remote_child = remote_dir.join(&name);
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(err) => {
+                notes.push(format!("skipped {}: {err}", local_child.display()));
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            notes.push(format!("skipped symlink {}", local_child.display()));
+            continue;
+        }
+        if meta.is_dir() {
+            walk_local_tree(&local_child, &remote_child, plan, notes)?;
+        } else if meta.is_file() {
+            plan.push((local_child, remote_child, false));
+        } else {
+            notes.push(format!("skipped special file {}", local_child.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Same path string on both sides — refuse (would overwrite the mirrored source).
+fn paths_would_nest(remote: &Path, local: &Path) -> bool {
+    remote == local
 }

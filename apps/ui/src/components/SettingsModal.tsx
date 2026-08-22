@@ -1290,6 +1290,7 @@ function KeyboardSection({
     ["Toggle sidebar", `${mod}B`],
     ["Launcher ↔ Workspace", chrome === "mac" ? "⌘Esc" : "Ctrl+Esc"],
     ["Clear terminal", `${shiftMod}K`],
+    ["Find in terminal", chrome === "mac" ? "⌘F" : "Ctrl+Shift+F"],
     ["Close tab", `${mod}W`],
     ["New tab", `${mod}T`],
     ["Split right", chrome === "mac" ? "⌘\\" : "Ctrl+\\"],
