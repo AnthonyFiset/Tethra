@@ -108,7 +108,7 @@ stamped on the same tree.)
 | Host color underused; card weight; type hierarchy | ✅ Ambient rail / hairline / hierarchy | v0.3.0 |
 | Agent notifications (BEL / tmux hooks) | ✅ Shipped — attached + detached watch | v0.3.2 |
 | Click-through agent installs (native / Node first) | ✅ Shipped | v0.3.2 |
-| Unsigned installers (Gatekeeper/SmartScreen) | Adoption blocker | v0.4.0 |
+| Unsigned installers (Gatekeeper/SmartScreen) | Windows Authenticode wired (Artifact Signing); macOS Developer ID later; SmartScreen reputation still warms | v0.4.0 |
 | No port forwarding | Table stakes | v0.4.0 |
 | SFTP no recursive folder transfer | Table stakes | v0.4.0 |
 | No terminal search (⌘F) | Table stakes | v0.4.0 |
@@ -190,12 +190,14 @@ Also ship plain terminal search (⌘F, `@xterm/addon-search`) — currently miss
 
 ### 3.4 Code signing
 
-macOS: Apple Developer $99/yr, Developer ID + notarization via `tauri-action`.
-Windows: **Azure Artifact Signing** (renamed from Trusted Signing, 2026) at
-$9.99/mo — individual developers in the **US or Canada** are eligible, orgs in
-US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL. Identity validation takes 1–20 business
-days, so start it early. Fallback: Certum OV cert ~$99/yr. Neither skips
-SmartScreen reputation warmup except EV.
+macOS: Apple Developer $99/yr, Developer ID + notarization via `tauri-action`
+(still later).
+
+Windows: **Azure Artifact Signing** CI is wired in `.github/workflows/release.yml`
+(Approach A: Tauri `signCommand` + `artifact-signing-cli`). Account
+`tethra-signing` / profile `tethra-public-trust` / Biz Inbound Inc. See
+[`docs/UPDATES.md`](docs/UPDATES.md). SmartScreen reputation still warms over
+days after first signed installs.
 
 ### 3.5 Windows as a first-class target
 

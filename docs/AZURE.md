@@ -33,4 +33,8 @@ subscription identifiers belong in this file — see hard rule 12._
 - **Azure Artifact Signing** (renamed from Trusted Signing; $9.99/mo, Windows
   code signing) accepts individual developers in the US or Canada, and orgs in
   US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL. Identity validation takes 1–20 business
-  days ([`ROADMAP.md`](../ROADMAP.md) §3.4).
+  days ([`ROADMAP.md`](../ROADMAP.md) §3.4). Account `tethra-signing` (East US,
+  `https://eus.codesigning.azure.net/`), profile `tethra-public-trust`, subject
+  `CN=Biz Inbound Inc.`. CI wires it in `.github/workflows/release.yml` via
+  Tauri `signCommand` + `artifact-signing-cli` when `AZURE_SIGNING_*` secrets
+  are set — see [`docs/UPDATES.md`](UPDATES.md).

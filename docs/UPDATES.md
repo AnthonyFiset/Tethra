@@ -56,3 +56,20 @@ The minisign public half lives in `tauri.conf.json` under `plugins.updater.pubke
 The private half is only in GitHub Actions secrets (`TAURI_SIGNING_PRIVATE_KEY` /
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) and the operator’s local
 `~/.tethra-updater.key` — never commit it.
+
+## Windows Authenticode (separate from the updater)
+
+Release builds on `windows-latest` sign the app `.exe` and the NSIS installer with
+**Azure Artifact Signing** when `AZURE_SIGNING_TENANT_ID` /
+`AZURE_SIGNING_CLIENT_ID` / `AZURE_SIGNING_CLIENT_SECRET` are present. Mechanism:
+Tauri `bundle.windows.signCommand` → `artifact-signing-cli` (Approach A — signs
+both the inner binary and the installer during bundling). Endpoint
+`https://eus.codesigning.azure.net/`, account `tethra-signing`, profile
+`tethra-public-trust`. SHA-256 digest + RFC 3161 timestamp
+(`http://timestamp.acs.microsoft.com`).
+
+This is **Authenticode** for SmartScreen / “unknown publisher”. It does **not**
+replace minisign updater signatures — both run in the same job and must stay
+independent. Missing Azure secrets skip Authenticode with a notice and still
+upload unsigned Windows artifacts (forks stay green). `scripts/ci-check.sh` never
+requires signing tooling.

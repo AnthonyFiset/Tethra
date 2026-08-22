@@ -96,6 +96,49 @@ jobs:
       - name: Stamp version from tag
         run: node scripts/set-version.mjs ${{ github.ref_name }}
 
+      # Windows Authenticode via Azure Artifact Signing (Approach A: Tauri
+      # signCommand). Signs the app .exe before packaging and the NSIS installer
+      # after — both get SHA-256 + RFC 3161 timestamps. Uses artifact-signing-cli
+      # (crates.io rename of trusted-signing-cli). Minisign updater keys are
+      # untouched (TAURI_SIGNING_* below). Skip politely when secrets are absent
+      # so forks stay green — same pattern as ACR / site deploy.
+      - name: Configure Windows Authenticode
+        id: win_sign
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_SIGNING_TENANT_ID}" || -z "${AZURE_SIGNING_CLIENT_ID}" || -z "${AZURE_SIGNING_CLIENT_SECRET}" ]]; then
+            echo "::notice::AZURE_SIGNING_* secrets not set — Windows artifacts will be unsigned. Forks stay green."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          cargo install artifact-signing-cli --locked
+          # Inject signCommand only for this job (never committed) so local
+          # Windows builds without the CLI keep working.
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("apps/tauri/src-tauri/tauri.conf.json")
+          data = json.loads(path.read_text())
+          windows = data.setdefault("bundle", {}).setdefault("windows", {})
+          windows["signCommand"] = (
+              "artifact-signing-cli "
+              "-e https://eus.codesigning.azure.net/ "
+              "-a tethra-signing "
+              "-c tethra-public-trust "
+              "-d Tethra "
+              "%1"
+          )
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          print("Injected bundle.windows.signCommand for Authenticode")
+          PY
+
       # Builds + uploads to a draft release. A follow-up job publishes once every
       # matrix leg succeeds so `releases/latest` never points at a half-built set.
       - name: Build installer
@@ -104,6 +147,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Mapped for artifact-signing-cli (never log these values).
+          AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
         with:
           projectPath: apps/tauri/src-tauri
           tagName: ${{ github.ref_name }}
