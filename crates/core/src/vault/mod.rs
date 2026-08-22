@@ -574,6 +574,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             },
         )
         .await

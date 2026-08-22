@@ -26,6 +26,9 @@ pub struct Host {
     /// Port-forward definitions (no secrets). Default empty.
     #[serde(default)]
     pub tunnels: Vec<TunnelDefinition>,
+    /// Opt-in SSH agent forwarding (`ssh -A`). Default off.
+    #[serde(default)]
+    pub forward_agent: bool,
 }
 
 impl Host {
@@ -48,6 +51,7 @@ impl Host {
             color: None,
             shell_integration: ShellIntegration::Auto,
             tunnels: Vec::new(),
+            forward_agent: false,
         }
     }
 

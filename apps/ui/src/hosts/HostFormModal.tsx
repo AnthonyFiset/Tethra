@@ -74,6 +74,9 @@ export function HostFormModal({
   const [shellIntegration, setShellIntegration] = useState(
     initial?.shellIntegration ?? true,
   );
+  const [forwardAgent, setForwardAgent] = useState(
+    initial?.forwardAgent ?? false,
+  );
   const [tunnels, setTunnels] = useState<TunnelDefinitionDto[]>(
     () => initial?.tunnels ?? [],
   );
@@ -172,6 +175,7 @@ export function HostFormModal({
         color,
         syncSecret: authMode === "password" ? syncSecret : false,
         shellIntegration,
+        forwardAgent,
         tunnels,
       };
 
@@ -519,6 +523,31 @@ export function HostFormModal({
               Wraps the remote shell to report command blocks and working
               directory. Turn off for exotic shells that reject the wrapper.
             </span>
+          </span>
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={forwardAgent}
+            disabled={busy}
+            onChange={(event) => setForwardAgent(event.target.checked)}
+          />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-ui font-medium text-fg">
+              Forward SSH agent
+            </span>
+            <span className="text-micro text-fg-subtle">
+              Lets remote tools use keys loaded in your local agent (ssh -A).
+              Off by default.
+            </span>
+            {forwardAgent && (
+              <span className="text-micro text-warning">
+                A root user on the remote host can use your forwarded agent
+                while you&apos;re connected.
+              </span>
+            )}
           </span>
         </label>
 

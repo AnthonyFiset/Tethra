@@ -1,8 +1,8 @@
 # Tethra roadmap
 
-_Revision 6 — 2026-08-21 (v0.3.1 shipped, auto-update proven; plan focuses
-v0.4.0). Current plan. Filename stays `ROADMAP.md`; bump the revision line, not
-the name._
+_Revision 7 — 2026-08-21 (v0.4.0 shipped: signing, ⌘F, SFTP recursive, tunnels,
+agent forwarding). Current plan. Filename stays `ROADMAP.md`; bump the revision
+line, not the name._
 
 _Supersedes archived `docs/archive/ROADMAP-v2.md` / `ROADMAP-v3.md`._
 
@@ -109,10 +109,10 @@ stamped on the same tree.)
 | Agent notifications (BEL / tmux hooks) | ✅ Shipped — attached + detached watch | v0.3.2 |
 | Click-through agent installs (native / Node first) | ✅ Shipped | v0.3.2 |
 | Unsigned installers (Gatekeeper/SmartScreen) | Windows Authenticode wired (Artifact Signing); macOS Developer ID later; SmartScreen reputation still warms | v0.4.0 |
-| No port forwarding | Table stakes | v0.4.0 |
+| No port forwarding | ✅ Local (-L) / remote (-R) tunnels | v0.4.0 |
 | SFTP no recursive folder transfer | ✅ Recursive upload/download with aggregate progress | v0.4.0 |
 | No terminal search (⌘F) | ✅ `@xterm/addon-search` find bar | v0.4.0 |
-| **No SSH agent forwarding** | 🐛 High — see §3.2 | v0.4.0+ |
+| **No SSH agent forwarding** | ✅ Per-host opt-in (`ssh -A`) | v0.4.0 |
 | Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
 | Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |
 | Mobile stub only | Deferred | Last |
@@ -166,7 +166,13 @@ straight to that session.
 
 **Settings:** per-agent notify on waiting / done / failed; global quiet hours.
 
-### 3.2 SSH agent forwarding — a real gap
+### 3.2 SSH agent forwarding — ✅ shipped in v0.4.0
+
+Per-host opt-in (`forward_agent`), default off. Requests
+`auth-agent-req@openssh.com` and dumb-pipes `auth-agent@openssh.com` channels
+to the local agent (`$SSH_AUTH_SOCK` / Windows OpenSSH named pipe). Never
+parses key material. UI shows active / unavailable with the roadmap warning
+copy. Spec notes below kept for later polish (ProxyJump interaction is v0.6.0).
 
 Not on any previous roadmap and it should be. If Claude Code is running on a
 remote host and needs to `git push`, it needs credentials there. Today the options

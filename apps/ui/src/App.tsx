@@ -146,6 +146,9 @@ interface Tab {
   cwd?: string;
   /** Vault project id when this tab was opened from a project. */
   projectId?: string;
+  /** `off` | `active` | `unavailable` — SSH agent forwarding for this session. */
+  agentForward?: string;
+  agentForwardHint?: string;
 }
 
 /** Dedupe paste when macOS fires both keydown and Edit→Paste. */
@@ -1084,7 +1087,8 @@ function Workspace({
     setDrawerOpen(false);
 
     try {
-      const sessionId = await openTerminal(host.id, 80, 24);
+      const opened = await openTerminal(host.id, 80, 24);
+      const sessionId = opened.sessionId;
       wireTerminal(sessionId);
       void attachOutput(sessionId, "Connection closed.");
       setTabs((current) => [
@@ -1096,6 +1100,8 @@ function Workspace({
           kind: "terminal",
           connected: true,
           color: host.color,
+          agentForward: opened.agentForward,
+          agentForwardHint: opened.agentForwardHint ?? undefined,
         },
       ]);
       activateSession(sessionId);
@@ -1222,6 +1228,8 @@ function Workspace({
       const muxOnHost = Boolean(probe?.hasTmux || probe?.hasZellij);
 
       let sessionId: string;
+      let agentForward: string | undefined;
+      let agentForwardHint: string | undefined;
       let hostId: string;
       let color: string | null | undefined;
       let kind: Tab["kind"];
@@ -1242,7 +1250,10 @@ function Workspace({
         if (!host) {
           throw new Error("Project host is missing from the vault.");
         }
-        sessionId = await openTerminal(host.id, 80, 24);
+        const opened = await openTerminal(host.id, 80, 24);
+        sessionId = opened.sessionId;
+        agentForward = opened.agentForward;
+        agentForwardHint = opened.agentForwardHint ?? undefined;
         hostId = host.id;
         color = host.color;
         kind = "terminal";
@@ -1262,6 +1273,8 @@ function Workspace({
           connected: true,
           color,
           projectId: project.id,
+          agentForward,
+          agentForwardHint,
         },
       ]);
       activateSession(sessionId);
@@ -1552,7 +1565,8 @@ function Workspace({
       let newTab: Tab;
 
       if (activeTab.kind === "terminal") {
-        sessionId = await openTerminal(activeTab.hostId, 80, 24);
+        const opened = await openTerminal(activeTab.hostId, 80, 24);
+        sessionId = opened.sessionId;
         const host = hosts.find((entry) => entry.id === activeTab.hostId);
         newTab = {
           sessionId,
@@ -1561,6 +1575,8 @@ function Workspace({
           kind: "terminal",
           connected: true,
           color: host?.color ?? activeTab.color,
+          agentForward: opened.agentForward,
+          agentForwardHint: opened.agentForwardHint ?? undefined,
         };
       } else {
         sessionId = await openLocalTerminal(80, 24);
@@ -2131,6 +2147,8 @@ function Workspace({
                   <TunnelsPanel
                     sessionId={activeTab.sessionId}
                     connected={activeTab.connected}
+                    agentForward={activeTab.agentForward}
+                    agentForwardHint={activeTab.agentForwardHint}
                   />
                 )}
 

@@ -1,10 +1,13 @@
-//! russh client Handler that enforces host-key policy.
+//! russh client Handler that enforces host-key policy and optional agent proxy.
 
 use std::sync::Arc;
 
+use russh::client::{ChannelOpenHandle, Msg, Session};
+use russh::{Channel, ChannelOpenFailure};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use super::agent_forward::{LocalAgentEndpoint, proxy_agent_channel};
 use super::fingerprint::{PresentedHostKey, presented_from_public_key};
 use super::session::{HostKeyDecision, HostKeyPolicy};
 use crate::Error;
@@ -16,6 +19,8 @@ pub(crate) struct ClientHandler {
     pub policy: Arc<dyn HostKeyPolicy>,
     /// Set when the policy accepts and wants the key remembered.
     pub accepted: Arc<Mutex<Option<KnownHostKey>>>,
+    /// When set, incoming `auth-agent@openssh.com` channels are spliced here.
+    pub agent: Option<LocalAgentEndpoint>,
 }
 
 impl russh::client::Handler for ClientHandler {
@@ -24,7 +29,7 @@ impl russh::client::Handler for ClientHandler {
     async fn check_server_key(
         &mut self,
         server_public_key: &russh::keys::PublicKey,
-    ) -> Result<bool, Self::Error> {
+    ) -> std::result::Result<bool, Self::Error> {
         let presented = presented_from_public_key(server_public_key);
 
         // Strict mismatch: never auto-accept a changed key.
@@ -59,6 +64,27 @@ impl russh::client::Handler for ClientHandler {
             HostKeyDecision::AcceptOnce => Ok(true),
             HostKeyDecision::Reject => Err(Error::HostKeyRejected),
         }
+    }
+
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let Some(endpoint) = self.agent.clone() else {
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        };
+        reply.accept().await;
+        tokio::spawn(async move {
+            if let Err(err) = proxy_agent_channel(channel, &endpoint).await {
+                tracing::debug!(error = %err, "agent forward channel closed");
+            }
+        });
+        Ok(())
     }
 }
 

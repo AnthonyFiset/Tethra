@@ -29,6 +29,8 @@ pub struct HostRecord {
     pub shell_integration: ShellIntegration,
     #[serde(default)]
     pub tunnels: Vec<TunnelDefinition>,
+    #[serde(default)]
+    pub forward_agent: bool,
 }
 
 impl From<&Host> for HostRecord {
@@ -47,6 +49,7 @@ impl From<&Host> for HostRecord {
             color: host.color.clone(),
             shell_integration: host.shell_integration,
             tunnels: host.tunnels.clone(),
+            forward_agent: host.forward_agent,
         }
     }
 }
@@ -67,6 +70,7 @@ impl From<HostRecord> for Host {
             color: record.color,
             shell_integration: record.shell_integration,
             tunnels: record.tunnels,
+            forward_agent: record.forward_agent,
         }
     }
 }

@@ -12,6 +12,8 @@ import { cn } from "../lib/cn";
 interface TunnelsPanelProps {
   sessionId: string;
   connected: boolean;
+  agentForward?: string;
+  agentForwardHint?: string;
   /** Compact chip strip + expandable list. */
   className?: string;
 }
@@ -41,6 +43,8 @@ async function copyText(text: string): Promise<boolean> {
 export function TunnelsPanel({
   sessionId,
   connected,
+  agentForward,
+  agentForwardHint,
   className,
 }: TunnelsPanelProps): React.JSX.Element | null {
   const [tunnels, setTunnels] = useState<TunnelStatusDto[]>([]);
@@ -93,7 +97,9 @@ export function TunnelsPanel({
     };
   }, [sessionId]);
 
-  if (!connected || tunnels.length === 0) return null;
+  if (!connected) return null;
+  const showAgent = agentForward === "active" || agentForward === "unavailable";
+  if (tunnels.length === 0 && !showAgent) return null;
 
   const activeCount = tunnels.filter((t) => t.state === "active").length;
 
@@ -122,27 +128,58 @@ export function TunnelsPanel({
         className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-micro text-fg-muted hover:bg-hover/60"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="font-medium text-fg">Tunnels</span>
-        <span
-          className={cn(
-            "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
-            activeCount > 0 ? "bg-success/15 text-success" : "bg-hover text-fg-subtle",
-          )}
-        >
-          {activeCount} active
+        <span className="font-medium text-fg">
+          {tunnels.length > 0 ? "Tunnels" : "Forwards"}
         </span>
+        {tunnels.length > 0 && (
+          <span
+            className={cn(
+              "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
+              activeCount > 0
+                ? "bg-success/15 text-success"
+                : "bg-hover text-fg-subtle",
+            )}
+          >
+            {activeCount} active
+          </span>
+        )}
+        {showAgent && (
+          <span
+            className={cn(
+              "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
+              agentForward === "active"
+                ? "bg-success/15 text-success"
+                : "bg-warning/15 text-warning",
+            )}
+            title={agentForwardHint}
+          >
+            {agentForward === "active" ? "Agent on" : "Agent unavailable"}
+          </span>
+        )}
         <span className="ml-auto text-fg-subtle">{open ? "Hide" : "Show"}</span>
       </button>
       {open && (
         <div className="flex flex-col gap-1.5 border-t border-line px-3 py-2">
+          {showAgent && (
+            <p
+              className={cn(
+                "text-micro",
+                agentForward === "active" ? "text-fg-muted" : "text-warning",
+              )}
+            >
+              {agentForward === "active"
+                ? "SSH agent forwarding is active for this session."
+                : (agentForwardHint ??
+                  "agent forwarding unavailable — no local SSH agent")}
+            </p>
+          )}
           {error && (
             <p className="text-micro text-danger" role="alert">
               {error}
             </p>
           )}
           {tunnels.map((tunnel) => {
-            const arrow =
-              tunnel.direction === "remote" ? "←" : "→";
+            const arrow = tunnel.direction === "remote" ? "←" : "→";
             const summary = `:${tunnel.bindPort} ${arrow} ${tunnel.targetHost}:${tunnel.targetPort}`;
             return (
               <div

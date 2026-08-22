@@ -147,10 +147,13 @@ async fn pty_echo_and_resize() {
     let env = TestEnv::setup().await;
     let mgr = env.manager_password();
 
-    let (mut pty, mut rx) = mgr
-        .open_pty(env.host_id, PtySize::new(80, 24))
-        .await
-        .expect("pty");
+    let (mut pty, mut rx) = {
+        let opened = mgr
+            .open_pty(env.host_id, PtySize::new(80, 24))
+            .await
+            .expect("pty");
+        (opened.handle, opened.output)
+    };
 
     let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
     pty.write(b"echo pty-ok\n").await.expect("write");

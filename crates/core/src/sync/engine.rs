@@ -385,6 +385,7 @@ mod tests {
                 color: Some("#4C8DF6".into()),
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -437,6 +438,7 @@ mod tests {
                     color: Some("#4C8DF6".into()),
                     shell_integration: Default::default(),
                     tunnels: Vec::new(),
+                    forward_agent: false,
                 },
             )
             .await
@@ -476,6 +478,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -555,6 +558,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();

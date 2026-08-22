@@ -43,6 +43,7 @@ pub struct HostSummary {
     pub tags: Vec<String>,
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
+    pub forward_agent: bool,
 }
 
 impl From<&Host> for HostSummary {
@@ -65,6 +66,7 @@ impl From<&Host> for HostSummary {
             tags: host.tags.clone(),
             shell_integration: host.shell_integration,
             tunnels: host.tunnels.clone(),
+            forward_agent: host.forward_agent,
         }
     }
 }
@@ -84,6 +86,7 @@ pub struct CreateHostRequest {
     pub color: Option<String>,
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
+    pub forward_agent: bool,
 }
 
 /// Non-secret identity metadata for UI / IPC.
@@ -240,6 +243,7 @@ impl VaultRepository {
         host.color = validate_host_color(request.color)?;
         host.shell_integration = request.shell_integration;
         host.tunnels = request.tunnels;
+        host.forward_agent = request.forward_agent;
 
         if let Some(identity_id) = request.identity_id {
             let (identity, _) = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -400,6 +404,7 @@ impl VaultRepository {
         record.color = validate_host_color(request.color)?;
         record.shell_integration = request.shell_integration;
         record.tunnels = request.tunnels;
+        record.forward_agent = request.forward_agent;
 
         if let Some(identity_id) = request.identity_id {
             let _ = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -1301,6 +1306,7 @@ mod tests {
                 color: Some("#70A5F5".into()),
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -1335,6 +1341,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -1379,6 +1386,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -1469,6 +1477,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -1509,6 +1518,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -1527,6 +1537,7 @@ mod tests {
                     color: Some("#CF718B".into()),
                     shell_integration: Default::default(),
                     tunnels: Vec::new(),
+                    forward_agent: false,
                 },
             )
             .await
@@ -1558,6 +1569,7 @@ mod tests {
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();
@@ -1647,6 +1659,7 @@ ZPzL/y8ftsnYTWVDR71ZAAAAEHRlc3RAdGV0aHJhLmxvY2FsAQIDBA==
                 color: None,
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
+                forward_agent: false,
             })
             .await
             .unwrap();

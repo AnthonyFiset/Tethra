@@ -87,6 +87,8 @@ struct HostSummaryDto {
     /// When true, inject OSC 133 / OSC 7 via connect wrapper.
     shell_integration: bool,
     tunnels: Vec<tunnel::TunnelDefinitionDto>,
+    /// Opt-in SSH agent forwarding (`ssh -A`).
+    forward_agent: bool,
 }
 
 impl From<&CoreHostSummary> for HostSummaryDto {
@@ -110,6 +112,7 @@ impl From<&CoreHostSummary> for HostSummaryDto {
                 .iter()
                 .map(tunnel::TunnelDefinitionDto::from)
                 .collect(),
+            forward_agent: host.forward_agent,
         }
     }
 }
@@ -471,6 +474,8 @@ struct HostMutation {
     shell_integration: Option<bool>,
     #[serde(default)]
     tunnels: Option<Vec<tunnel::TunnelDefinitionDto>>,
+    #[serde(default)]
+    forward_agent: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -960,6 +965,7 @@ async fn create_host(
             color: host.color,
             shell_integration: shell_integration_from_mutation(host.shell_integration),
             tunnels,
+            forward_agent: host.forward_agent.unwrap_or(false),
         })
         .await
         .map_err(redacted_error)?;
@@ -985,6 +991,15 @@ async fn update_host(
             .map(|h| h.tunnels)
             .unwrap_or_default(),
     };
+    let forward_agent = match host.forward_agent {
+        Some(value) => value,
+        None => state
+            .repo
+            .get_host(host_id)
+            .await
+            .map(|h| h.forward_agent)
+            .unwrap_or(false),
+    };
     let updated = state
         .repo
         .update_host(
@@ -1000,6 +1015,7 @@ async fn update_host(
                 color: host.color,
                 shell_integration: shell_integration_from_mutation(host.shell_integration),
                 tunnels,
+                forward_agent,
             },
         )
         .await
@@ -1172,6 +1188,16 @@ fn load_default_ssh_config() -> Result<String, String> {
         .ok_or_else(|| "no SSH config found at ~/.ssh/config".to_string())
 }
 
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../../ui/src/lib/generated/")]
+struct OpenTerminalResultDto {
+    session_id: String,
+    /// `off` | `active` | `unavailable`
+    agent_forward: String,
+    agent_forward_hint: Option<String>,
+}
+
 #[tauri::command]
 async fn open_terminal(
     app: AppHandle,
@@ -1179,7 +1205,7 @@ async fn open_terminal(
     host_id: String,
     cols: u32,
     rows: u32,
-) -> Result<String, String> {
+) -> Result<OpenTerminalResultDto, String> {
     if !state
         .repo
         .vault()
@@ -1191,16 +1217,24 @@ async fn open_terminal(
     }
     let host_id = parse_uuid(&host_id, "host")?;
     let session_id = Uuid::now_v7();
-    let (handle, receiver) = state
+    let opened = state
         .manager
         .open_pty(host_id, PtySize::new(cols, rows))
         .await
         .map_err(redacted_error)?;
 
-    state.sessions.lock().await.insert(session_id, handle);
+    state
+        .sessions
+        .lock()
+        .await
+        .insert(session_id, opened.handle);
     tunnel::auto_start_for_session(&app, &state, session_id, host_id).await;
-    tauri::async_runtime::spawn(output_pump::forward_output(session_id, receiver, app));
-    Ok(session_id.to_string())
+    tauri::async_runtime::spawn(output_pump::forward_output(session_id, opened.output, app));
+    Ok(OpenTerminalResultDto {
+        session_id: session_id.to_string(),
+        agent_forward: opened.agent_forward.as_str().into(),
+        agent_forward_hint: opened.agent_forward.hint().map(str::to_string),
+    })
 }
 
 #[tauri::command]
@@ -1784,6 +1818,7 @@ mod tests {
     fn export_bindings() {
         let cfg = ts_rs::Config::default();
         HostSummaryDto::export_all(&cfg).unwrap();
+        OpenTerminalResultDto::export_all(&cfg).unwrap();
         IdentitySummaryDto::export_all(&cfg).unwrap();
         DependentHostDto::export_all(&cfg).unwrap();
         IdentityDeleteResultDto::export_all(&cfg).unwrap();
@@ -1857,6 +1892,7 @@ mod tests {
             tags: vec!["lab".into()],
             shell_integration: true,
             tunnels: vec![],
+            forward_agent: false,
         };
         assert!(dto.has_password);
         let debug = format!("{dto:?}");

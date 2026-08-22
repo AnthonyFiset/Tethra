@@ -9,4 +9,8 @@ authKind: string, syncSecret: boolean, color: string | null, tags: Array<string>
 /**
  * When true, inject OSC 133 / OSC 7 via connect wrapper.
  */
-shellIntegration: boolean, tunnels: Array<TunnelDefinitionDto>, };
+shellIntegration: boolean, tunnels: Array<TunnelDefinitionDto>, 
+/**
+ * Opt-in SSH agent forwarding (`ssh -A`).
+ */
+forwardAgent: boolean, };

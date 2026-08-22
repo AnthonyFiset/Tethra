@@ -218,7 +218,9 @@ async fn run_shell(mgr: &SessionManager, host_id: Uuid) -> Result<()> {
     let (cols, rows) = crossterm::terminal::size()
         .map(|(c, r)| (u32::from(c), u32::from(r)))
         .unwrap_or((80, 24));
-    let (mut pty, mut output) = mgr.open_pty(host_id, PtySize::new(cols, rows)).await?;
+    let opened = mgr.open_pty(host_id, PtySize::new(cols, rows)).await?;
+    let mut pty = opened.handle;
+    let mut output = opened.output;
 
     enable_raw_mode().map_err(|e| Error::Other(e.to_string()))?;
     let _guard = RawModeGuard;

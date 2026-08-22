@@ -12,6 +12,7 @@ use russh::{Channel, ChannelMsg, Disconnect, Pty};
 use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
+use super::agent_forward::{AgentForwardStatus, LocalAgentEndpoint};
 use super::approval::{Action, AlwaysApprove, ApprovalGate};
 use super::fingerprint::PresentedHostKey;
 use super::handler::ClientHandler;
@@ -169,6 +170,13 @@ pub struct PtyHandle {
     reader: Option<tokio::task::JoinHandle<()>>,
 }
 
+/// Result of [`SessionManager::open_pty`].
+pub struct PtyOpenResult {
+    pub handle: PtyHandle,
+    pub output: mpsc::Receiver<Bytes>,
+    pub agent_forward: AgentForwardStatus,
+}
+
 impl PtyHandle {
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
         self.cmds
@@ -235,18 +243,35 @@ impl SessionManager {
     /// a plain shell if the wrapper exec fails to start (caller still gets a
     /// usable PTY only when the remote accepts the command — exotic hosts can
     /// set `shell_integration: Disabled`).
-    pub async fn open_pty(
-        &self,
-        host_id: Uuid,
-        size: PtySize,
-    ) -> Result<(PtyHandle, mpsc::Receiver<Bytes>)> {
+    pub async fn open_pty(&self, host_id: Uuid, size: PtySize) -> Result<PtyOpenResult> {
         self.gate.approve(&Action::OpenPty { host_id }).await?;
 
         let host = self.hosts.get(host_id).await?;
         let integrate = host.shell_integration != crate::model::ShellIntegration::Disabled;
 
-        let session = self.connect(host_id).await?;
+        let (agent_endpoint, agent_status) = if host.forward_agent {
+            match LocalAgentEndpoint::detect() {
+                Some(endpoint) => (Some(endpoint), AgentForwardStatus::Active),
+                None => (
+                    None,
+                    AgentForwardStatus::Unavailable {
+                        hint: LocalAgentEndpoint::unavailable_hint(),
+                    },
+                ),
+            }
+        } else {
+            (None, AgentForwardStatus::Off)
+        };
+
+        let session = self.connect(host_id, agent_endpoint.clone()).await?;
         let channel = session.channel_open_session().await?;
+
+        if agent_endpoint.is_some() {
+            // Request before PTY/shell so the remote can publish SSH_AUTH_SOCK.
+            if let Err(err) = channel.agent_forward(true).await {
+                tracing::warn!(%err, "auth-agent-req@openssh.com failed");
+            }
+        }
 
         channel
             .request_pty(
@@ -274,13 +299,14 @@ impl SessionManager {
             run_pty_loop(session, channel, &mut cmd_rx, out_tx).await;
         });
 
-        Ok((
-            PtyHandle {
+        Ok(PtyOpenResult {
+            handle: PtyHandle {
                 cmds: cmd_tx,
                 reader: Some(reader),
             },
-            out_rx,
-        ))
+            output: out_rx,
+            agent_forward: agent_status,
+        })
     }
 
     /// Structured path. No PTY, parseable stdout/stderr/exit.
@@ -292,7 +318,7 @@ impl SessionManager {
             })
             .await?;
 
-        let session = self.connect(host_id).await?;
+        let session = self.connect(host_id, None).await?;
         let mut channel = session.channel_open_session().await?;
         channel.exec(true, cmd).await?;
 
@@ -329,13 +355,17 @@ impl SessionManager {
 
     pub async fn sftp(&self, host_id: Uuid) -> Result<SftpSession> {
         self.gate.approve(&Action::Sftp { host_id }).await?;
-        let session = self.connect(host_id).await?;
+        let session = self.connect(host_id, None).await?;
         let channel = session.channel_open_session().await?;
         channel.request_subsystem(true, "sftp").await?;
         SftpSession::new(session, channel).await
     }
 
-    async fn connect(&self, host_id: Uuid) -> Result<Handle<ClientHandler>> {
+    async fn connect(
+        &self,
+        host_id: Uuid,
+        agent: Option<LocalAgentEndpoint>,
+    ) -> Result<Handle<ClientHandler>> {
         let host = self.hosts.get(host_id).await?;
         let auth = self.auth.credentials_for(&host).await?;
 
@@ -345,6 +375,7 @@ impl SessionManager {
             known: host.known_host_key.clone(),
             policy: Arc::clone(&self.policy),
             accepted: Arc::clone(&accepted),
+            agent,
         };
 
         let config = russh::client::Config {

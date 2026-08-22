@@ -43,6 +43,7 @@ import type { UpdateInfoDto } from "./generated/UpdateInfoDto";
 import type { TransferEvent } from "./generated/TransferEvent";
 import type { TunnelDefinitionDto } from "./generated/TunnelDefinitionDto";
 import type { TunnelStatusDto } from "./generated/TunnelStatusDto";
+import type { OpenTerminalResultDto } from "./generated/OpenTerminalResultDto";
 import type { VaultStatusDto } from "./generated/VaultStatusDto";
 
 export type {
@@ -76,6 +77,7 @@ export type {
   TransferEvent,
   TunnelDefinitionDto,
   TunnelStatusDto,
+  OpenTerminalResultDto,
   VaultStatusDto,
 };
 
@@ -94,6 +96,8 @@ export interface HostMutation {
   shellIntegration?: boolean;
   /** Port-forward definitions (no secrets). Omit to leave unchanged on update. */
   tunnels?: TunnelDefinitionDto[];
+  /** Opt-in SSH agent forwarding. Default off. */
+  forwardAgent?: boolean;
 }
 
 export function vaultStatus(): Promise<VaultStatusDto> {
@@ -462,8 +466,8 @@ export function openTerminal(
   hostId: string,
   cols: number,
   rows: number,
-): Promise<string> {
-  return invoke<string>("open_terminal", {
+): Promise<OpenTerminalResultDto> {
+  return invoke<OpenTerminalResultDto>("open_terminal", {
     hostId,
     cols,
     rows,
