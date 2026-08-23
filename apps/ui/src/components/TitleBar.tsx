@@ -20,6 +20,10 @@ import {
 import { cn } from "../lib/cn";
 import { useChrome } from "../lib/ChromeContext";
 import { modKeyLabel, shiftModLabel } from "../lib/chrome";
+import {
+  SURFACE_LABELS,
+  type SurfaceId,
+} from "../surfaces/SurfaceShell";
 import { Logo } from "./Logo";
 import { IconButton } from "./ui/Button";
 import { Tooltip } from "./ui/Tooltip";
@@ -48,6 +52,8 @@ interface TitleBarProps {
   onSettings?: () => void;
   onAssistSettings: () => void;
   onChangePassword: () => void;
+  onOpenSurface?: (surface: SurfaceId) => void;
+  activeSurface?: SurfaceId | null;
   onAbout: () => void;
   onLock: () => void;
   /** Return to Launcher without closing sessions. */
@@ -78,6 +84,8 @@ export function TitleBar({
   onSettings,
   onAssistSettings,
   onChangePassword,
+  onOpenSurface,
+  activeSurface,
   onAbout,
   onLock,
   onGoLauncher,
@@ -86,6 +94,7 @@ export function TitleBar({
   const chrome = useChrome();
   const mod = modKeyLabel(chrome);
   const shiftMod = shiftModLabel(chrome);
+  const surfaces = Object.keys(SURFACE_LABELS) as SurfaceId[];
 
   return (
     <header className="titlebar flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface">
@@ -119,6 +128,29 @@ export function TitleBar({
           size={17}
           className="max-[520px]:[&>span]:hidden"
         />
+
+        {onOpenSurface && (
+          <nav
+            aria-label="Surfaces"
+            className="ml-1 hidden items-center gap-0.5 lg:flex"
+          >
+            {surfaces.map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onOpenSurface(id)}
+                className={cn(
+                  "h-7 cursor-pointer rounded-md px-2 text-micro transition-colors",
+                  activeSurface === id
+                    ? "bg-hover text-fg"
+                    : "text-fg-muted hover:bg-hover/60 hover:text-fg",
+                )}
+              >
+                {SURFACE_LABELS[id]}
+              </button>
+            ))}
+          </nav>
+        )}
       </div>
 
       {/* Dedicated drag strip — not an ancestor of buttons. */}

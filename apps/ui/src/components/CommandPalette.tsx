@@ -28,6 +28,7 @@ import {
   SETTINGS_PALETTE_ENTRIES,
   type SettingsSectionId,
 } from "./SettingsModal";
+import { SURFACE_LABELS, type SurfaceId } from "../surfaces/SurfaceShell";
 import { HostAvatar } from "./HostAvatar";
 
 interface CommandPaletteProps {
@@ -57,6 +58,7 @@ interface CommandPaletteProps {
   onSync: () => void;
   onSettings: (section?: SettingsSectionId) => void;
   onAssistSettings: () => void;
+  onOpenSurface: (surface: SurfaceId) => void;
   onLock: () => void;
   agentLabel?: (agentId: string | null | undefined) => string;
 }
@@ -88,6 +90,7 @@ export function CommandPalette({
   onSync,
   onSettings,
   onAssistSettings,
+  onOpenSurface,
   onLock,
   agentLabel = (id) => id ?? "agent",
 }: CommandPaletteProps): React.JSX.Element {
@@ -281,6 +284,25 @@ export function CommandPalette({
                 >
                   Import SSH config
                 </Item>
+                {(Object.keys(SURFACE_LABELS) as SurfaceId[]).map((id) => (
+                  <Item
+                    key={`goto-${id}`}
+                    value={`go to ${SURFACE_LABELS[id]} surface ${id}`}
+                    icon={
+                      id === "assist" ? (
+                        <Sparkles size={15} />
+                      ) : id === "vault" ? (
+                        <RefreshCw size={15} />
+                      ) : (
+                        <Settings size={15} />
+                      )
+                    }
+                    detail="Open surface"
+                    onSelect={() => run(() => onOpenSurface(id))}
+                  >
+                    Go to: {SURFACE_LABELS[id]}
+                  </Item>
+                ))}
                 <Item
                   value="vault sync folder http sync server"
                   icon={<RefreshCw size={15} />}
