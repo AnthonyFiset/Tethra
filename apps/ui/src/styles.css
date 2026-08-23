@@ -38,6 +38,8 @@
   --text-ui--line-height: 1.45;
   --text-micro: 11px;
   --text-micro--line-height: 1.4;
+
+  --breakpoint-surface-nav: 1000px;
 }
 
 @layer base {

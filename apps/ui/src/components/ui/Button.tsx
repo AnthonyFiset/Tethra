@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef } from "react";
 import { cn } from "../../lib/cn";
 
 type Variant = "primary" | "ghost" | "subtle" | "danger";
@@ -24,17 +25,21 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode;
 }
 
-export function Button({
-  variant = "subtle",
-  size = "md",
-  icon,
-  className,
-  children,
-  ...rest
-}: ButtonProps): React.JSX.Element {
+export const Button = forwardRef(function Button(
+  {
+    variant = "subtle",
+    size = "md",
+    icon,
+    className,
+    children,
+    ...rest
+  }: ButtonProps,
+  ref: React.ForwardedRef<HTMLButtonElement>,
+): React.JSX.Element {
   return (
     <button
       {...rest}
+      ref={ref}
       className={cn(
         "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md border font-medium transition-colors",
         "disabled:pointer-events-none disabled:opacity-45",
@@ -47,7 +52,7 @@ export function Button({
       {children}
     </button>
   );
-}
+});
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;

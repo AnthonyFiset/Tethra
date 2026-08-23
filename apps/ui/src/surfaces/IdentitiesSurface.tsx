@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   identityDelete,
   identityRename,
@@ -11,9 +11,12 @@ import { Dialog } from "../components/ui/Dialog";
 import { ErrorBanner, Field } from "../components/ui/Field";
 import { SurfaceShell } from "./SurfaceShell";
 
+const DELETE_CONFIRM_ARM_MS = 300;
+
 function IdentitiesPanel(): React.JSX.Element {
   const [identities, setIdentities] = useState<IdentitySummaryDto[]>([]);
   const [busy, setBusy] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string>();
   const [renaming, setRenaming] = useState<IdentitySummaryDto>();
   const [renameLabel, setRenameLabel] = useState("");
@@ -21,6 +24,9 @@ function IdentitiesPanel(): React.JSX.Element {
     identity: IdentitySummaryDto;
     dependents: { id: string; label: string }[];
   }>();
+  const [dangerReady, setDangerReady] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const armedRowRef = useRef<HTMLLIElement>(null);
 
   async function refresh(): Promise<void> {
     setIdentities(await listIdentities());
@@ -29,6 +35,48 @@ function IdentitiesPanel(): React.JSX.Element {
   useEffect(() => {
     void refresh().catch((reason: unknown) => setError(String(reason)));
   }, []);
+
+  useEffect(() => {
+    if (!pendingDelete) {
+      setDangerReady(false);
+      return;
+    }
+    setDangerReady(false);
+    const timer = window.setTimeout(
+      () => setDangerReady(true),
+      DELETE_CONFIRM_ARM_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [pendingDelete?.identity.id]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    cancelRef.current?.focus();
+  }, [pendingDelete?.identity.id]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPendingDelete(undefined);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingDelete]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    function onPointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (armedRowRef.current?.contains(target)) return;
+      setPendingDelete(undefined);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [pendingDelete]);
 
   async function saveRename(): Promise<void> {
     if (!renaming) return;
@@ -49,7 +97,7 @@ function IdentitiesPanel(): React.JSX.Element {
     identity: IdentitySummaryDto,
     force: boolean,
   ): Promise<void> {
-    setBusy(true);
+    setDeletingId(identity.id);
     setError(undefined);
     try {
       const result = await identityDelete(identity.id, force);
@@ -65,8 +113,12 @@ function IdentitiesPanel(): React.JSX.Element {
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setBusy(false);
+      setDeletingId(null);
     }
+  }
+
+  function armDelete(identity: IdentitySummaryDto): void {
+    setPendingDelete({ identity, dependents: [] });
   }
 
   return (
@@ -78,9 +130,15 @@ function IdentitiesPanel(): React.JSX.Element {
             pendingDelete?.identity.id === identity.id
               ? pendingDelete
               : undefined;
+          const force =
+            identity.usageCount > 0 ||
+            (confirming?.dependents.length ?? 0) > 0;
+          const deleting = deletingId === identity.id;
+
           return (
             <li
               key={identity.id}
+              ref={confirming ? armedRowRef : undefined}
               className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-2"
             >
               <div className="flex items-center gap-2">
@@ -98,34 +156,27 @@ function IdentitiesPanel(): React.JSX.Element {
                 {confirming ? (
                   <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                     <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={deleting || !dangerReady}
+                      onClick={() => void remove(identity, force)}
+                    >
+                      {force ? "Delete anyway" : "Delete"}
+                    </Button>
+                    <Button
+                      ref={cancelRef}
                       variant="subtle"
                       size="sm"
-                      disabled={busy}
                       onClick={() => setPendingDelete(undefined)}
                     >
                       Cancel
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() =>
-                        void remove(
-                          identity,
-                          confirming.dependents.length > 0,
-                        )
-                      }
-                    >
-                      {confirming.dependents.length > 0
-                        ? "Delete anyway"
-                        : "Delete"}
                     </Button>
                   </div>
                 ) : (
                   <>
                     <Button
                       variant="subtle"
-                      disabled={busy}
+                      disabled={busy || deletingId !== null}
                       onClick={() => {
                         setRenaming(identity);
                         setRenameLabel(identity.label);
@@ -135,23 +186,20 @@ function IdentitiesPanel(): React.JSX.Element {
                     </Button>
                     <Button
                       variant="ghost"
-                      disabled={busy}
+                      disabled={busy || deletingId !== null}
                       className="hover:border-transparent hover:bg-danger/15 hover:text-danger"
-                      onClick={() => {
-                        // First click: ask; force path opens if hosts still link it.
-                        setPendingDelete({ identity, dependents: [] });
-                      }}
+                      onClick={() => armDelete(identity)}
                     >
                       Delete
                     </Button>
                   </>
                 )}
               </div>
-              {confirming && confirming.dependents.length > 0 && (
+              {confirming && force && (
                 <p className="m-0 text-micro text-fg-muted">
-                  Still attached to{" "}
-                  {confirming.dependents.map((h) => h.label).join(", ")}. Force
-                  delete clears those links.
+                  {confirming.dependents.length > 0
+                    ? `Still attached to ${confirming.dependents.map((h) => h.label).join(", ")}. Force delete clears those links.`
+                    : `Used by ${identity.usageCount} host${identity.usageCount === 1 ? "" : "s"}. Force delete clears those links.`}
                 </p>
               )}
               <label className="flex cursor-pointer items-start gap-2.5 border-t border-line pt-2">
@@ -159,7 +207,7 @@ function IdentitiesPanel(): React.JSX.Element {
                   type="checkbox"
                   className="mt-0.5"
                   checked={identity.syncSecret}
-                  disabled={busy}
+                  disabled={busy || deletingId !== null}
                   onChange={(event) =>
                     void (async () => {
                       setBusy(true);
