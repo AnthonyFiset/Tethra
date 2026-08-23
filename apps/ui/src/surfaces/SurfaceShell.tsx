@@ -44,7 +44,9 @@ export function SurfaceShell({
           <X size={16} />
         </Button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="mx-auto w-full max-w-[880px]">{children}</div>
+      </div>
     </div>
   );
 }

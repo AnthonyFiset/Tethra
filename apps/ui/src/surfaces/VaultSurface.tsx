@@ -62,7 +62,7 @@ export function VaultSurface({
       description="Unlock status, sync backend, auto-lock, and master password. Identities live on their own surface."
       onClose={onClose}
     >
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+      <div className="flex flex-col gap-6">
         <PrefRow
           title="Auto-lock"
           detail="Lock the vault after idle time with no vault activity"

@@ -1,6 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   AppWindow,
+  ChevronDown,
   Columns2,
   Info,
   KeyRound,
@@ -130,26 +131,71 @@ export function TitleBar({
         />
 
         {onOpenSurface && (
-          <nav
-            aria-label="Surfaces"
-            className="ml-1 hidden items-center gap-0.5 lg:flex"
-          >
-            {surfaces.map((id) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onOpenSurface(id)}
-                className={cn(
-                  "h-7 cursor-pointer rounded-md px-2 text-micro transition-colors",
-                  activeSurface === id
-                    ? "bg-hover text-fg"
-                    : "text-fg-muted hover:bg-hover/60 hover:text-fg",
-                )}
-              >
-                {SURFACE_LABELS[id]}
-              </button>
-            ))}
-          </nav>
+          <>
+            <nav
+              aria-label="Surfaces"
+              className="ml-1 hidden items-center gap-0.5 min-[1000px]:flex"
+            >
+              {surfaces.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onOpenSurface(id)}
+                  className={cn(
+                    "h-7 cursor-pointer rounded-md px-2 text-micro transition-colors",
+                    activeSurface === id
+                      ? "bg-hover text-fg"
+                      : "text-fg-muted hover:bg-hover/60 hover:text-fg",
+                  )}
+                >
+                  {SURFACE_LABELS[id]}
+                </button>
+              ))}
+            </nav>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label="Surfaces"
+                  className={cn(
+                    "ml-1 inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2 text-micro transition-colors",
+                    "min-[1000px]:hidden",
+                    activeSurface
+                      ? "bg-hover text-fg"
+                      : "text-fg-muted hover:bg-hover/60 hover:text-fg",
+                  )}
+                >
+                  {activeSurface
+                    ? SURFACE_LABELS[activeSurface]
+                    : "Surfaces"}
+                  <ChevronDown size={13} className="opacity-70" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="start"
+                  sideOffset={6}
+                  className="z-[2147483001] min-w-40 rounded-md border border-line-strong bg-elevated p-1 shadow-xl shadow-black/60"
+                >
+                  {surfaces.map((id) => (
+                    <DropdownMenu.Item
+                      key={id}
+                      onSelect={() => onOpenSurface(id)}
+                      className={cn(
+                        "flex cursor-pointer items-center rounded px-2 py-1.5 text-ui outline-none select-none",
+                        "data-[highlighted]:bg-hover data-[highlighted]:text-fg",
+                        activeSurface === id
+                          ? "text-fg"
+                          : "text-fg-muted",
+                      )}
+                    >
+                      {SURFACE_LABELS[id]}
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          </>
         )}
       </div>
 

@@ -71,89 +71,129 @@ function IdentitiesPanel(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-3">
-      <div>
-        <h4 className="mt-0 mb-1 text-ui font-medium text-fg">Identities</h4>
-        <p className="m-0 text-micro text-fg-subtle">
-          Password and SSH key identities stored in the vault. Keys sync only if
-          you turn it on per key (same opt-in as passwords).
-        </p>
-      </div>
       {error && <ErrorBanner>{error}</ErrorBanner>}
       <ul className="m-0 flex list-none flex-col gap-1 p-0">
-        {identities.map((identity) => (
-          <li
-            key={identity.id}
-            className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-2"
-          >
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-ui font-medium text-fg">
-                  {identity.label}
+        {identities.map((identity) => {
+          const confirming =
+            pendingDelete?.identity.id === identity.id
+              ? pendingDelete
+              : undefined;
+          return (
+            <li
+              key={identity.id}
+              className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-2"
+            >
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-ui font-medium text-fg">
+                    {identity.label}
+                  </span>
+                  <span className="block truncate text-micro text-fg-subtle">
+                    {identity.kind === "sshKey" ? "SSH key" : "Password"}
+                    {identity.fingerprint ? ` · ${identity.fingerprint}` : ""}
+                    {` · used by ${identity.usageCount}`}
+                    {identity.syncSecret ? " · syncs" : " · local only"}
+                  </span>
                 </span>
-                <span className="block truncate text-micro text-fg-subtle">
-                  {identity.kind === "sshKey" ? "SSH key" : "Password"}
-                  {identity.fingerprint ? ` · ${identity.fingerprint}` : ""}
-                  {` · used by ${identity.usageCount}`}
-                  {identity.syncSecret ? " · syncs" : " · local only"}
+                {confirming ? (
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    <Button
+                      variant="subtle"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => setPendingDelete(undefined)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        void remove(
+                          identity,
+                          confirming.dependents.length > 0,
+                        )
+                      }
+                    >
+                      {confirming.dependents.length > 0
+                        ? "Delete anyway"
+                        : "Delete"}
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Button
+                      variant="subtle"
+                      disabled={busy}
+                      onClick={() => {
+                        setRenaming(identity);
+                        setRenameLabel(identity.label);
+                      }}
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      className="hover:border-transparent hover:bg-danger/15 hover:text-danger"
+                      onClick={() => {
+                        // First click: ask; force path opens if hosts still link it.
+                        setPendingDelete({ identity, dependents: [] });
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </>
+                )}
+              </div>
+              {confirming && confirming.dependents.length > 0 && (
+                <p className="m-0 text-micro text-fg-muted">
+                  Still attached to{" "}
+                  {confirming.dependents.map((h) => h.label).join(", ")}. Force
+                  delete clears those links.
+                </p>
+              )}
+              <label className="flex cursor-pointer items-start gap-2.5 border-t border-line pt-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={identity.syncSecret}
+                  disabled={busy}
+                  onChange={(event) =>
+                    void (async () => {
+                      setBusy(true);
+                      setError(undefined);
+                      try {
+                        await identitySetSyncSecret(
+                          identity.id,
+                          event.target.checked,
+                        );
+                        await refresh();
+                      } catch (reason) {
+                        setError(String(reason));
+                      } finally {
+                        setBusy(false);
+                      }
+                    })()
+                  }
+                />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-ui font-medium text-fg">
+                    {identity.kind === "sshKey"
+                      ? "Sync this key to other devices"
+                      : "Sync this password to other devices"}
+                  </span>
+                  <span className="text-micro text-fg-subtle">
+                    Off by default. When on, encrypted credentials ride vault
+                    sync. Turning off stops future sync; devices that already
+                    have a copy keep it.
+                  </span>
                 </span>
-              </span>
-              <Button
-                variant="subtle"
-                disabled={busy}
-                onClick={() => {
-                  setRenaming(identity);
-                  setRenameLabel(identity.label);
-                }}
-              >
-                Rename
-              </Button>
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() => void remove(identity, false)}
-              >
-                Delete
-              </Button>
-            </div>
-            <label className="flex cursor-pointer items-start gap-2.5 border-t border-line pt-2">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={identity.syncSecret}
-                disabled={busy}
-                onChange={(event) =>
-                  void (async () => {
-                    setBusy(true);
-                    setError(undefined);
-                    try {
-                      await identitySetSyncSecret(
-                        identity.id,
-                        event.target.checked,
-                      );
-                      await refresh();
-                    } catch (reason) {
-                      setError(String(reason));
-                    } finally {
-                      setBusy(false);
-                    }
-                  })()
-                }
-              />
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-ui font-medium text-fg">
-                  {identity.kind === "sshKey"
-                    ? "Sync this key to other devices"
-                    : "Sync this password to other devices"}
-                </span>
-                <span className="text-micro text-fg-subtle">
-                  Off by default. When on, encrypted credentials ride vault
-                  sync. Turning off stops future sync; devices that already
-                  have a copy keep it.
-                </span>
-              </span>
-            </label>
-          </li>
-        ))}
+              </label>
+            </li>
+          );
+        })}
         {identities.length === 0 && (
           <li className="rounded-md border border-dashed border-line px-3 py-4 text-center text-micro text-fg-subtle">
             No identities yet. Import an SSH key when adding a host, or save a
@@ -197,50 +237,6 @@ function IdentitiesPanel(): React.JSX.Element {
             disabled={busy}
             autoFocus
           />
-        </Dialog>
-      )}
-
-      {pendingDelete && (
-        <Dialog
-          open
-          onOpenChange={(next) => {
-            if (!next) setPendingDelete(undefined);
-          }}
-          kicker="Identity"
-          title="Delete identity?"
-          description="This identity is still attached to hosts. Force delete clears those links."
-          footer={
-            <>
-              <Button
-                variant="subtle"
-                disabled={busy}
-                onClick={() => setPendingDelete(undefined)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() => void remove(pendingDelete.identity, true)}
-              >
-                Delete anyway
-              </Button>
-            </>
-          }
-        >
-          <p className="m-0 text-ui text-fg-muted">
-            Used by:
-          </p>
-          <ul className="mt-2 mb-0 flex list-none flex-col gap-1 p-0">
-            {pendingDelete.dependents.map((host) => (
-              <li
-                key={host.id}
-                className="rounded-md border border-line px-3 py-2 text-ui text-fg"
-              >
-                {host.label}
-              </li>
-            ))}
-          </ul>
         </Dialog>
       )}
     </div>

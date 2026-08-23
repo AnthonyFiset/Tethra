@@ -105,9 +105,8 @@ function AgentsCatalog({
         </div>
       )}
       <p className="m-0 text-micro text-fg-subtle">
-        Catalog edits:{" "}
-        <code className="font-mono">crates/core/data/agents.json</code>. Custom
-        presets land in a later release.
+        This list ships with Tethra. Custom agent presets will arrive in a later
+        release.
       </p>
     </div>
   );

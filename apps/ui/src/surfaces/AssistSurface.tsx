@@ -14,9 +14,7 @@ export function AssistSurface({
       description="Provider presets, API keys (by ID only), and connection tests for Assist propose/explain."
       onClose={onClose}
     >
-      <div className="mx-auto w-full max-w-2xl">
-        <AssistSettingsPanel embedded onChanged={onChanged} />
-      </div>
+      <AssistSettingsPanel embedded onChanged={onChanged} />
     </SurfaceShell>
   );
 }

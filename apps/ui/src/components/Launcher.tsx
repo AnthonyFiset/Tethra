@@ -278,7 +278,7 @@ export function Launcher({
         )}
 
         <motion.section {...fade} className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap items-end gap-3">
             <SectionHeading
               icon={<FolderKanban size={14} />}
               title="Projects"
@@ -362,7 +362,7 @@ export function Launcher({
         </motion.section>
 
         <motion.section {...fade} className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <SectionHeading
               icon={<TerminalSquare size={14} />}
               title="Hosts"
