@@ -89,6 +89,8 @@ struct HostSummaryDto {
     tunnels: Vec<tunnel::TunnelDefinitionDto>,
     /// Opt-in SSH agent forwarding (`ssh -A`).
     forward_agent: bool,
+    /// ISO-8601 UTC of last successful terminal open, when known.
+    last_connected_at: Option<String>,
 }
 
 impl From<&CoreHostSummary> for HostSummaryDto {
@@ -113,6 +115,7 @@ impl From<&CoreHostSummary> for HostSummaryDto {
                 .map(tunnel::TunnelDefinitionDto::from)
                 .collect(),
             forward_agent: host.forward_agent,
+            last_connected_at: host.last_connected_at.map(|ts| ts.to_rfc3339()),
         }
     }
 }
@@ -1223,6 +1226,9 @@ async fn open_terminal(
         .await
         .map_err(redacted_error)?;
 
+    // Best-effort: stamp recency for Arrange-by Recent (ignore vault write errors).
+    let _ = state.repo.touch_host_connected(host_id).await;
+
     state
         .sessions
         .lock()
@@ -1893,6 +1899,7 @@ mod tests {
             shell_integration: true,
             tunnels: vec![],
             forward_agent: false,
+            last_connected_at: None,
         };
         assert!(dto.has_password);
         let debug = format!("{dto:?}");

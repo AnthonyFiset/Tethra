@@ -211,6 +211,7 @@ const state: {
       shellIntegration: true,
       tunnels: [TUNNEL_DB],
       forwardAgent: true,
+      lastConnectedAt: "2026-08-20T18:00:00Z",
     },
     {
       id: "host-mini",
@@ -227,6 +228,7 @@ const state: {
       shellIntegration: true,
       tunnels: [TUNNEL_REMOTE],
       forwardAgent: false,
+      lastConnectedAt: "2026-08-22T12:00:00Z",
     },
     {
       id: "host-vps",
@@ -243,6 +245,7 @@ const state: {
       shellIntegration: false,
       tunnels: [],
       forwardAgent: false,
+      lastConnectedAt: null,
     },
     {
       id: "host-win",
@@ -259,6 +262,7 @@ const state: {
       shellIntegration: true,
       tunnels: [],
       forwardAgent: false,
+      lastConnectedAt: "2026-08-10T09:00:00Z",
     },
     {
       id: "host-pi",
@@ -275,6 +279,7 @@ const state: {
       shellIntegration: true,
       tunnels: [],
       forwardAgent: false,
+      lastConnectedAt: "2026-08-23T08:00:00Z",
     },
     {
       id: "host-lab",
@@ -291,6 +296,7 @@ const state: {
       shellIntegration: true,
       tunnels: [],
       forwardAgent: false,
+      lastConnectedAt: "2026-08-01T12:00:00Z",
     },
   ] as HostSummaryDto[],
   identities: [
@@ -762,6 +768,7 @@ export function importSshConfig(aliases: string[]): Promise<HostSummaryDto[]> {
     shellIntegration: true,
     tunnels: [],
     forwardAgent: false,
+    lastConnectedAt: null,
   }));
   state.hosts.push(...created);
   return Promise.resolve(created);
@@ -787,6 +794,7 @@ export function createHost(host: HostMutation): Promise<HostSummaryDto> {
     shellIntegration: host.shellIntegration ?? true,
     tunnels: host.tunnels ?? [],
     forwardAgent: host.forwardAgent ?? false,
+    lastConnectedAt: null,
   };
   state.hosts.push(created);
   return Promise.resolve({ ...created });
@@ -1170,6 +1178,9 @@ export function openTerminal(
   ensureSessionTunnels(sessionId, hostId);
   queueMicrotask(() => emitMockSessionFixture(sessionId));
   const host = state.hosts.find((h) => h.id === hostId);
+  if (host) {
+    host.lastConnectedAt = new Date().toISOString();
+  }
   return Promise.resolve({
     sessionId,
     agentForward: host?.forwardAgent ? "active" : "off",

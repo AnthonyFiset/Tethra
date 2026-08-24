@@ -234,6 +234,12 @@ function renderBlock(
       : BLOCK_COLORS.ok;
   const railOpacity = isActive ? "1" : failed ? "0.7" : "0.55";
 
+  // Opaque headers replace the prompt row. Only do that when we have a
+  // command to show — otherwise idle/empty prompts look like a black terminal
+  // (WKWebView DOM glyphs are under the #0d0d0d header).
+  const hasCommand = Boolean(block.commandText.trim());
+  const coverPrompt = hasCommand;
+
   if (bounds) {
     const frame = document.createElement("div");
     frame.className = isActive
@@ -253,11 +259,13 @@ function renderBlock(
     root.appendChild(frame);
   }
 
-  const header = buildHeader(block, isActive);
-  header.style.top = `${prompt.top}px`;
-  header.style.height = `${prompt.height}px`;
-  applyHorizontal(header, prompt.left, prompt.width);
-  root.appendChild(header);
+  if (coverPrompt) {
+    const header = buildHeader(block, isActive);
+    header.style.top = `${prompt.top}px`;
+    header.style.height = `${prompt.height}px`;
+    applyHorizontal(header, prompt.left, prompt.width);
+    root.appendChild(header);
+  }
 
   const menu = buildMenuButton(block, snapshot);
   menu.style.top = `${prompt.top + Math.max(0, (prompt.height - 24) / 2)}px`;

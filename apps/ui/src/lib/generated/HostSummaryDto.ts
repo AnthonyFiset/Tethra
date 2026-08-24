@@ -13,4 +13,8 @@ shellIntegration: boolean, tunnels: Array<TunnelDefinitionDto>,
 /**
  * Opt-in SSH agent forwarding (`ssh -A`).
  */
-forwardAgent: boolean, };
+forwardAgent: boolean, 
+/**
+ * ISO-8601 UTC of last successful terminal open, when known.
+ */
+lastConnectedAt: string | null, };

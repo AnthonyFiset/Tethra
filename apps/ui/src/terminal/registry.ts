@@ -281,31 +281,50 @@ export function attachTerminal(
     container.replaceChildren();
     record.terminal.open(container);
     applyFontFeatures(record.terminal);
-    try {
-      record.webgl = new WebglAddon();
-      record.terminal.loadAddon(record.webgl);
-      record.webgl.onContextLoss(() => {
-        record.webgl?.dispose();
+    // WKWebView (Tauri on macOS) often returns a WebGL context that never
+    // paints — black terminal with chrome still drawing. Prefer DOM there;
+    // Chromium keeps WebGL when the probe succeeds.
+    if (shouldTryWebgl()) {
+      try {
+        const addon = new WebglAddon();
+        record.terminal.loadAddon(addon);
+        addon.onContextLoss(() => {
+          try {
+            addon.dispose();
+          } catch {
+            // ignore
+          }
+          record.webgl = undefined;
+          fitTerminal(sessionId);
+          try {
+            record.terminal.refresh(0, record.terminal.rows - 1);
+          } catch {
+            // ignore
+          }
+        });
+        record.webgl = addon;
+      } catch {
         record.webgl = undefined;
-      });
-    } catch {
-      // xterm's DOM/canvas renderer remains active as the required fallback.
+      }
     }
   }
-  // Wait for JetBrains Mono to resolve before measuring cells / fitting —
-  // otherwise first paint uses a fallback face and cell height drifts.
+  // Wait for JetBrains Mono — but never block paint forever (WKWebView can
+  // leave document.fonts.ready pending if a face never resolves).
   void (async () => {
     const size = getTerminalFontSize();
     const family = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
     const lineHeight = getTerminalLineHeight();
-    try {
-      await document.fonts.load(`${size}px "JetBrains Mono Variable"`);
-      await document.fonts.load(`${size}px ${family}`);
-      await document.fonts.ready;
-    } catch {
-      // ignore
-    }
+    await waitForTerminalFonts(size, family);
     if (!terminals.has(sessionId)) return;
+    // If WebGL left zero-size cells, drop it and let the DOM renderer paint.
+    if (record.webgl && !hasUsableCellMetrics(record.terminal)) {
+      try {
+        record.webgl.dispose();
+      } catch {
+        // ignore
+      }
+      record.webgl = undefined;
+    }
     applyTerminalFont(record.terminal, size, family, lineHeight);
     // Nudge CharSizeService: option change is the only public remasure trigger.
     record.terminal.options.fontSize = size + 0.001;
@@ -326,6 +345,11 @@ export function attachTerminal(
     getTerminalLineHeight(),
   );
   fitTerminal(sessionId);
+  try {
+    record.terminal.refresh(0, record.terminal.rows - 1);
+  } catch {
+    // ignore
+  }
   record.terminal.focus();
 }
 
@@ -459,6 +483,66 @@ function applyFontFeatures(terminal: Terminal): void {
   if (el) {
     el.style.fontVariantLigatures = ligatures ? "common-ligatures" : "none";
   }
+}
+
+/** Safari / WKWebView (Tauri macOS) — WebGL often initializes then paints black. */
+function shouldTryWebgl(): boolean {
+  if (typeof window === "undefined") return false;
+  // Tauri injects this; prefer DOM renderer on the real app shell.
+  if ("__TAURI_INTERNALS__" in window || "__TAURI__" in window) return false;
+  const ua = navigator.userAgent;
+  // Apple WebKit without Chromium → WKWebView / Safari.
+  if (/AppleWebKit/i.test(ua) && !/Chrome|Chromium|Edg\//i.test(ua)) {
+    return false;
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    const gl =
+      canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true }) ||
+      canvas.getContext("webgl", { failIfMajorPerformanceCaveat: true });
+    return Boolean(gl);
+  } catch {
+    return false;
+  }
+}
+
+function hasUsableCellMetrics(terminal: Terminal): boolean {
+  const core = (
+    terminal as unknown as {
+      _core?: {
+        _charSizeService?: { height?: number; width?: number };
+        _renderService?: {
+          dimensions?: { css?: { cell?: { height?: number } } };
+        };
+      };
+    }
+  )._core;
+  const charH = core?._charSizeService?.height ?? 0;
+  const cellH = core?._renderService?.dimensions?.css?.cell?.height ?? 0;
+  return charH > 1 && cellH > 1;
+}
+
+const FONT_WAIT_MS = 900;
+
+async function waitForTerminalFonts(
+  size: number,
+  family: string,
+): Promise<void> {
+  const load = async () => {
+    try {
+      await document.fonts.load(`${size}px "JetBrains Mono Variable"`);
+      await document.fonts.load(`${size}px ${family}`);
+      await document.fonts.ready;
+    } catch {
+      // ignore — paint with whatever face is available
+    }
+  };
+  await Promise.race([
+    load(),
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, FONT_WAIT_MS);
+    }),
+  ]);
 }
 
 /** Re-apply the app token theme (e.g. after future theme switches). */

@@ -54,6 +54,7 @@ interface CommandPaletteProps {
   onNewWindow: () => void;
   onMoveToNewWindow: () => void;
   onAddHost: () => void;
+  onAddProject: () => void;
   onImport: () => void;
   onSync: () => void;
   onSettings: (section?: SettingsSectionId) => void;
@@ -86,6 +87,7 @@ export function CommandPalette({
   onNewWindow,
   onMoveToNewWindow,
   onAddHost,
+  onAddProject,
   onImport,
   onSync,
   onSettings,
@@ -276,6 +278,14 @@ export function CommandPalette({
                   onSelect={() => run(onAddHost)}
                 >
                   Add host
+                </Item>
+                <Item
+                  value="add new project workspace"
+                  icon={<FolderKanban size={15} />}
+                  detail="Host · path · default agent"
+                  onSelect={() => run(onAddProject)}
+                >
+                  New project
                 </Item>
                 <Item
                   value="import ssh config"

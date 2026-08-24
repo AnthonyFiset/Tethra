@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, Plus, X } from "lucide-react";
+import { ChevronDown, Folder, FolderKanban, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   HostSummaryDto,
@@ -58,13 +58,19 @@ export function Launcher({
   error,
   connectingHostId,
   openingFilesHostId,
+  openingProjectId,
   onConnect,
   onFiles,
   onEditHost,
   onDeleteHost,
+  onOpenProject,
+  onEditProject,
+  onDeleteProject,
   onAddHost,
+  onAddProject,
   onImport,
   onQuickConnect,
+  agentLabel,
 }: LauncherProps): React.JSX.Element {
   const [quick, setQuick] = useState("");
   const [activeTags, setActiveTags] = useState<string[]>([]);
@@ -123,16 +129,33 @@ export function Launcher({
     }
     list.sort((a, b) => {
       if (sortMode === "name") return a.label.localeCompare(b.label);
-      // Recent: open tabs → running agents → everyone else, then name.
+      // Recent: open tabs → running agents → lastConnectedAt → name.
       const rank = (id: string): number => {
         if (openHostIds?.has(id)) return 0;
         if (runningByHost.has(id)) return 1;
         return 2;
       };
-      return rank(a.id) - rank(b.id) || a.label.localeCompare(b.label);
+      const connectedAt = (host: HostSummaryDto): number => {
+        if (!host.lastConnectedAt) return 0;
+        const ms = Date.parse(host.lastConnectedAt);
+        return Number.isFinite(ms) ? ms : 0;
+      };
+      return (
+        rank(a.id) - rank(b.id) ||
+        connectedAt(b) - connectedAt(a) ||
+        a.label.localeCompare(b.label)
+      );
     });
     return list;
   }, [hosts, activeTags, sortMode, openHostIds, runningByHost]);
+
+  const sortedProjects = useMemo(() => {
+    return [...projects].sort((a, b) => {
+      const aT = a.lastOpened ? Date.parse(a.lastOpened) : 0;
+      const bT = b.lastOpened ? Date.parse(b.lastOpened) : 0;
+      return bT - aT || a.name.localeCompare(b.name);
+    });
+  }, [projects]);
 
   const emptyVault = hosts.length === 0;
 
@@ -292,6 +315,34 @@ export function Launcher({
           </section>
         ) : (
           <>
+            <section className="flex flex-col gap-2.5">
+              <span className="text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
+                Projects
+              </span>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {sortedProjects.map((project) => (
+                  <ProjectTile
+                    key={project.id}
+                    project={project}
+                    hosts={hosts}
+                    opening={openingProjectId === project.id}
+                    agentLabel={agentLabel?.(project.defaultAgent) ?? undefined}
+                    onOpen={() => onOpenProject(project)}
+                    onEdit={() => onEditProject(project)}
+                    onDelete={() => onDeleteProject(project)}
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={onAddProject}
+                  className="flex cursor-pointer items-center justify-center gap-2 rounded-panel border border-dashed border-line-strong px-4 py-[14px] text-[12px] text-fg-subtle transition-colors hover:border-fg-subtle hover:text-fg-muted"
+                >
+                  <Plus size={12} strokeWidth={2} />
+                  New project
+                </button>
+              </div>
+            </section>
+
             {groups.length > 0 && (
               <section className="flex flex-col gap-2.5">
                 <span className="text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
@@ -474,6 +525,94 @@ function HostTile({
             Delete
           </button>
         </div>
+    </div>
+  );
+}
+
+function projectSubtitle(
+  project: ProjectSummaryDto,
+  hosts: HostSummaryDto[],
+): string {
+  const location = project.location;
+  if (location.kind === "local") return location.path;
+  const host = hosts.find((entry) => entry.id === location.hostId);
+  return `${host?.label ?? "host"} · ${location.path}`;
+}
+
+function ProjectTile({
+  project,
+  hosts,
+  opening,
+  agentLabel,
+  onOpen,
+  onEdit,
+  onDelete,
+}: {
+  project: ProjectSummaryDto;
+  hosts: HostSummaryDto[];
+  opening: boolean;
+  agentLabel?: string;
+  onOpen: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      className="group relative flex min-w-0 cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-[14px] transition-colors hover:border-line-strong hover:bg-hover"
+      onClick={() => {
+        if (!opening) onOpen();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (!opening) onOpen();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-elevated text-fg-muted">
+        <FolderKanban size={16} strokeWidth={2} />
+      </span>
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <span className="block truncate text-[12.5px] font-semibold text-fg">
+          {project.name}
+        </span>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+          <span className="truncate font-mono text-[11px] text-fg-subtle">
+            {opening ? "Opening…" : projectSubtitle(project, hosts)}
+          </span>
+          {agentLabel ? (
+            <span className="shrink-0 whitespace-nowrap rounded-[5px] border border-line px-1.5 py-px text-[10px] text-fg-muted">
+              {agentLabel}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="absolute top-1/2 right-3 hidden -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 md:flex">
+        <button
+          type="button"
+          title="Edit"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit();
+          }}
+          className="cursor-pointer rounded px-1.5 py-0.5 text-[10px] text-fg-subtle hover:bg-hover hover:text-fg"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          title="Delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          className="cursor-pointer rounded px-1.5 py-0.5 text-[10px] text-fg-subtle hover:bg-hover hover:text-danger"
+        >
+          Delete
+        </button>
+      </div>
     </div>
   );
 }

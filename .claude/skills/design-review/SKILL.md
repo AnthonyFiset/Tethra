@@ -7,18 +7,24 @@ description: Run Tethra's UI in a browser, screenshot every surface, and audit i
 
 Audit the real rendered UI against the rules in `docs/DESIGN.md`.
 
-## 1. Boot the UI in a browser
+## 1. Boot the UI
 
-Preferred: the mock-IPC web harness (no SSH hosts or vault needed):
+Fast iteration: mock-IPC web harness —
 
 ```bash
-cd apps/ui && npm run dev:web   # mock IPC + fixture data on http://localhost:5173
+cd apps/ui && npm run dev:web   # fixture data on http://localhost:5173
 ```
 
-If `dev:web` doesn't exist yet, fall back to `npm run dev` and note that
-IPC-backed views will be empty — still screenshot chrome, settings, and
-layout. (The mock harness is the reliable path; if missing, flag that as a
-finding.)
+**Required for acceptance** of session paint, WebGL/fonts, host sort on
+real vault data, and native chrome: the real app —
+
+```bash
+cd apps/tauri/src-tauri && npx --prefix ../../ui tauri dev
+```
+
+`dev:web` cannot see WKWebView WebGL/font failures. Do not call a fix
+done on browser-harness evidence alone. (Automated real-app coverage is
+the WebdriverIO brief at the top of `NEXT.md`.)
 
 ## 2. Capture
 

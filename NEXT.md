@@ -1,3 +1,38 @@
+# NEXT — after v0.5 blockers: WebdriverIO real-app harness
+
+> **Immediate brief — before anything else ships after the WKWebView /
+> Projects / sort blockers land.** `dev:web` stays for fast Chromium
+> iteration. **Nothing is called done on browser-harness evidence alone.**
+> Acceptance for UI work that touches sessions, fonts, WebGL, IPC-backed
+> lists, or native chrome requires a pass in the real app (`npm run tauri
+> dev` / packaged build) — preferably automated.
+
+## Goal
+
+Automate the design-review flow checklist against a live Tauri window
+(WKWebView on macOS), so Chromium-only false greens cannot ship again.
+
+## Scope
+
+1. **WebdriverIO + Tauri** driver (or Appium for the webview) that:
+   - launches `tethra` from `target/debug` or `tauri dev`
+   - unlocks a fixture vault (or uses a dedicated test vault path)
+   - runs the design-review skill flows: home→session→home, tabs on home,
+     RUNNING with a live session, Arrange-by reorder, hover lifts,
+     dialogs at a small window, way-back from every surface
+2. **Assert** terminal cells paint (not empty black), host sort reorders
+   on `lastConnectedAt`, Projects section is present and palette-reachable
+3. **CI job** (macOS) optional-but-preferred; local `npm run test:e2e:app`
+   must be the default pre-merge gate for UI PRs that touch those surfaces
+4. Keep Playwright/`dev:web` for unit-speed UI checks — dual harness
+
+## Non-goals
+
+Rewriting the mock IPC harness; replacing design-review screenshots;
+Windows/Linux drivers in v1 (macOS first — that's where WKWebView bites).
+
+---
+
 # NEXT — v0.5.0: the visual overhaul (Warp blocks × Termius organization)
 
 > **Branch:** `visual-redesign` (from design-overhaul). Open a draft PR into
@@ -13,6 +48,11 @@
 > Tokens are the existing `styles.css` `@theme` — the references use only
 > those plus host-identity colors. `docs/DESIGN.md` still governs (§3
 > scrolling, §5 chips/errors, §6 checklist).
+>
+> **Acceptance (updated):** static + interaction + flow passes in
+> `dev:web` are necessary but **not sufficient**. Session paint, host
+> sort on real vault data, and home/Projects must be confirmed in the
+> real app (`tauri dev`) before merge. The WDIO brief above is next.
 >
 > **Scope:** this brief restyles and reorganizes; it does not add
 > protocol/vault features. No changes to `inject.ts` / `registry.ts` paths.

@@ -44,6 +44,8 @@ pub struct HostSummary {
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
     pub forward_agent: bool,
+    /// Last successful terminal open (UTC).
+    pub last_connected_at: Option<chrono::DateTime<Utc>>,
 }
 
 impl From<&Host> for HostSummary {
@@ -67,6 +69,7 @@ impl From<&Host> for HostSummary {
             shell_integration: host.shell_integration,
             tunnels: host.tunnels.clone(),
             forward_agent: host.forward_agent,
+            last_connected_at: host.last_connected_at,
         }
     }
 }
@@ -1087,6 +1090,24 @@ impl VaultRepository {
             parse_private_key_bytes(key_bytes, None)?;
         }
         Ok((false, fingerprint))
+    }
+
+    /// Stamp a successful connect for Arrange-by Recent ordering.
+    pub async fn touch_host_connected(&self, id: Uuid) -> Result<HostSummary> {
+        let (mut record, row) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Host {
+            return Err(Error::InvalidArgument("item is not a host".into()));
+        }
+        record.last_connected_at = Some(Utc::now());
+        let next = row.version + 1;
+        put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
+        let host = Host::from(record);
+        let (has_password, auth_kind, sync_secret) = self.identity_meta(host.identity_id).await?;
+        let mut summary = HostSummary::from(&host);
+        summary.has_password = has_password;
+        summary.auth_kind = auth_kind;
+        summary.sync_secret = sync_secret;
+        Ok(summary)
     }
 
     pub async fn get_host(&self, id: Uuid) -> Result<Host> {

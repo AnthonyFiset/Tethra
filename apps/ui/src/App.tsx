@@ -1217,6 +1217,14 @@ function Workspace({
       const sessionId = opened.sessionId;
       wireTerminal(sessionId);
       void attachOutput(sessionId, "Connection closed.");
+      const connectedAt = new Date().toISOString();
+      setHosts((current) =>
+        current.map((entry) =>
+          entry.id === host.id
+            ? { ...entry, lastConnectedAt: connectedAt }
+            : entry,
+        ),
+      );
       setTabs((current) => [
         ...current,
         {
@@ -2552,6 +2560,7 @@ function Workspace({
           setHostDraft(undefined);
           setEditor("new");
         }}
+        onAddProject={() => setProjectEditor("new")}
         onImport={() => setImportOpen(true)}
         onSync={() => openSurface("vault")}
         onSettings={(section) => openSettings(section ?? "general")}
