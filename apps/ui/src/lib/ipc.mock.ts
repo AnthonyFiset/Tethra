@@ -1071,6 +1071,21 @@ export function openTerminal(
   ensureSessionTunnels(sessionId, hostId);
   queueMicrotask(() => {
     emitTerminal(sessionId, { kind: "data", data: CANNED_OUTPUT, dropped: false });
+    const phases: Array<{ phase: "commandStart" | "outputStart" | "commandEnd"; exit?: number }> = [
+      { phase: "commandStart" },
+      { phase: "outputStart" },
+      { phase: "commandEnd", exit: 0 },
+      { phase: "commandStart" },
+      { phase: "outputStart" },
+      { phase: "commandEnd", exit: 1 },
+    ];
+    for (const step of phases) {
+      emitTerminal(sessionId, {
+        kind: "block",
+        phase: step.phase,
+        exitCode: step.exit ?? null,
+      });
+    }
   });
   const host = state.hosts.find((h) => h.id === hostId);
   return Promise.resolve({

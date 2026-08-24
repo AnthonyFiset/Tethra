@@ -29,6 +29,8 @@ interface TerminalViewProps {
   onSplitDown?: () => void;
   onClose?: () => void;
   onAssist?: (selection?: string) => void;
+  /** `session` omits the host-color top hairline (context bar replaces it). */
+  chrome?: "default" | "session";
 }
 
 interface MenuState {
@@ -58,6 +60,7 @@ export function TerminalView({
   onSplitDown,
   onClose,
   onAssist,
+  chrome = "default",
 }: TerminalViewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -149,7 +152,8 @@ export function TerminalView({
       )}
       data-terminal-surface
       style={{
-        boxShadow: `inset 0 3px 0 0 ${color}`,
+        boxShadow:
+          chrome === "session" ? undefined : `inset 0 3px 0 0 ${color}`,
         backgroundColor: "var(--terminal-bg, #0d0d0d)",
       }}
       onContextMenu={(event) => {
@@ -165,7 +169,10 @@ export function TerminalView({
       <div
         ref={containerRef}
         aria-label="SSH terminal"
-        className="size-full overflow-hidden px-3 py-2"
+        className={cn(
+          "size-full overflow-hidden px-3.5 py-2",
+          chrome === "session" && "pb-16",
+        )}
       />
 
       <TerminalFindBar

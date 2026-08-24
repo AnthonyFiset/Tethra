@@ -4,6 +4,7 @@ import type { TerminalBlockPhase } from "../lib/generated/TerminalBlockPhase";
 import { armShellInjectGate } from "./inject";
 
 const FAIL = "#e5544b";
+const OK = "#3fb950";
 
 interface OpenBlock {
   commandStart?: IMarker;
@@ -116,9 +117,7 @@ function applyPhase(
         exitCode,
         disposables: [],
       };
-      if (exitCode !== null && exitCode !== 0) {
-        decorateFailed(sessionId, terminal, tracker, finished);
-      }
+      decorateFinished(sessionId, terminal, tracker, finished);
       tracker.finished.push(finished);
       // Cap retained decorations.
       while (tracker.finished.length > 80) {
@@ -151,21 +150,23 @@ function textBetween(
   return lines.join("\n").trim();
 }
 
-function decorateFailed(
+function decorateFinished(
   sessionId: string,
   terminal: Terminal,
   tracker: BlockTracker,
   block: FinishedBlock,
 ): void {
   if (block.start.isDisposed || block.end.isDisposed) return;
+  const failed = block.exitCode !== null && block.exitCode !== 0;
+  const railColor = failed ? FAIL : OK;
   const height = Math.max(1, block.end.line - block.start.line + 1);
   const decoration = terminal.registerDecoration({
     marker: block.start,
-    width: 1,
+    width: terminal.cols,
     height,
     layer: "top",
     overviewRulerOptions: {
-      color: FAIL,
+      color: railColor,
       position: "left",
     },
   });
@@ -173,11 +174,12 @@ function decorateFailed(
   block.decoration = decoration;
 
   const onRender = decoration.onRender((element) => {
-    element.classList.add("tethra-block-failed");
+    element.classList.add(failed ? "tethra-block-failed" : "tethra-block-ok");
     element.style.left = "0px";
     element.style.width = "100%";
-    element.style.pointerEvents = "none";
-    element.style.borderLeft = `2px solid ${FAIL}`;
+    element.style.pointerEvents = failed ? "auto" : "none";
+    element.style.borderLeft = `3px solid ${railColor}`;
+    element.style.opacity = failed ? "0.7" : "0.55";
     element.style.boxSizing = "border-box";
 
     if (element.dataset.tethraActions === "1") return;
@@ -229,42 +231,50 @@ function decorateFailed(
       { armInject: true },
     );
 
-    // Right-click on the failed gutter — DOM menu (decoration is outside React).
-    element.style.pointerEvents = "auto";
     element.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      showBlockDomMenu(event.clientX, event.clientY, [
-        {
-          label: "Copy command",
-          run: () => void writeClipboardText(block.commandText || ""),
-        },
-        {
-          label: "Copy output",
-          run: () => void writeClipboardText(block.outputText || ""),
-        },
-        {
-          label: "Copy both",
-          run: () =>
-            void writeClipboardText(
-              [block.commandText, block.outputText].filter(Boolean).join("\n"),
-            ),
-        },
-        {
-          label: "Rerun",
-          run: () => {
-            if (block.commandText) tracker.onRerun?.(block.commandText);
-          },
-        },
-      ]);
+      showBlockDomMenu(event.clientX, event.clientY, blockMenuItems(block, tracker));
     });
 
-    element.appendChild(actions);
+    if (failed) {
+      element.appendChild(actions);
+    }
   });
   block.disposables.push(onRender);
   block.disposables.push(decoration);
   void sessionId;
 }
+
+function blockMenuItems(
+  block: FinishedBlock,
+  tracker: BlockTracker,
+): Array<{ label: string; run: () => void }> {
+  return [
+    {
+      label: "Copy command",
+      run: () => void writeClipboardText(block.commandText || ""),
+    },
+    {
+      label: "Copy output",
+      run: () => void writeClipboardText(block.outputText || ""),
+    },
+    {
+      label: "Share block",
+      run: () =>
+        void writeClipboardText(
+          [block.commandText, block.outputText].filter(Boolean).join("\n\n"),
+        ),
+    },
+    {
+      label: "Re-run",
+      run: () => {
+        if (block.commandText) tracker.onRerun?.(block.commandText);
+      },
+    },
+  ];
+}
+
 
 function disposeFinished(block: FinishedBlock | undefined): void {
   if (!block) return;
@@ -331,4 +341,8 @@ export function lastBlockCommand(sessionId: string): string | undefined {
     if (cmd) return cmd;
   }
   return undefined;
+}
+
+export function blockCount(sessionId: string): number {
+  return trackers.get(sessionId)?.finished.length ?? 0;
 }

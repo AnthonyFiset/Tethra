@@ -125,7 +125,7 @@ import {
   setBlockRerunHandler,
 } from "./terminal/blocks";
 import { SplitPanes } from "./terminal/SplitPanes";
-import { TerminalView } from "./terminal/TerminalView";
+import { SessionView } from "./components/SessionView";
 import {
   type LayoutNode,
   leaf,
@@ -2071,6 +2071,14 @@ function Workspace({
     zoomedId || (effectiveLayout && effectiveLayout.type === "split"),
   );
 
+  const sessionFocused =
+    inWorkspace &&
+    Boolean(
+      activeTab &&
+        (activeTab.kind === "terminal" || activeTab.kind === "local"),
+    );
+  const effectiveRailCollapsed = railCollapsed || sessionFocused;
+
   return (
     <div className="flex size-full flex-col bg-base">
       <TitleBar
@@ -2118,7 +2126,7 @@ function Workspace({
 
       <div className="flex min-h-0 flex-1">
         <LeftRail
-          collapsed={railCollapsed}
+          collapsed={effectiveRailCollapsed}
           vaultStatus={status}
           syncStatus={syncInfo}
           hostCount={hosts.length}
@@ -2288,10 +2296,17 @@ function Workspace({
                         );
                       }
                       return (
-                        <TerminalView
+                        <SessionView
                           key={tab.sessionId}
                           pane
                           sessionId={tab.sessionId}
+                          host={
+                            tab.hostId !== "local"
+                              ? hosts.find((h) => h.id === tab.hostId)
+                              : undefined
+                          }
+                          cwd={tab.cwd}
+                          connected={tab.connected}
                           active={focused}
                           visible
                           color={tab.color ?? DEFAULT_HOST_COLOR}
