@@ -1,77 +1,107 @@
-# NEXT — v0.4.1: UX architecture pass (surfaces vs. settings) + web harness
+# NEXT — v0.5.0: the visual overhaul (Warp blocks × Termius organization)
 
-> **Scope:** UI restructure + the browser test harness. No new SSH/vault
-> features. No changes to `inject.ts` / `registry.ts` input paths.
-> Baseline: `main` (v0.4.0 shipped).
+> **Branch:** `visual-redesign` (from design-overhaul). Open a draft PR into
+> main immediately; do NOT merge before design review passes. PR #1
+> (design-overhaul) merges first; this PR rebases on main after.
 >
-> **Why:** v0.4.0 shipped features fast and parked too many of them inside
-> the Settings modal (now ~1,470 lines, 10 sections, broken scrolling).
-> Anthony's verdict: workflow features must be first-class surfaces like the
-> File Manager, not settings sections. The new rulebook is
-> **`docs/DESIGN.md` — read it first; it is the spec for this brief.**
+> **The spec is visual and it is approved.** Anthony signed off on these
+> mockups — match them:
+> - `docs/design/v0.5/v05-home.png` (+ `home-reference.html`, the exact
+>   markup/values it renders — lift paddings, radii, sizes, rgba tints
+>   from it verbatim)
+> - `docs/design/v0.5/v05-session.png` (+ `session-reference.html`)
+> Tokens are the existing `styles.css` `@theme` — the references use only
+> those plus host-identity colors. `docs/DESIGN.md` still governs (§3
+> scrolling, §5 chips/errors, §6 checklist).
+>
+> **Scope:** this brief restyles and reorganizes; it does not add
+> protocol/vault features. No changes to `inject.ts` / `registry.ts` paths.
 
 ---
 
-## 1. Apply the surface/preference split (DESIGN.md §1)
+## Part A — App shell + Home (build first; pure UI)
 
-- **Settings keeps ONLY:** General, Appearance, Terminal, Shell, Keyboard,
-  Advanced.
-- **Move out to first-class surfaces** (Files-manager pattern: reachable
-  from primary nav + command palette, own layout, own scroll):
-  - **Vault & Sync** → one "Vault" surface: status, unlock/lock, sync
-    backend + device list, master password actions.
-  - **AI providers + Assist** → "Assist" surface (provider presets, keys
-    status by ID, test button).
-  - **Agents** → into the existing Launcher/Agents surface (catalog,
-    defaults, notification toggles live with the thing they configure).
-  - **Identities** (SSH keys) → surface (already speced in the key brief's
-    Settings section — promote it).
-  - Tunnels stay where they are (host/session panel — already correct).
-- Settings rows that used to host these become deep-links ("Manage vault →")
-  that open the surface. No functionality removed, only relocated.
-- Primary nav lists the surfaces (≤7 — DESIGN.md §2); command palette
-  entries for every surface ("Go to: Vault", "Go to: Assist", …).
+1. **Left rail** (~224px, `#101010`, hairline right border) replaces the
+   titlebar surface pills as primary navigation:
+   - Top: vault card — logo, vault name, state line ("unlocked · synced"
+     with green dot; locked/red and syncing states too).
+   - Nav: Hosts (count), Tunnels (live count badge), Identities, Files,
+     Assist — icons per the reference. Active item = `#222` pill.
+   - **RUNNING section**: live sessions list — colored terminal icon
+     (host color), session/project name, right status dot (running green /
+     waiting amber / failed red). Click = attach. This is the Termius
+     "Terminals" pattern and the wedge on permanent display.
+   - Bottom: Settings.
+   - Narrow windows (< the surface-nav breakpoint): rail collapses to
+     icon-only (tooltips), NOT hidden. Terminal focus mode (Part B) also
+     collapses it.
+2. **Home pane**: quick-connect hero (46px input, mono, `❯` accent prefix,
+   accent Connect button), tag-filter chip row + "Arrange by", GROUPS
+   card row (icon tile in group color, name, host count, dashed New
+   group), HOSTS card grid (36px rounded-square avatar in the host's
+   existing color, name, mono user@host, right-side status/`key` chip,
+   dashed New host). Group data: hosts already have tags — groups ARE
+   tags for now (a group card filters by tag); no new vault schema.
+3. **Titlebar** becomes minimal: traffic-light inset, centered ⌘K search
+   pill, right icons (lock, overflow). Session tabs live in the titlebar
+   row as in the session reference (colored dot, name, dim project,
+   close ×; active = elevated bg + border; `+` for new).
+4. Surfaces (Vault, Assist, Agents, Identities) open from the rail —
+   SurfaceShell keeps its 880px grid; palette entries stay.
 
-## 2. Fix scrolling everywhere (DESIGN.md §3)
+## Part B — Session view (the Warp treatment)
 
-- Settings modal: fixed header + section nav, `overflow-y: auto` body only,
-  `max-height: 85vh`, no nested scrollbars, trackpad + PgUp/PgDn + Home/End
-  work in every section. Verify at a 900×600 window.
-- Sweep the moved surfaces for the same rules while relocating them.
-- Long lists (hosts, blocks) — virtualize if any currently render >200 rows
-  unvirtualized; otherwise leave.
+1. **Context bar** under the tabs (34px): cwd chip and git-branch chip
+   (both already known via shell integration / OSC 133 cwd reporting),
+   right side dim `tmux · up 1h · <ip>`. Omit chips gracefully when shell
+   integration is off.
+2. **Block chrome** on the existing xterm + OSC 133 block model — pick
+   the mechanism (xterm decorations API, or an overlay gutter aligned to
+   block marks) and note it in the PR; do NOT replace xterm or fork the
+   scrollback:
+   - 3px left status rail per block: green ok / red non-zero exit / accent
+     active, with the dim block-header line (path · branch · right-aligned
+     duration + time) rendered per the reference.
+   - Active/last block: accent border + faint tint per reference.
+   - Block hover ⋮ menu: Copy command, Copy output, Share block (copies
+     both), Re-run, Jump to agent (when the block is an agent session).
+     Data for all of these exists in the parsed block model.
+   - Collapsed representation for huge finished blocks ("npm install ·
+     1,204 lines · 32s") — expand on click. If collapse is infeasible
+     this release, ship the rest and say so; don't fake it.
+3. **Prompt panel**: the input line area gets the framed treatment —
+   `#141414` panel, `#363636` border, radius 10, `❯` accent — as a visual
+   frame around the real PTY input (xterm keeps handling keystrokes; no
+   local line-editing layer). Hint row beneath: ⌘F find · ⌘K commands ·
+   blocks count. Agent-waiting state renders the amber banner + Review
+   button inside the active block (wires to the existing notification
+   state; Review = focus session).
+4. **Focus mode**: when a session has focus, the rail auto-collapses to
+   icons (DESIGN.md §2 — terminal space is sacred).
 
-## 3. `dev:web` — browser harness with mocked IPC
+## Harness + fixtures
 
-The CI already enforces "Tauri imports confined to ipc.ts" — use that seam:
-
-- `npm run dev:web` (apps/ui): vite dev with `VITE_TETHRA_MOCK=1`; `ipc.ts`
-  swaps to a mock module implementing every IPC call against fixture data —
-  a handful of hosts (password + key), one fake running session with canned
-  terminal output, tunnels in various states, identities, sync status,
-  update banner states.
-- Mock is deterministic (no timers randomizing state) so screenshots are
-  stable; interactions mutate the in-memory fixtures so flows are clickable.
-- No mock code in the production bundle (tree-shaken behind the env flag);
-  `scripts/ci-check.sh` builds stay green with zero Tauri present.
-- One paragraph in CONTRIBUTING.md: how to run it, what it's for (design
-  review + future Playwright/WDIO e2e).
+- Extend `dev:web` mocks: rail counts, running sessions with all three
+  states, host colors, groups-from-tags, session view with fixture blocks
+  (ok / failed / active+waiting) so the design review can screenshot
+  every state without SSH.
 
 ## Acceptance
 
-1. Settings shows exactly 6 preference sections; every former section's
-   functionality reachable via its surface from nav AND command palette.
-2. At 900×600: every Settings section and every surface scrolls to its last
-   control with one scrollbar and working trackpad momentum.
-3. `npm run dev:web` on a machine with no vault/hosts renders every surface
-   with fixture data; add-tunnel and edit-host flows are clickable.
-4. Screenshots of each surface at 1440×900 attached to the PR/summary.
-5. `scripts/ci-check.sh` green; DESIGN.md §6 checklist passes (self-audit
-   and say so explicitly).
+1. Side-by-side: dev:web screenshots at 1440×900 vs `v05-home.png` and
+   `v05-session.png` — same anatomy, spacing rhythm, and tones (not
+   pixel-identical: real data differs; structure and tokens must match).
+2. DESIGN.md §6 self-audit passes; every dialog still obeys the 85vh rule;
+   rail collapse verified at 900×600.
+3. Real-world check on `tethra-vm`: blocks render on a live session, the
+   ⋮ menu copies a real command/output, agent-waiting banner appears when
+   Claude Code prompts.
+4. `scripts/ci-check.sh` green. No release stamp in this brief — v0.5.0
+   stamps after design review + code review pass on the PR.
 
 ## Do NOT
 
-- New features, new IPC surface area beyond the mock, visual rebrand
-  (tokens stay exactly as styles.css defines)
-- WDIO/tauri-driver CI e2e (separate later brief)
+- Replace or fork xterm; no local line-editor for the prompt
+- New vault schema (groups are tag views)
 - Touch sync-server, signing, release workflows
+- Windows-native chrome / history search (still separate v0.5.x briefs)
