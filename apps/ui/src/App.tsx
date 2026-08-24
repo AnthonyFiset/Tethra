@@ -2139,11 +2139,12 @@ function Workspace({
           color: tab.color,
           projectName: project?.name,
           waiting:
-            runningId != null &&
-            sessionAttention[runningId]?.state === "waiting",
+            ptyAttention[tab.sessionId]?.state === "waiting" ||
+            (runningId != null &&
+              sessionAttention[runningId]?.state === "waiting"),
         };
       }),
-    [tabs, hosts, projects, sessionAttention],
+    [tabs, hosts, projects, sessionAttention, ptyAttention],
   );
 
   /** RUNNING rail: live open tabs first, then detached vault sessions. */
@@ -2168,9 +2169,9 @@ function Workspace({
         hostId: tab.hostId,
         openSessionId: tab.sessionId,
         runningId,
-        attentionState: runningId
-          ? sessionAttention[runningId]?.state
-          : undefined,
+        attentionState:
+          (runningId ? sessionAttention[runningId]?.state : undefined) ??
+          ptyAttention[tab.sessionId]?.state,
       });
     }
 
@@ -2192,7 +2193,7 @@ function Workspace({
     }
 
     return items;
-  }, [tabs, hosts, projects, runningSessions, sessionAttention]);
+  }, [tabs, hosts, projects, runningSessions, sessionAttention, ptyAttention]);
 
   // Tab selection is source of truth for what to show. Layout only wins when
   // it's a real split that still contains the active session.

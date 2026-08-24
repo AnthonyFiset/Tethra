@@ -247,16 +247,16 @@ function renderBlock(
       : failed
         ? "tethra-block-overlay-frame tethra-block-overlay-failed"
         : "tethra-block-overlay-frame tethra-block-overlay-ok";
-    // Frame hugs the text column but stops before the ⋮; outline-offset
-    // (CSS) puts the blue stroke in the gutter outside the box.
-    const frameLeft = bounds.left;
-    const frameRightPad = MENU_COLUMN_WIDTH + 4;
+    // Frame sits slightly left of glyphs; outline-offset puts the stroke
+    // in the gutter. Stop before the ⋮ so the right edge never fragments.
+    const frameLeft = Math.max(0, bounds.left - 5);
+    const frameRightPad = MENU_COLUMN_WIDTH + 6;
     const frameWidth = Math.max(
       48,
-      bounds.width - frameRightPad,
+      bounds.left + bounds.width - frameLeft - frameRightPad,
     );
-    frame.style.top = `${bounds.top}px`;
-    frame.style.height = `${bounds.height}px`;
+    frame.style.top = `${Math.max(0, bounds.top - 2)}px`;
+    frame.style.height = `${bounds.height + 4}px`;
     applyHorizontal(frame, frameLeft, frameWidth);
 
     const rail = document.createElement("div");

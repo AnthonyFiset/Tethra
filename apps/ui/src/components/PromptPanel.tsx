@@ -26,12 +26,19 @@ export function PromptPanel({ sessionId }: PromptPanelProps): React.JSX.Element 
 
   async function sendDraft(): Promise<void> {
     const text = draft;
+    if (!text) {
+      // Bare Enter still sends CR (agent chat / empty submit).
+    }
+    const payload = `${text.replace(/\n/g, "\r")}\r`.replace(/\r+$/, "\r");
     setDraft("");
-    const payload = text.endsWith("\n") ? text.replace(/\n/g, "\r") : `${text}\r`;
     try {
-      await sendTerminalInput(sessionId, new TextEncoder().encode(payload));
+      await sendTerminalInput(
+        sessionId,
+        new TextEncoder().encode(payload),
+        { force: true },
+      );
     } catch {
-      // PTY may have closed; leave the cleared box — user can retype.
+      setDraft(text);
     }
     areaRef.current?.focus();
   }
