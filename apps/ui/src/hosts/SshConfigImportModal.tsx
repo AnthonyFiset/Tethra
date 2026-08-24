@@ -231,7 +231,7 @@ export function SshConfigImportModal({
               </button>
             </div>
 
-            <div className="max-h-72 overflow-y-auto rounded-md border border-line bg-base p-1">
+            <div className="rounded-md border border-line bg-base p-1">
               {preview.hosts.map((host) => {
                 const vaultHost = importedByAlias.get(host.alias);
                 const keyAttached = vaultHost?.authKind === "sshKey";

@@ -105,13 +105,14 @@ export function CommandPalette({
         <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <RadixDialog.Content
           aria-label="Command palette"
-          className="fixed top-[14vh] left-1/2 z-50 w-[calc(100vw-32px)] max-w-[600px] -translate-x-1/2 overflow-hidden rounded-panel border border-line-strong bg-elevated shadow-2xl shadow-black/70"
+          className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-32px)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-panel border border-line-strong bg-elevated shadow-2xl shadow-black/70"
         >
           <RadixDialog.Title className="sr-only">
             Command palette
           </RadixDialog.Title>
           <Command
             loop
+            className="flex min-h-0 flex-1 flex-col"
             filter={(value, search) => {
               if (!search) return 1;
               return value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
@@ -122,7 +123,7 @@ export function CommandPalette({
               placeholder="Search hosts, projects, and commands…"
               className="h-12 w-full border-b border-line bg-transparent px-4 text-[15px] text-fg outline-none placeholder:text-fg-subtle"
             />
-            <Command.List className="max-h-[50vh] overflow-y-auto p-1.5">
+            <Command.List className="min-h-0 flex-1 overflow-y-auto p-1.5">
               <Command.Empty className="px-3 py-8 text-center text-ui text-fg-subtle">
                 No matching command
               </Command.Empty>

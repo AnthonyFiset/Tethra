@@ -384,7 +384,7 @@ export function ProjectFormModal({
               </span>
             </div>
 
-            <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border border-line bg-base p-1">
+            <div className="flex flex-col gap-1 rounded-md border border-line bg-base p-1">
               {activeAgents.map((agent) => {
                 const missing =
                   probeReady &&

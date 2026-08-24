@@ -255,7 +255,8 @@ export function SettingsModal({
       title="Settings"
       titleSrOnly
       width="xl"
-      contentClassName="!max-h-[85vh] !p-0 overflow-hidden"
+      scrollBody={false}
+      contentClassName="h-[85vh] p-0"
     >
       {body}
     </Dialog>
@@ -282,12 +283,7 @@ function SettingsBody({
   tall: boolean;
 }): React.JSX.Element {
   return (
-    <div
-      className={cn(
-        "flex h-full min-h-0",
-        tall ? "min-h-0" : "max-h-[85vh] min-h-[420px]",
-      )}
-    >
+    <div className="flex h-full min-h-0">
       <nav
         aria-label="Settings sections"
         className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface p-2"
