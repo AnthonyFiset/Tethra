@@ -76,6 +76,14 @@
     background-color: var(--terminal-bg, #0d0d0d) !important;
   }
 
+  [data-terminal-surface] .xterm {
+    height: 100%;
+  }
+
+  [data-terminal-surface] .xterm-viewport {
+    overflow-y: auto;
+  }
+
   /* The whole surface is a tool, not a document. */
   * {
     user-select: none;
@@ -179,16 +187,40 @@
   }
 }
 
-/* M12 — OSC 133 block chrome (session-reference.html) */
-.tethra-block-ok,
-.tethra-block-failed,
-.tethra-block-active,
-.tethra-block-collapsed {
-  z-index: 1;
-  position: relative;
+/* M12 — OSC 133 block chrome via viewport overlay (session-reference.html) */
+.tethra-block-overlay-root {
+  z-index: 2;
+  pointer-events: none;
 }
 
-.tethra-block-rail {
+.tethra-block-overlay-frame,
+.tethra-block-overlay-header,
+.tethra-block-overlay-collapsed,
+.tethra-block-overlay-waiting {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  box-sizing: border-box;
+}
+
+.tethra-block-overlay-frame {
+  pointer-events: none;
+  border-radius: 10px;
+}
+
+.tethra-block-overlay-active {
+  border: 1px solid rgba(61, 142, 240, 0.5);
+  background: rgba(61, 142, 240, 0.05);
+  box-shadow: 0 0 0 3px rgba(61, 142, 240, 0.06);
+}
+
+.tethra-block-overlay-ok,
+.tethra-block-overlay-failed {
+  border: 0;
+  background: transparent;
+}
+
+.tethra-block-overlay-rail {
   position: absolute;
   left: 0;
   top: 0;
@@ -197,7 +229,7 @@
   border-radius: 2px;
 }
 
-.tethra-block-header {
+.tethra-block-overlay-header {
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -206,6 +238,49 @@
   font-size: 11px;
   color: var(--color-fg-subtle);
   pointer-events: none;
+  height: 22px;
+}
+
+.tethra-block-overlay-menu {
+  position: absolute;
+  left: auto;
+  right: 10px;
+  width: 24px;
+  pointer-events: auto;
+}
+
+.tethra-block-overlay-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-radius: 8px;
+  color: var(--color-fg-subtle);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.tethra-block-overlay-chevron {
+  color: var(--color-fg-subtle);
+}
+
+.tethra-block-overlay-cmd {
+  color: var(--color-fg-muted);
+}
+
+.tethra-block-overlay-lines,
+.tethra-block-overlay-time {
+  font-size: 11px;
+}
+
+.tethra-block-overlay-spacer {
+  flex: 1;
+}
+
+.tethra-block-overlay-waiting {
+  pointer-events: auto;
 }
 
 .tethra-block-branch {
@@ -221,9 +296,6 @@
 }
 
 .tethra-block-menu-wrap {
-  position: absolute;
-  top: 9px;
-  right: 10px;
   pointer-events: auto;
 }
 
@@ -250,7 +322,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 6px 14px 4px 12px;
   padding: 8px 12px;
   border-radius: 8px;
   background: rgba(210, 153, 34, 0.09);
@@ -258,7 +329,6 @@
   font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--color-warning);
-  pointer-events: auto;
 }
 
 .tethra-block-waiting-dot {

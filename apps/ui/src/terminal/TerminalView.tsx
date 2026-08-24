@@ -7,8 +7,13 @@ import {
   clearTerminal,
   copyTerminalSelection,
   fitTerminal,
+  getTerminalInstance,
   getTerminalSelectionForCopy,
 } from "./registry";
+import {
+  scheduleBlockOverlaySync,
+  setBlockOverlayHost,
+} from "./blockOverlay";
 import { TerminalFindBar } from "./TerminalFindBar";
 
 interface TerminalViewProps {
@@ -63,11 +68,13 @@ export function TerminalView({
   chrome = "default",
 }: TerminalViewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
+    const overlay = overlayRef.current;
     if (!container) return;
 
     attachTerminal(sessionId, container);
@@ -75,13 +82,22 @@ export function TerminalView({
     const observer = new ResizeObserver(() => {
       if (!visible) return;
       window.clearTimeout(fitTimer);
-      fitTimer = window.setTimeout(() => fitTerminal(sessionId), 180);
+      fitTimer = window.setTimeout(() => {
+        fitTerminal(sessionId);
+        scheduleBlockOverlaySync(sessionId);
+      }, 180);
     });
     observer.observe(container);
+
+    const terminal = getTerminalInstance(sessionId);
+    if (terminal && overlay) {
+      setBlockOverlayHost(sessionId, overlay, terminal);
+    }
 
     return () => {
       observer.disconnect();
       window.clearTimeout(fitTimer);
+      setBlockOverlayHost(sessionId, null, null);
     };
   }, [sessionId, visible]);
 
@@ -169,10 +185,12 @@ export function TerminalView({
       <div
         ref={containerRef}
         aria-label="SSH terminal"
-        className={cn(
-          "size-full overflow-hidden px-3.5 py-2",
-          chrome === "session" && "pb-16",
-        )}
+        className="size-full overflow-hidden px-3.5 py-2"
+      />
+      <div
+        ref={overlayRef}
+        className="tethra-block-overlay-root absolute inset-0 overflow-hidden px-3.5 py-2"
+        aria-hidden="true"
       />
 
       <TerminalFindBar

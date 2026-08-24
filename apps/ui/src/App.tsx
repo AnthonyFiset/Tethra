@@ -278,6 +278,10 @@ function Workspace({
   const [sessionAttention, setSessionAttention] = useState<
     Record<string, SessionAttention>
   >({});
+  /** Attention keyed by attached PTY session id (host tabs without a running row). */
+  const [ptyAttention, setPtyAttention] = useState<
+    Record<string, SessionAttention>
+  >({});
   /** PTY session id → running session id (while attached). */
   const ptyToRunning = useRef(new Map<string, string>());
   const runningSessionsRef = useRef(runningSessions);
@@ -665,6 +669,17 @@ function Workspace({
       next: SessionAttention,
       source: string,
     ): void {
+      setPtyAttention((current) => {
+        const merged = mergeAttention(current[ptyId], next, source);
+        if (
+          current[ptyId]?.state === merged.state &&
+          current[ptyId]?.message === merged.message
+        ) {
+          return current;
+        }
+        return { ...current, [ptyId]: merged };
+      });
+
       const runningId = ptyToRunning.current.get(ptyId);
       if (!runningId) return;
       setSessionAttention((current) => {
@@ -1771,6 +1786,12 @@ function Workspace({
     transcripts.current.delete(sessionId);
     lastExitCodes.current.delete(sessionId);
     ptyToRunning.current.delete(sessionId);
+    setPtyAttention((current) => {
+      if (!(sessionId in current)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
     if (tab?.kind === "terminal" || tab?.kind === "local") {
       if (tab.projectId) {
         await persistProjectScrollback(sessionId, tab.projectId);
@@ -2322,9 +2343,11 @@ function Workspace({
                       const runningId = ptyToRunning.current.get(
                         tab.sessionId,
                       );
-                      const attention = runningId
+                      const runningAttention = runningId
                         ? sessionAttention[runningId]
                         : undefined;
+                      const attachedAttention = ptyAttention[tab.sessionId];
+                      const attention = attachedAttention ?? runningAttention;
                       const runningSession = runningId
                         ? runningSessions.find((s) => s.id === runningId)
                         : undefined;

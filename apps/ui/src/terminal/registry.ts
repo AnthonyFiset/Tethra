@@ -18,6 +18,7 @@ import {
   getTerminalScrollback,
 } from "../lib/prefs";
 import { disposeBlockTracker, flushBlockPhases, refreshActiveBlock } from "./blocks";
+import { scheduleBlockOverlaySync } from "./blockOverlay";
 import {
   SCROLLBACK_LINE_CAP,
   loadScrollbackSnapshot,
@@ -292,6 +293,7 @@ export function fitTerminal(sessionId: string): void {
   } catch {
     // The tab may be hidden or between layout passes.
   }
+  scheduleBlockOverlaySync(sessionId);
 }
 
 export function writeTerminal(
@@ -305,11 +307,13 @@ export function writeTerminal(
   if (bytes.length === 0) {
     flushBlockPhases(sessionId, record.terminal);
     refreshActiveBlock(sessionId, record.terminal);
+    scheduleBlockOverlaySync(sessionId);
     return;
   }
   record.terminal.write(bytes, () => {
     flushBlockPhases(sessionId, record.terminal);
     refreshActiveBlock(sessionId, record.terminal);
+    scheduleBlockOverlaySync(sessionId);
   });
 }
 

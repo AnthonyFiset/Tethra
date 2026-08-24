@@ -338,7 +338,7 @@ function HostTile({
 
   return (
     <div
-      className="group flex cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-[14px] transition-colors hover:border-line-strong"
+      className="group relative flex min-w-0 cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-[14px] transition-colors hover:border-line-strong"
       onClick={() => {
         if (!connecting) onConnect();
       }}
@@ -357,29 +357,28 @@ function HostTile({
       >
         {host.label.trim().charAt(0).toUpperCase() || "?"}
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 overflow-hidden">
         <span className="block truncate text-[12.5px] font-semibold text-fg">
           {host.label}
         </span>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+          <span className="truncate font-mono text-[11px] text-fg-subtle">
             {host.username}@{host.hostname}
             {host.port !== 22 ? `:${host.port}` : ""}
           </span>
-          {agentUp && (
+          {agentUp ? (
             <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10.5px] text-success">
               <span className="size-1.5 rounded-full bg-success" />
               agent up
             </span>
-          )}
-          {authChip && !agentUp && (
+          ) : authChip ? (
             <span className="shrink-0 whitespace-nowrap rounded-[5px] border border-line px-1.5 py-px text-[10px] text-fg-muted">
               {authChip}
             </span>
-          )}
+          ) : null}
         </div>
       </div>
-      <div className="hidden items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 md:flex">
+      <div className="absolute top-1/2 right-3 hidden -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 md:flex">
           <button
             type="button"
             title="Files"
