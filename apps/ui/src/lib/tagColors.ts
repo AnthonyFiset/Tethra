@@ -1,28 +1,31 @@
-/** Deterministic accent for tag/group tiles (host-identity palette). */
-const GROUP_PALETTE = [
-  { bg: "color-mix(in srgb, var(--color-accent) 14%, transparent)", fg: "#8bb8ff" },
-  { bg: "color-mix(in srgb, var(--color-success) 13%, transparent)", fg: "var(--color-success)" },
-  { bg: "color-mix(in srgb, var(--color-warning) 13%, transparent)", fg: "var(--color-warning)" },
-  { bg: "color-mix(in srgb, #a371f7 15%, transparent)", fg: "#a371f7" },
-  { bg: "color-mix(in srgb, #4dd0e1 14%, transparent)", fg: "#4dd0e1" },
-] as const;
-
-export function tagGroupColors(tag: string): { bg: string; fg: string } {
+/**
+ * Stable hue from a tag string — for the glyph only.
+ * Tile backgrounds stay neutral (`--color-elevated` / #1b1b1b).
+ */
+export function tagHue(tag: string): number {
   let hash = 0;
   for (let i = 0; i < tag.length; i += 1) {
     hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
   }
-  return GROUP_PALETTE[hash % GROUP_PALETTE.length]!;
+  return hash % 360;
 }
 
-/** Solid avatar background/text from a host accent color (v0.5 home tiles). */
+export function tagGroupColors(tag: string): { bg: string; fg: string } {
+  const hue = tagHue(tag);
+  return {
+    bg: "#1b1b1b",
+    fg: `hsl(${hue} 55% 62%)`,
+  };
+}
+
+/** Neutral tile + host accent on the letter (v0.5 home tiles). */
 export function hostTileAvatarStyle(color: string | null | undefined): {
   backgroundColor: string;
   color: string;
 } {
   const tint = color ?? "#3d8ef0";
   return {
-    backgroundColor: `color-mix(in srgb, ${tint} 22%, var(--color-base))`,
+    backgroundColor: "#1b1b1b",
     color: tint,
   };
 }

@@ -756,6 +756,11 @@ function Workspace({
           applyPtyAttention(sessionId, { state: "running" }, "activity");
         }
       } else if (event.kind === "attention") {
+        // Waiting banner + desktop notify share this path. Ignore silence —
+        // only BEL / OSC 9 / OSC 777 (sources bel|osc) arm waiting.
+        if (event.source === "silence") {
+          return;
+        }
         applyPtyAttention(
           sessionId,
           {

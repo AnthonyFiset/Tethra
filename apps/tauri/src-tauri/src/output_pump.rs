@@ -2,12 +2,13 @@
 //!
 //! Raw bytes are forwarded unchanged. OSC 133 markers and attention signals
 //! (BEL / OSC 9 / OSC 777) are parsed in parallel and emitted as structured
-//! events beside the stream. Output silence emits a low-priority waiting hint.
+//! events beside the stream. Waiting never comes from output silence — only
+//! those explicit agent signals (same path as desktop notifications).
 //!
 //! Events are broadcast on the app event bus so any OS window can attach to a
 //! session (multi-window presentation layer).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bytes::Bytes;
 use ssh_client_core::terminal::{AttentionKind, AttentionParser, BlockEvent, Osc133Parser};
@@ -21,8 +22,6 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(8);
 const MAX_CHUNK: usize = 64 * 1024;
 const MAX_PENDING: usize = 256 * 1024;
 const DROPPED_MARKER: &[u8] = b"\r\n\x1b[33m[output dropped: terminal fell behind]\x1b[0m\r\n";
-/// Lowest-priority waiting signal; never overrides an explicit BEL/OSC/exit.
-const SILENCE_SECS: u64 = 30;
 
 fn encode_b64(data: &[u8]) -> String {
     use base64::Engine;
@@ -32,14 +31,10 @@ fn encode_b64(data: &[u8]) -> String {
 pub async fn forward_output(session_id: Uuid, mut receiver: mpsc::Receiver<Bytes>, app: AppHandle) {
     let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut silence_tick = tokio::time::interval(Duration::from_secs(1));
-    silence_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut pending = Vec::with_capacity(MAX_CHUNK);
     let mut dropped = false;
     let mut osc133 = Osc133Parser::new();
     let mut attention = AttentionParser::new();
-    let mut last_output = Instant::now();
-    let mut silence_emitted = false;
     let session_id = session_id.to_string();
 
     loop {
@@ -47,9 +42,6 @@ pub async fn forward_output(session_id: Uuid, mut receiver: mpsc::Receiver<Bytes
             message = receiver.recv() => {
                 match message {
                     Some(data) => {
-                        last_output = Instant::now();
-                        silence_emitted = false;
-
                         // Emit data segments before each OSC 133 marker so the
                         // UI can place gutter markers after the right lines
                         // instead of collapsing every phase onto one write.
@@ -94,22 +86,6 @@ pub async fn forward_output(session_id: Uuid, mut receiver: mpsc::Receiver<Bytes
             }
             _ = ticker.tick(), if !pending.is_empty() => {
                 flush_one(&mut pending, &app, &session_id, &mut dropped);
-            }
-            _ = silence_tick.tick() => {
-                if !silence_emitted
-                    && last_output.elapsed() >= Duration::from_secs(SILENCE_SECS)
-                {
-                    silence_emitted = true;
-                    emit(
-                        &app,
-                        &session_id,
-                        TerminalEvent::Attention {
-                            state: AgentAttentionState::Waiting,
-                            message: None,
-                            source: "silence".into(),
-                        },
-                    );
-                }
             }
         }
     }

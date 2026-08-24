@@ -22,7 +22,7 @@ import type {
 } from "../lib/ipc";
 import { cn } from "../lib/cn";
 import {
-  attentionChipClass,
+  attentionDotClass,
   attentionLabel,
   type SessionAttention,
 } from "../lib/sessionAttention";
@@ -560,22 +560,25 @@ function RunningRow({
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-elevated text-success">
           <Radio size={14} />
         </span>
-        <span className="flex min-w-0 flex-col">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-ui font-medium text-fg">
-              {session.projectName}
+          <span className="flex min-w-0 flex-col">
+            <span className="flex items-center gap-1.5">
+              <span className="truncate text-ui font-medium text-fg">
+                {session.projectName}
+              </span>
+              <span
+                className="flex shrink-0 items-center gap-1 text-[10px] text-fg-muted"
+                title={
+                  attention?.noWatch
+                    ? (attention.message ?? "no watch on this host")
+                    : attention?.message
+                }
+              >
+                <span
+                  className={`size-1.5 rounded-full ${attentionDotClass(state)}`}
+                />
+                {attention?.noWatch ? "no watch" : attentionLabel(state)}
+              </span>
             </span>
-            <span
-              className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-medium tracking-wide uppercase ${attentionChipClass(state)}`}
-              title={
-                attention?.noWatch
-                  ? (attention.message ?? "no watch on this host")
-                  : attention?.message
-              }
-            >
-              {attention?.noWatch ? "no watch" : attentionLabel(state)}
-            </span>
-          </span>
           <span className="truncate text-micro text-fg-subtle">
             {opening
               ? "Reattaching…"

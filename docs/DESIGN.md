@@ -62,9 +62,19 @@ link, not a section).
 
 ## 5. Components
 
-- **Status chips** (running / waiting / done / failed / active / error) use
-  one shared chip component — same shape everywhere a state appears
-  (sessions, tunnels, agent forwarding, sync).
+- **Status indicators** are a small dot + plain text in `fg-muted` — same
+  shape everywhere a state appears (sessions, tunnels, agent forwarding,
+  sync, running list). **No tinted pill backgrounds** and **no colored
+  borders around status text.** Prefer copy like `● 1 active · agent on`
+  in a strip, not `"1 ACTIVE"` / `"AGENT ON"` chips.
+- **Icon tiles** (groups, rail, running list, host avatars) use a neutral
+  `#1b1b1b` / `--color-elevated` tile with the colored glyph or letter —
+  never a color-washed fill.
+- **The amber agent-waiting banner** (Review / “Waiting for you…”) is the
+  **one** allowed emphatic tinted status element. It fires only on a
+  genuine agent attention signal (BEL / OSC 9 / OSC 777) — never on an
+  idle prompt and never from silence alone. Check every status in its
+  **empty/idle** state, not only when active.
 - **Empty states** teach: one sentence of what the surface does + the
   primary action. Never a bare "No items."
 - **Errors** are plain language, name the fix, and never expose raw Rust
@@ -79,7 +89,8 @@ link, not a section).
 1. Is anything with live state or CRUD inside Settings? → violation of §1.
 2. Double scrollbars, dead trackpad zones, clipped content at 900×600? → §3.
 3. Hex colors or ad-hoc spacing in changed components? → §4.
-4. States shown with bespoke one-off styling instead of chips? → §5.
+4. Tinted status pills, color-washed icon tiles, or waiting banner on idle? → §5.
 5. New feature reachable from both primary nav and command palette? → §2.
 6. Empty state and error copy present and instructive? → §5.
 7. Terminal width stolen by new chrome while a session is focused? → §2.
+8. Status indicators checked in their empty/idle state (not only active)? → §5.

@@ -12,9 +12,8 @@ interface HostAvatarProps {
 }
 
 /**
- * Colour is the ambient host identity cue: the same hue appears on the rail,
- * the tab, and the terminal hairline so the active machine is recognisable
- * without reading a label.
+ * Neutral elevated tile + colored glyph/letter. Host hue stays in the
+ * glyph (and tab/terminal hairline), not a color-washed fill.
  */
 export function HostAvatar({
   label,
@@ -29,15 +28,11 @@ export function HostAvatar({
   return (
     <span
       className={cn(
-        "inline-grid shrink-0 place-items-center rounded-[6px] border font-semibold",
+        "inline-grid shrink-0 place-items-center rounded-[6px] border border-line bg-elevated font-semibold",
         size === "sm" ? "size-5 text-[10px]" : "size-7 text-[11px]",
         className,
       )}
-      style={{
-        color: tint,
-        backgroundColor: `color-mix(in srgb, ${tint} 16%, transparent)`,
-        borderColor: `color-mix(in srgb, ${tint} 30%, transparent)`,
-      }}
+      style={{ color: tint }}
       aria-hidden="true"
     >
       {kind === "sftp" ? (

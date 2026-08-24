@@ -478,7 +478,7 @@ function HostTile({
             {host.port !== 22 ? `:${host.port}` : ""}
           </span>
           {agentUp ? (
-            <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10.5px] text-success">
+            <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10.5px] text-fg-muted">
               <span className="size-1.5 rounded-full bg-success" />
               agent up
             </span>

@@ -220,9 +220,7 @@ export function LeftRail({
                   <span className="flex-1" />
                   {badge != null &&
                     (item.id === "tunnels" ? (
-                      <span className="flex h-[15px] min-w-4 items-center justify-center rounded-lg bg-accent/15 px-1 text-[10px] font-semibold text-[#8bb8ff]">
-                        {badge}
-                      </span>
+                      <span className="text-[10.5px] text-fg-muted">{badge}</span>
                     ) : (
                       <span className="text-[10.5px] text-fg-subtle">{badge}</span>
                     ))}
@@ -261,13 +259,12 @@ export function LeftRail({
                   onClick={() => onOpenRunning(item)}
                   className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
                 >
-                  <span
-                    className="grid size-5 shrink-0 place-items-center rounded-md"
-                    style={{
-                      backgroundColor: `color-mix(in srgb, ${tint} 15%, transparent)`,
-                    }}
-                  >
-                    <TerminalSquare size={11} strokeWidth={2.4} style={{ color: tint }} />
+                  <span className="grid size-5 shrink-0 place-items-center rounded-md bg-elevated">
+                    <TerminalSquare
+                      size={11}
+                      strokeWidth={2.4}
+                      style={{ color: tint }}
+                    />
                   </span>
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   <span

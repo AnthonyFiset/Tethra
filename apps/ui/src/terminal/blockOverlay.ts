@@ -247,9 +247,17 @@ function renderBlock(
       : failed
         ? "tethra-block-overlay-frame tethra-block-overlay-failed"
         : "tethra-block-overlay-frame tethra-block-overlay-ok";
+    // Frame hugs the text column but stops before the ⋮; outline-offset
+    // (CSS) puts the blue stroke in the gutter outside the box.
+    const frameLeft = bounds.left;
+    const frameRightPad = MENU_COLUMN_WIDTH + 4;
+    const frameWidth = Math.max(
+      48,
+      bounds.width - frameRightPad,
+    );
     frame.style.top = `${bounds.top}px`;
     frame.style.height = `${bounds.height}px`;
-    applyHorizontal(frame, bounds.left, bounds.width);
+    applyHorizontal(frame, frameLeft, frameWidth);
 
     const rail = document.createElement("div");
     rail.className = "tethra-block-overlay-rail";
