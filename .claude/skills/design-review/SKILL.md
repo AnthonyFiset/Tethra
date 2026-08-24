@@ -60,17 +60,22 @@ every surface, using Playwright:
 ## 2c. Flow pass (MANDATORY — round trips, not single screens)
 
 State-transition bugs only appear across navigations. Walk these round
-trips and assert state survives each one:
+trips in `dev:web` (Playwright) and assert state survives each one:
 
-- Home → open a session → back to home: the open session must remain
-  visible and reachable (tab strip and/or RUNNING list), RUNNING intact.
+- **Home → session → home**: open a host, go back via Home/Hosts/logo;
+  the open session must remain reachable via the **titlebar tab strip on
+  home** and the **RUNNING** rail list (which must include live open tabs,
+  not only detached/agent sessions).
+- **Way back from every view**: collapsed-rail logo → Launcher (not Vault);
+  Vault has its own icon; every surface has an obvious return to home.
+- **No silent duplicate sessions**: click a host that already has a tab →
+  focuses that tab; new session only via tab-strip `+` or ⌘/Ctrl-click.
 - Open a surface from a session → close it → still in the session.
-- Open the same host twice: no silent duplicate sessions unless that is
-  deliberate and visible.
 - Close a tab → land somewhere sensible with state intact.
-- After every flow: console clean, and the "way back" from every view is
-  obvious (a view you can enter but not leave, or whose entry control
-  does something else, is a blocker).
+- After every flow: console clean.
+
+A view you can enter but not leave, or whose entry control does something
+else (logo opens Vault), is a blocker.
 
 ## 3. Audit
 

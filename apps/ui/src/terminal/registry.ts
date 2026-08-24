@@ -142,7 +142,9 @@ export function createTerminal(
   const existing = terminals.get(sessionId);
   if (existing) return existing;
 
-  // Font metrics must come from Terminal options (not CSS). Reference: 12.5px.
+  // Font metrics must come from Terminal options (not CSS). Reference: 12.5px
+  // → ~16px cells at lineHeight 1.25. Re-assert after open/fit — xterm 6's
+  // TextMetrics path can measure a fallback face before JetBrains loads.
   const fontSize = getTerminalFontSize();
   const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
   const lineHeight = getTerminalLineHeight();
@@ -167,11 +169,7 @@ export function createTerminal(
     scrollOnUserInput: true,
     theme: themeFromAppTokens(),
   });
-  // Re-assert after construction — some addons/themes can clobber options.
-  terminal.options.fontSize = fontSize;
-  terminal.options.fontFamily = fontFamily;
-  terminal.options.lineHeight = lineHeight;
-  applyFontFeatures(terminal);
+  applyTerminalFont(terminal, fontSize, fontFamily, lineHeight);
   // Dev harness: expose for overlay/font debugging in the browser console.
   if (import.meta.env.VITE_TETHRA_MOCK === "1") {
     (window as unknown as { __tethraTerm?: Terminal }).__tethraTerm = terminal;
@@ -297,28 +295,36 @@ export function attachTerminal(
   // Wait for JetBrains Mono to resolve before measuring cells / fitting —
   // otherwise first paint uses a fallback face and cell height drifts.
   void (async () => {
+    const size = getTerminalFontSize();
+    const family = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+    const lineHeight = getTerminalLineHeight();
     try {
-      await document.fonts.load(
-        `${getTerminalFontSize()}px "JetBrains Mono Variable"`,
-      );
+      await document.fonts.load(`${size}px "JetBrains Mono Variable"`);
+      await document.fonts.load(`${size}px ${family}`);
       await document.fonts.ready;
     } catch {
       // ignore
     }
     if (!terminals.has(sessionId)) return;
-    const size = getTerminalFontSize();
-    const family = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+    applyTerminalFont(record.terminal, size, family, lineHeight);
+    // Nudge CharSizeService: option change is the only public remasure trigger.
+    record.terminal.options.fontSize = size + 0.001;
     record.terminal.options.fontSize = size;
-    record.terminal.options.fontFamily = family;
-    record.terminal.options.lineHeight = getTerminalLineHeight();
     fitTerminal(sessionId);
     try {
       record.terminal.refresh(0, record.terminal.rows - 1);
     } catch {
       // ignore
     }
+    logTerminalMetrics(sessionId, record.terminal);
     scheduleBlockOverlaySync(sessionId);
   })();
+  applyTerminalFont(
+    record.terminal,
+    getTerminalFontSize(),
+    `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`,
+    getTerminalLineHeight(),
+  );
   fitTerminal(sessionId);
   record.terminal.focus();
 }
@@ -366,21 +372,83 @@ export function applyTerminalPrefs(): void {
   const cursorBlink = getTerminalCursorBlink();
   const cursorStyle = getTerminalCursorStyle();
   const scrollback = getTerminalScrollback();
-  for (const record of terminals.values()) {
-    record.terminal.options.fontSize = fontSize;
-    record.terminal.options.fontFamily = fontFamily;
-    record.terminal.options.lineHeight = lineHeight;
+  for (const [sessionId, record] of terminals) {
+    applyTerminalFont(record.terminal, fontSize, fontFamily, lineHeight);
     record.terminal.options.cursorBlink = cursorBlink;
     record.terminal.options.cursorStyle = cursorStyle;
     record.terminal.options.scrollback = scrollback;
-    applyFontFeatures(record.terminal);
     if (record.terminal.element) {
       try {
         record.fit.fit();
       } catch {
         // hidden
       }
+      logTerminalMetrics(sessionId, record.terminal);
     }
+  }
+}
+
+function applyTerminalFont(
+  terminal: Terminal,
+  fontSize: number,
+  fontFamily: string,
+  lineHeight: number,
+): void {
+  terminal.options.fontSize = fontSize;
+  terminal.options.fontFamily = fontFamily;
+  terminal.options.lineHeight = lineHeight;
+  applyFontFeatures(terminal);
+  const el = terminal.element;
+  if (el) {
+    // Keep the host + helper textarea in lockstep with Terminal options so
+    // CharSizeService / WebGL don't inherit a smaller cascade font-size.
+    el.style.fontSize = `${fontSize}px`;
+    el.style.fontFamily = fontFamily;
+    el.style.lineHeight = String(lineHeight);
+    const helper = el.querySelector(
+      ".xterm-helper-textarea",
+    ) as HTMLElement | null;
+    if (helper) {
+      helper.style.fontSize = `${fontSize}px`;
+      helper.style.fontFamily = fontFamily;
+      helper.style.lineHeight = `${fontSize * lineHeight}px`;
+    }
+  }
+}
+
+function logTerminalMetrics(sessionId: string, terminal: Terminal): void {
+  if (import.meta.env.VITE_TETHRA_MOCK !== "1") return;
+  try {
+    const core = (
+      terminal as unknown as {
+        _core?: {
+          _renderService?: {
+            dimensions?: {
+              css?: { cell?: { height?: number; width?: number } };
+              device?: { cell?: { height?: number } };
+            };
+          };
+          _charSizeService?: { width?: number; height?: number };
+        };
+      }
+    )._core;
+    const dims = core?._renderService?.dimensions;
+    const helper = terminal.element?.querySelector(
+      ".xterm-helper-textarea",
+    ) as HTMLElement | null;
+    const helperH = helper?.getBoundingClientRect().height;
+    // eslint-disable-next-line no-console
+    console.info("[tethra:term-metrics]", {
+      sessionId,
+      fontSize: terminal.options.fontSize,
+      lineHeight: terminal.options.lineHeight,
+      charServiceH: core?._charSizeService?.height,
+      cssCellH: dims?.css?.cell?.height,
+      deviceCellH: dims?.device?.cell?.height,
+      helperH,
+    });
+  } catch {
+    // ignore
   }
 }
 

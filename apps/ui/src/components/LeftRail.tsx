@@ -3,26 +3,35 @@ import {
   Folder,
   KeyRound,
   Lightbulb,
+  Lock,
   Settings,
   TerminalSquare,
   Upload,
 } from "lucide-react";
 import type {
   HostSummaryDto,
-  RunningSessionSummaryDto,
   SyncStatusDto,
   VaultStatusDto,
 } from "../lib/ipc";
+import type { AgentAttentionState } from "../lib/generated/AgentAttentionState";
 import { cn } from "../lib/cn";
-import {
-  attentionDotClass,
-  type SessionAttention,
-} from "../lib/sessionAttention";
-import { hostTileAvatarStyle } from "../lib/tagColors";
+import { attentionDotClass } from "../lib/sessionAttention";
 import { Logo } from "./Logo";
 import { Tooltip } from "./ui/Tooltip";
 
 export type RailNavId = "hosts" | "tunnels" | "identities" | "files" | "assist";
+
+/** Unified RUNNING row: open live tabs and/or detached vault sessions. */
+export type RailRunningItem = {
+  key: string;
+  label: string;
+  hostId: string;
+  /** Open PTY tab session id when this row is a live tab. */
+  openSessionId?: string;
+  /** Vault running-session id when this row is agent-registered. */
+  runningId?: string;
+  attentionState?: AgentAttentionState;
+};
 
 const NAV: {
   id: RailNavId;
@@ -68,14 +77,14 @@ interface LeftRailProps {
   syncStatus?: SyncStatusDto | null;
   hostCount: number;
   activeTunnelCount: number;
-  runningSessions: RunningSessionSummaryDto[];
-  sessionAttention?: Record<string, SessionAttention>;
+  runningItems: RailRunningItem[];
   hosts: HostSummaryDto[];
   activeNav: RailNavId;
   onNav: (nav: RailNavId) => void;
+  onGoHome: () => void;
   onOpenVault: () => void;
   onSettings: () => void;
-  onReattach: (session: RunningSessionSummaryDto) => void;
+  onOpenRunning: (item: RailRunningItem) => void;
 }
 
 function vaultStateLine(
@@ -100,14 +109,14 @@ export function LeftRail({
   syncStatus,
   hostCount,
   activeTunnelCount,
-  runningSessions,
-  sessionAttention,
+  runningItems,
   hosts,
   activeNav,
   onNav,
+  onGoHome,
   onOpenVault,
   onSettings,
-  onReattach,
+  onOpenRunning,
 }: LeftRailProps): React.JSX.Element {
   const vaultLine = vaultStateLine(vaultStatus, syncStatus);
 
@@ -118,34 +127,53 @@ export function LeftRail({
         collapsed ? "w-rail-collapsed px-1.5" : "w-rail px-2.5",
       )}
     >
-      <Tooltip content="Vault" side="right">
-        <button
-          type="button"
-          onClick={onOpenVault}
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 py-2 text-left transition-colors hover:border-line-strong hover:bg-hover",
-            collapsed && "justify-center px-0",
-          )}
-        >
-          <Logo size={18} className="shrink-0" />
-          {!collapsed && (
-            <>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-[12px] font-semibold text-fg">
-                  Personal vault
-                </span>
-                <span className="flex items-center gap-1.5 text-[10.5px] text-fg-subtle">
-                  <span
-                    className={cn("size-1.5 shrink-0 rounded-full", vaultLine.dotClass)}
-                  />
-                  {vaultLine.text}
-                </span>
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-1">
+          <Tooltip content="Home" side="right">
+            <button
+              type="button"
+              aria-label="Home"
+              onClick={onGoHome}
+              className="grid size-9 cursor-pointer place-items-center rounded-[9px] border border-line bg-surface text-fg transition-colors hover:border-line-strong hover:bg-hover"
+            >
+              <Logo size={18} />
+            </button>
+          </Tooltip>
+          <Tooltip content="Vault" side="right">
+            <button
+              type="button"
+              aria-label="Vault"
+              onClick={onOpenVault}
+              className="grid size-9 cursor-pointer place-items-center rounded-lg text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+            >
+              <Lock size={15} strokeWidth={2} />
+            </button>
+          </Tooltip>
+        </div>
+      ) : (
+        <Tooltip content="Vault" side="right">
+          <button
+            type="button"
+            aria-label="Vault"
+            onClick={onOpenVault}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 py-2 text-left transition-colors hover:border-line-strong hover:bg-hover"
+          >
+            <Logo size={18} className="shrink-0" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-[12px] font-semibold text-fg">
+                Personal vault
               </span>
-              <ChevronDown size={12} className="shrink-0 text-fg-subtle" />
-            </>
-          )}
-        </button>
-      </Tooltip>
+              <span className="flex items-center gap-1.5 text-[10.5px] text-fg-subtle">
+                <span
+                  className={cn("size-1.5 shrink-0 rounded-full", vaultLine.dotClass)}
+                />
+                {vaultLine.text}
+              </span>
+            </span>
+            <ChevronDown size={12} className="shrink-0 text-fg-subtle" />
+          </button>
+        </Tooltip>
+      )}
 
       <nav
         aria-label="Primary"
@@ -164,6 +192,7 @@ export function LeftRail({
             <button
               key={item.id}
               type="button"
+              aria-label={item.label}
               onClick={() => onNav(item.id)}
               className={cn(
                 "flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12.5px] transition-colors",
@@ -217,19 +246,19 @@ export function LeftRail({
           <div className="flex shrink-0 items-center px-2.5 pb-1.5 text-[10px] font-semibold tracking-[0.09em] text-fg-subtle uppercase">
             Running
             <span className="flex-1" />
-            <span>{runningSessions.length}</span>
+            <span>{runningItems.length}</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {runningSessions.map((session) => {
-              const host = hosts.find((h) => h.id === session.hostId);
+            {runningItems.map((item) => {
+              const host = hosts.find((h) => h.id === item.hostId);
               const tint = host?.color ?? "#3d8ef0";
-              const attention = sessionAttention?.[session.id];
-              const state = attention?.state ?? "running";
+              const state = item.attentionState ?? "running";
               return (
                 <button
-                  key={session.id}
+                  key={item.key}
                   type="button"
-                  onClick={() => onReattach(session)}
+                  aria-label={item.label}
+                  onClick={() => onOpenRunning(item)}
                   className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
                 >
                   <span
@@ -240,7 +269,7 @@ export function LeftRail({
                   >
                     <TerminalSquare size={11} strokeWidth={2.4} style={{ color: tint }} />
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{session.projectName}</span>
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   <span
                     className={cn("size-[7px] shrink-0 rounded-full", attentionDotClass(state))}
                   />
@@ -251,13 +280,13 @@ export function LeftRail({
         </div>
       )}
 
-      {collapsed && runningSessions.length > 0 && (
-        <Tooltip
-          content={`${runningSessions.length} running`}
-          side="right"
-        >
-          <div className="mt-3 grid size-9 place-items-center rounded-lg text-fg-subtle">
-            <RadioDot count={runningSessions.length} />
+      {collapsed && runningItems.length > 0 && (
+        <Tooltip content={`${runningItems.length} running`} side="right">
+          <div
+            className="mt-3 grid size-9 place-items-center rounded-lg text-fg-subtle"
+            aria-label={`${runningItems.length} running`}
+          >
+            <RadioDot count={runningItems.length} />
           </div>
         </Tooltip>
       )}
@@ -266,6 +295,7 @@ export function LeftRail({
         <Tooltip content="Settings" side="right">
           <button
             type="button"
+            aria-label="Settings"
             onClick={onSettings}
             className={cn(
               "flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-fg-subtle transition-colors hover:bg-hover hover:text-fg",

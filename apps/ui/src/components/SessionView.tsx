@@ -87,7 +87,7 @@ export function SessionView({
         gitBranch={gitBranch}
         meta={metaParts.length > 0 ? metaParts.join(" · ") : undefined}
       />
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-visible">
         <TerminalView
           sessionId={sessionId}
           active={active}

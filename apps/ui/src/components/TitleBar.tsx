@@ -97,7 +97,7 @@ export function TitleBar({
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   void closeMenu;
 
-  const showTabs = inWorkspace && tabs.length > 0;
+  const showTabs = tabs.length > 0;
 
   return (
     <header className="titlebar flex h-10 shrink-0 items-center gap-2 border-b border-elevated bg-rail px-3.5">
@@ -109,7 +109,7 @@ export function TitleBar({
         <TabBar
           variant="titlebar"
           tabs={tabs}
-          activeId={activeTabId}
+          activeId={inWorkspace ? activeTabId : undefined}
           onSelect={onSelectTab}
           onClose={onCloseTab}
           onCloseOthers={onCloseOtherTabs}

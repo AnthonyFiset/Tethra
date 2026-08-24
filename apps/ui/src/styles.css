@@ -82,6 +82,12 @@
        the JetBrains Mono face (xterm 6 WebGL otherwise inherits body sans). */
     font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
     font-size: 12.5px;
+    line-height: 1.25;
+  }
+
+  [data-terminal-surface] .xterm-helper-textarea {
+    font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace !important;
+    font-size: 12.5px !important;
   }
 
   [data-terminal-surface] .xterm-viewport {
@@ -240,7 +246,7 @@
 
 .tethra-block-overlay-waiting {
   pointer-events: auto;
-  z-index: 2;
+  z-index: 5;
 }
 
 .tethra-block-overlay-header {
@@ -304,12 +310,18 @@
   gap: 8px;
   padding: 8px 12px;
   border-radius: 8px;
-  background: rgba(13, 13, 13, 0.92);
-  border: 1px solid rgba(210, 153, 34, 0.3);
-  box-shadow: inset 0 0 0 999px rgba(210, 153, 34, 0.09);
+  /* Fully opaque — translucent fill let buffer glyphs show through. */
+  background: #0d0d0d;
+  border: 1px solid rgba(210, 153, 34, 0.45);
+  box-shadow: inset 0 0 0 999px rgba(210, 153, 34, 0.12);
   font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--color-warning);
+}
+
+.tethra-block-waiting-compact {
+  padding: 4px 10px;
+  font-size: 11.5px;
 }
 
 .tethra-block-waiting-dot {

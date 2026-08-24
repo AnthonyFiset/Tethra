@@ -21,8 +21,7 @@ const pendingSync = new Map<string, number>();
 
 /** Reserve right edge for ⋮ menu column — timestamps stop here. */
 const MENU_COLUMN_WIDTH = 34;
-/** Banner Review sits left of the ⋮ column. */
-const BANNER_HEIGHT = 36;
+/** Gap between last block text row and the waiting banner. */
 const BANNER_GAP = 4;
 
 export function setBlockOverlayHost(
@@ -267,27 +266,34 @@ function renderBlock(
   root.appendChild(menu);
 
   if (isActive && snapshot.context.waiting) {
-    // Anchor below the last *text* line so trailing empty cursor rows don't
-    // push the banner off-screen (which used to clamp it over block content).
+    // Sit strictly below the last text row. Near the viewport bottom, use a
+    // compact banner so Review stays on-screen without covering glyphs.
     const contentLine = lastContentLine(
       terminal,
       block.promptLine,
       block.endLine,
     );
     const contentRect = lineRect(terminal, root, contentLine);
+    const endRect = lineRect(terminal, root, block.endLine);
     if (contentRect) {
-      const maxTop = root.clientHeight - BANNER_HEIGHT - 4;
-      let bannerTop = contentRect.top + contentRect.height + BANNER_GAP;
-      // Never pull the banner up over the last text line — clip off the
-      // bottom of the overlay instead of covering buffer glyphs.
-      if (bannerTop > maxTop) {
-        bannerTop = Math.max(contentRect.top + contentRect.height + 1, maxTop);
+      const minTop = contentRect.top + contentRect.height + BANNER_GAP;
+      let bannerTop =
+        endRect && endRect.top >= contentRect.top
+          ? endRect.top + endRect.height + BANNER_GAP
+          : minTop;
+      bannerTop = Math.max(bannerTop, minTop);
+
+      const room = root.clientHeight - bannerTop;
+      const compact = room < 44;
+      const bannerH = compact ? 28 : 40;
+      const maxTop = root.clientHeight - bannerH - 2;
+      if (bannerTop > maxTop && maxTop >= minTop) {
+        bannerTop = maxTop;
       }
-      if (bannerTop < contentRect.top + contentRect.height) {
-        bannerTop = contentRect.top + contentRect.height + 1;
-      }
+
       if (bannerTop >= 0) {
         const banner = buildWaitingBanner(snapshot);
+        if (compact) banner.classList.add("tethra-block-waiting-compact");
         banner.style.top = `${bannerTop}px`;
         banner.style.left = `${prompt.left}px`;
         banner.style.width = `${Math.max(120, prompt.width - MENU_COLUMN_WIDTH - 10)}px`;

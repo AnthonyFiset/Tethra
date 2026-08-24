@@ -29,7 +29,7 @@ interface LauncherProps {
   connectingHostId?: string;
   openingFilesHostId?: string;
   openingProjectId?: string;
-  onConnect: (host: HostSummaryDto) => void;
+  onConnect: (host: HostSummaryDto, opts?: { forceNew?: boolean }) => void;
   onFiles: (host: HostSummaryDto) => void;
   onAgent: (host: HostSummaryDto) => void;
   onEditHost: (host: HostSummaryDto) => void;
@@ -345,7 +345,7 @@ export function Launcher({
                     connecting={connectingHostId === host.id}
                     openingFiles={openingFilesHostId === host.id}
                     agentUp={(runningByHost.get(host.id) ?? 0) > 0}
-                    onConnect={() => onConnect(host)}
+                    onConnect={(forceNew) => onConnect(host, { forceNew })}
                     onFiles={() => onFiles(host)}
                     onEdit={() => onEditHost(host)}
                     onDelete={() => onDeleteHost(host)}
@@ -382,7 +382,7 @@ function HostTile({
   connecting: boolean;
   openingFiles: boolean;
   agentUp: boolean;
-  onConnect: () => void;
+  onConnect: (forceNew?: boolean) => void;
   onFiles: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -398,17 +398,18 @@ function HostTile({
   return (
     <div
       className="group relative flex min-w-0 cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-[14px] transition-colors hover:border-line-strong hover:bg-hover"
-      onClick={() => {
-        if (!connecting) onConnect();
+      onClick={(event) => {
+        if (!connecting) onConnect(event.metaKey || event.ctrlKey);
       }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          if (!connecting) onConnect();
+          if (!connecting) onConnect(event.metaKey || event.ctrlKey);
         }
       }}
       role="button"
       tabIndex={0}
+      title="Open session · ⌘/Ctrl-click for a new session"
     >
       <span
         className="grid size-9 shrink-0 place-items-center rounded-[10px] text-sm font-bold"

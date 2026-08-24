@@ -7,7 +7,11 @@ import {
   parseQuickConnect,
   type HostDraft,
 } from "./components/Launcher";
-import { LeftRail, type RailNavId } from "./components/LeftRail";
+import {
+  LeftRail,
+  type RailNavId,
+  type RailRunningItem,
+} from "./components/LeftRail";
 import { HostAvatar, DEFAULT_HOST_COLOR } from "./components/HostAvatar";
 import { Logo } from "./components/Logo";
 import {
@@ -536,6 +540,7 @@ function Workspace({
   function handleRailNav(nav: RailNavId): void {
     setRailNav(nav);
     if (nav === "hosts") {
+      closeSurface();
       goLauncher();
       return;
     }
@@ -1187,7 +1192,24 @@ function Workspace({
     setEditor("new");
   }
 
-  async function connect(host: HostSummaryDto): Promise<void> {
+  async function connect(
+    host: HostSummaryDto,
+    opts?: { forceNew?: boolean },
+  ): Promise<void> {
+    // Focus an already-open terminal for this host unless the caller asks
+    // for a new session (tab-strip +, modifier).
+    if (!opts?.forceNew) {
+      const existing = tabsRef.current.find(
+        (tab) => tab.hostId === host.id && tab.kind === "terminal",
+      );
+      if (existing) {
+        activateSession(existing.sessionId);
+        enterWorkspace();
+        focusTerminal(existing.sessionId);
+        return;
+      }
+    }
+
     setError(undefined);
     setConnectingHostId(host.id);
     try {
@@ -2111,6 +2133,54 @@ function Workspace({
     [tabs, hosts, projects, sessionAttention],
   );
 
+  /** RUNNING rail: live open tabs first, then detached vault sessions. */
+  const railRunningItems = useMemo((): RailRunningItem[] => {
+    const items: RailRunningItem[] = [];
+    const openRunningIds = new Set<string>();
+
+    for (const tab of tabs) {
+      if (tab.kind !== "terminal" && tab.kind !== "local") continue;
+      const host =
+        tab.hostId !== "local"
+          ? hosts.find((entry) => entry.id === tab.hostId)
+          : undefined;
+      const project = tab.projectId
+        ? projects.find((entry) => entry.id === tab.projectId)
+        : undefined;
+      const runningId = ptyToRunning.current.get(tab.sessionId);
+      if (runningId) openRunningIds.add(runningId);
+      items.push({
+        key: `open:${tab.sessionId}`,
+        label: project?.name ?? host?.label ?? tab.title,
+        hostId: tab.hostId,
+        openSessionId: tab.sessionId,
+        runningId,
+        attentionState: runningId
+          ? sessionAttention[runningId]?.state
+          : undefined,
+      });
+    }
+
+    for (const session of runningSessions) {
+      if (openRunningIds.has(session.id)) continue;
+      if (
+        session.projectId &&
+        tabs.some((tab) => tab.projectId === session.projectId)
+      ) {
+        continue;
+      }
+      items.push({
+        key: `detached:${session.id}`,
+        label: session.projectName,
+        hostId: session.hostId,
+        runningId: session.id,
+        attentionState: sessionAttention[session.id]?.state,
+      });
+    }
+
+    return items;
+  }, [tabs, hosts, projects, runningSessions, sessionAttention]);
+
   // Tab selection is source of truth for what to show. Layout only wins when
   // it's a real split that still contains the active session.
   const effectiveLayout = (() => {
@@ -2159,8 +2229,16 @@ function Workspace({
           void moveActiveToNewWindow();
         }}
         onNewTab={() => {
-          if (hosts[0]) void connect(hosts[0]);
-          else goLauncher();
+          const active = activeId
+            ? tabsRef.current.find((tab) => tab.sessionId === activeId)
+            : undefined;
+          const hostId = active?.hostId;
+          const host =
+            hostId && hostId !== "local"
+              ? hosts.find((entry) => entry.id === hostId)
+              : hosts[0];
+          if (host) void connect(host, { forceNew: true });
+          else void openLocal();
         }}
         onOpenLocal={() => void openLocal()}
         onSplitRight={() => void splitPane("horizontal")}
@@ -2174,7 +2252,7 @@ function Workspace({
         onChangePassword={() => openSurface("vault")}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
-        onGoLauncher={inWorkspace ? goLauncher : undefined}
+        onGoLauncher={goLauncher}
       />
 
       <UpdateBanner />
@@ -2186,8 +2264,7 @@ function Workspace({
           syncStatus={syncInfo}
           hostCount={hosts.length}
           activeTunnelCount={activeTunnelCount}
-          runningSessions={runningSessions}
-          sessionAttention={sessionAttention}
+          runningItems={railRunningItems}
           hosts={hosts}
           activeNav={
             activeSurface === "identities"
@@ -2197,9 +2274,20 @@ function Workspace({
                 : railNav
           }
           onNav={handleRailNav}
+          onGoHome={() => {
+            closeSurface();
+            goLauncher();
+          }}
           onOpenVault={() => openSurface("vault")}
           onSettings={() => openSettings("general")}
-          onReattach={(session) => void reattachSession(session)}
+          onOpenRunning={(item) => {
+            if (item.openSessionId) {
+              selectTab(item.openSessionId);
+              return;
+            }
+            const session = runningSessions.find((s) => s.id === item.runningId);
+            if (session) void reattachSession(session);
+          }}
         />
 
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2260,7 +2348,7 @@ function Workspace({
               connectingHostId={connectingHostId}
               openingFilesHostId={openingFilesHostId}
               openingProjectId={openingProjectId}
-              onConnect={(host) => void connect(host)}
+              onConnect={(host, opts) => void connect(host, opts)}
               onFiles={(host) => void openFiles(host)}
               onAgent={openAgentOnHost}
               onEditHost={setEditor}
