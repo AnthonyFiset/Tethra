@@ -567,8 +567,92 @@ const MUX_OK: MuxEnsureResultDto = {
   message: null,
 };
 
-const CANNED_OUTPUT =
-  "\r\n\x1b[32mdeploy@staging\x1b[0m:\x1b[34m~/app\x1b[0m$ ls\r\nREADME.md  package.json  src\r\n\x1b[32mdeploy@staging\x1b[0m:\x1b[34m~/app\x1b[0m$ ";
+function b64Terminal(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function emitMockSessionFixture(sessionId: string): void {
+  const cwdOsc = "\x1b]7;file://tethra-vm/home/anthony/srv/tethra\x07";
+  const branchOsc = "\x1b]133;G;main\x07";
+  const prompt =
+    "\r\n\x1b[32manthony@tethra-vm\x1b[0m:\x1b[34m~/srv/tethra\x1b[0m$ ";
+
+  let delay = 40;
+  const data = (text: string, extra = 80): void => {
+    const at = delay;
+    delay += extra;
+    setTimeout(() => {
+      emitTerminal(sessionId, {
+        kind: "data",
+        data: b64Terminal(text),
+        dropped: false,
+      });
+    }, at);
+  };
+  const block = (
+    phase: "commandStart" | "outputStart" | "commandEnd",
+    exit_code: number | null = null,
+    extra = 60,
+  ): void => {
+    const at = delay;
+    delay += extra;
+    setTimeout(() => {
+      emitTerminal(sessionId, {
+        kind: "block",
+        phase,
+        exit_code,
+      });
+    }, at);
+  };
+
+  data(`${cwdOsc}${branchOsc}${prompt}`, 120);
+
+  // Finished ok
+  data("git status\r\n");
+  block("commandStart");
+  data("On branch main\r\nnothing to commit, working tree clean\r\n");
+  block("outputStart");
+  block("commandEnd", 0);
+  data(prompt, 100);
+
+  // Finished failed
+  data("npm test\r\n");
+  block("commandStart");
+  data("FAIL src/app.test.ts\r\nTests: 0 passed, 1 failed\r\n");
+  block("outputStart");
+  block("commandEnd", 1);
+  data(prompt, 100);
+
+  // Collapsed huge block (85 lines)
+  data("npm install\r\n");
+  block("commandStart");
+  block("outputStart");
+  data(
+    Array.from({ length: 85 }, (_, i) => `added package-${i + 1}@1.0.0\r\n`).join(
+      "",
+    ),
+    150,
+  );
+  block("commandEnd", 0);
+  data(prompt, 100);
+
+  // Active block + agent waiting
+  data("claude\r\n");
+  block("commandStart");
+  block("outputStart");
+  data("Agent running — waiting for approval…\r\n", 100);
+  setTimeout(() => {
+    emitTerminal(sessionId, {
+      kind: "attention",
+      state: "waiting",
+      message: "Approve file edit in src/lib.rs",
+      source: "osc",
+    });
+  }, delay + 80);
+}
 
 // --- Vault ---
 
@@ -1069,24 +1153,7 @@ export function openTerminal(
 ): Promise<OpenTerminalResultDto> {
   const sessionId = uid("term");
   ensureSessionTunnels(sessionId, hostId);
-  queueMicrotask(() => {
-    emitTerminal(sessionId, { kind: "data", data: CANNED_OUTPUT, dropped: false });
-    const phases: Array<{ phase: "commandStart" | "outputStart" | "commandEnd"; exit?: number }> = [
-      { phase: "commandStart" },
-      { phase: "outputStart" },
-      { phase: "commandEnd", exit: 0 },
-      { phase: "commandStart" },
-      { phase: "outputStart" },
-      { phase: "commandEnd", exit: 1 },
-    ];
-    for (const step of phases) {
-      emitTerminal(sessionId, {
-        kind: "block",
-        phase: step.phase,
-        exitCode: step.exit ?? null,
-      });
-    }
-  });
+  queueMicrotask(() => emitMockSessionFixture(sessionId));
   const host = state.hosts.find((h) => h.id === hostId);
   return Promise.resolve({
     sessionId,

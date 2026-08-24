@@ -253,7 +253,7 @@ export function Launcher({
                         <Folder size={15} strokeWidth={2} style={{ color: colors.fg }} />
                       </span>
                       <span className="flex flex-col">
-                        <span className="text-[12.5px] font-semibold capitalize text-fg">
+                        <span className="text-[12.5px] font-semibold text-fg">
                           {tag}
                         </span>
                         <span className="text-[11px] text-fg-subtle">
@@ -361,24 +361,25 @@ function HostTile({
         <span className="block truncate text-[12.5px] font-semibold text-fg">
           {host.label}
         </span>
-        <span className="block truncate font-mono text-[11px] text-fg-subtle">
-          {host.username}@{host.hostname}
-          {host.port !== 22 ? `:${host.port}` : ""}
-        </span>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle">
+            {host.username}@{host.hostname}
+            {host.port !== 22 ? `:${host.port}` : ""}
+          </span>
+          {agentUp && (
+            <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10.5px] text-success">
+              <span className="size-1.5 rounded-full bg-success" />
+              agent up
+            </span>
+          )}
+          {authChip && !agentUp && (
+            <span className="shrink-0 whitespace-nowrap rounded-[5px] border border-line px-1.5 py-px text-[10px] text-fg-muted">
+              {authChip}
+            </span>
+          )}
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {agentUp && (
-          <span className="flex items-center gap-1.5 text-[10.5px] text-success">
-            <span className="size-1.5 rounded-full bg-success" />
-            agent up
-          </span>
-        )}
-        {authChip && !agentUp && (
-          <span className="rounded-[5px] border border-line px-1.5 py-px text-[10px] text-fg-muted">
-            {authChip}
-          </span>
-        )}
-        <div className="hidden items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 md:flex">
+      <div className="hidden items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 md:flex">
           <button
             type="button"
             title="Files"
@@ -414,7 +415,6 @@ function HostTile({
             Delete
           </button>
         </div>
-      </div>
     </div>
   );
 }

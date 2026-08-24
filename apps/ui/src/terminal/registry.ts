@@ -17,7 +17,7 @@ import {
   getTerminalLineHeight,
   getTerminalScrollback,
 } from "../lib/prefs";
-import { disposeBlockTracker, flushBlockPhases } from "./blocks";
+import { disposeBlockTracker, flushBlockPhases, refreshActiveBlock } from "./blocks";
 import {
   SCROLLBACK_LINE_CAP,
   loadScrollbackSnapshot,
@@ -42,6 +42,8 @@ interface TerminalRecord {
   resizeTimer?: number;
   /** Last OSC 7 working directory, when the shell reports one. */
   cwd?: string;
+  /** Last git branch from shell integration (OSC 133;G), when reported. */
+  gitBranch?: string;
   /** Strips ED2/ED3 inside DEC 2026 sync blocks (agent TUI scroll-jump). */
   syncFilter: SyncClearFilter;
   disposables: { dispose(): void }[];
@@ -63,6 +65,8 @@ export interface TerminalCallbacks {
   onResize: (cols: number, rows: number) => void;
   /** Fired when OSC 7 reports a working directory. */
   onCwd?: (cwd: string) => void;
+  /** Fired when shell integration reports the current git branch. */
+  onGitBranch?: (branch: string) => void;
 }
 
 function inputIsSuppressed(sessionId: string): boolean {
@@ -182,7 +186,18 @@ export function createTerminal(
       const record = terminals.get(sessionId);
       if (record) record.cwd = cwd;
       inputHandlers.get(sessionId)?.onCwd?.(cwd);
-      return false; // let xterm keep its own handling if any
+      return false;
+    }),
+  );
+  disposables.push(
+    terminal.parser.registerOscHandler(133, (data) => {
+      if (!data.startsWith("G;")) return false;
+      const branch = data.slice(2).trim();
+      if (!branch) return true;
+      const record = terminals.get(sessionId);
+      if (record) record.gitBranch = branch;
+      inputHandlers.get(sessionId)?.onGitBranch?.(branch);
+      return true;
     }),
   );
 
@@ -289,10 +304,12 @@ export function writeTerminal(
   const bytes = record.syncFilter.push(raw);
   if (bytes.length === 0) {
     flushBlockPhases(sessionId, record.terminal);
+    refreshActiveBlock(sessionId, record.terminal);
     return;
   }
   record.terminal.write(bytes, () => {
     flushBlockPhases(sessionId, record.terminal);
+    refreshActiveBlock(sessionId, record.terminal);
   });
 }
 
@@ -361,6 +378,14 @@ bindInjectGates({
 
 export function getTerminalCwd(sessionId: string): string | undefined {
   return terminals.get(sessionId)?.cwd;
+}
+
+export function getTerminalGitBranch(sessionId: string): string | undefined {
+  return terminals.get(sessionId)?.gitBranch;
+}
+
+export function getTerminalInstance(sessionId: string): Terminal | undefined {
+  return terminals.get(sessionId)?.terminal;
 }
 
 export function clearTerminal(sessionId: string): void {

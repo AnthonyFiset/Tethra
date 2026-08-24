@@ -15,6 +15,11 @@ __tethra_prompt_start() {
   printf '\033]133;B\007'
   local _host="${HOSTNAME:-}"
   printf '\033]7;file://%s%s\007' "$_host" "$PWD"
+  local _branch
+  _branch=$(command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null)
+  if [ -n "$_branch" ]; then
+    printf '\033]133;G;%s\007' "$_branch"
+  fi
 }
 __tethra_preexec() {
   __tethra_has_cmd=1
@@ -49,6 +54,11 @@ __tethra_prompt_start() {
   printf '\033]133;A\007'
   printf '\033]133;B\007'
   printf '\033]7;file://%s%s\007' "${HOST:-}" "${PWD}"
+  local _branch
+  _branch=$(command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null)
+  if [[ -n "$_branch" ]]; then
+    printf '\033]133;G;%s\007' "$_branch"
+  fi
 }
 __tethra_preexec() {
   __tethra_has_cmd=1
@@ -230,6 +240,8 @@ mod tests {
         assert!(BASH_INTEGRATION.contains("133;A"));
         assert!(BASH_INTEGRATION.contains("133;D"));
         assert!(ZSH_INTEGRATION.contains("133;C"));
-        assert!(ZSH_INTEGRATION.contains("]7;file://"));
-    }
+    assert!(ZSH_INTEGRATION.contains("]7;file://"));
+    assert!(BASH_INTEGRATION.contains("133;G;"));
+    assert!(ZSH_INTEGRATION.contains("133;G;"));
+  }
 }

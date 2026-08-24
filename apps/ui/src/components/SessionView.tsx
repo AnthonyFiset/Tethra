@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import type { HostSummaryDto } from "../lib/ipc";
+import { setBlockSessionContext } from "../terminal/blocks";
 import { PromptPanel } from "./PromptPanel";
 import { SessionContextBar } from "./SessionContextBar";
 import { TerminalView } from "../terminal/TerminalView";
@@ -14,6 +16,11 @@ interface SessionViewProps {
   color: string;
   pane?: boolean;
   findOpen?: boolean;
+  waiting?: boolean;
+  waitingMessage?: string;
+  isAgentSession?: boolean;
+  onReview?: () => void;
+  onJumpToAgent?: () => void;
   onFindOpen?: () => void;
   onFindClose?: () => void;
   onPaste?: (text: string) => void;
@@ -35,6 +42,11 @@ export function SessionView({
   color,
   pane,
   findOpen,
+  waiting,
+  waitingMessage,
+  isAgentSession,
+  onReview,
+  onJumpToAgent,
   onFindOpen,
   onFindClose,
   onPaste,
@@ -50,6 +62,23 @@ export function SessionView({
     metaParts.push(`up ${formatUptime(sessionStartedAt)}`);
   }
   if (host) metaParts.push(host.hostname);
+
+  useEffect(() => {
+    setBlockSessionContext(sessionId, {
+      waiting,
+      waitingMessage,
+      isAgentSession,
+      onReview,
+      onJumpToAgent,
+    });
+  }, [
+    sessionId,
+    waiting,
+    waitingMessage,
+    isAgentSession,
+    onReview,
+    onJumpToAgent,
+  ]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

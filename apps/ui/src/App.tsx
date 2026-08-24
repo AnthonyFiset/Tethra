@@ -156,6 +156,8 @@ interface Tab {
   localPath?: string;
   /** Last OSC 7 working directory, when reported. */
   cwd?: string;
+  /** Last OSC 133;G git branch, when reported. */
+  gitBranch?: string;
   /** Vault project id when this tab was opened from a project. */
   projectId?: string;
   /** `off` | `active` | `unavailable` — SSH agent forwarding for this session. */
@@ -811,6 +813,13 @@ function Workspace({
           ),
         );
       },
+      onGitBranch: (gitBranch) => {
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.sessionId === sessionId ? { ...tab, gitBranch } : tab,
+          ),
+        );
+      },
     });
     setBlockRerunHandler(sessionId, (command) => {
       injectShellText(sessionId, command, { run: false });
@@ -1461,6 +1470,21 @@ function Workspace({
     // reattachSession closes over projects — refresh when unlocked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.unlocked, projects]);
+
+  useEffect(() => {
+    if (!import.meta.env.VITE_TETHRA_MOCK) return;
+    setSessionAttention({
+      "run-1": { state: "running" },
+      "run-2": {
+        state: "waiting",
+        message: "Approve pending file edit",
+      },
+      "run-3": {
+        state: "failed",
+        message: "Last command exited with code 1",
+      },
+    });
+  }, []);
 
   useEffect(() => {
     if (!status.unlocked || runningSessions.length === 0) {
@@ -2295,6 +2319,15 @@ function Workspace({
                           />
                         );
                       }
+                      const runningId = ptyToRunning.current.get(
+                        tab.sessionId,
+                      );
+                      const attention = runningId
+                        ? sessionAttention[runningId]
+                        : undefined;
+                      const runningSession = runningId
+                        ? runningSessions.find((s) => s.id === runningId)
+                        : undefined;
                       return (
                         <SessionView
                           key={tab.sessionId}
@@ -2306,11 +2339,26 @@ function Workspace({
                               : undefined
                           }
                           cwd={tab.cwd}
+                          gitBranch={tab.gitBranch}
                           connected={tab.connected}
                           active={focused}
                           visible
                           color={tab.color ?? DEFAULT_HOST_COLOR}
                           findOpen={findSessionId === tab.sessionId}
+                          waiting={attention?.state === "waiting"}
+                          waitingMessage={attention?.message}
+                          isAgentSession={Boolean(
+                            tab.projectId ?? runningSession?.projectId,
+                          )}
+                          onReview={() => {
+                            activateSession(tab.sessionId);
+                            void focusMainWindow();
+                          }}
+                          onJumpToAgent={() => {
+                            activateSession(tab.sessionId);
+                            setAssistOpen(true);
+                          }}
+                          sessionStartedAt={runningSession?.startedAt}
                           onFindOpen={() => setFindSessionId(tab.sessionId)}
                           onFindClose={() =>
                             setFindSessionId((current) =>

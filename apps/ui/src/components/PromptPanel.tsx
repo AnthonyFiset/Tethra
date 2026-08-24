@@ -1,4 +1,5 @@
-import { blockCount } from "../terminal/blocks";
+import { useEffect, useState } from "react";
+import { blockCount, subscribeBlockChanges } from "../terminal/blocks";
 
 interface PromptPanelProps {
   sessionId: string;
@@ -6,7 +7,14 @@ interface PromptPanelProps {
 
 /** Visual frame + hint row beneath the PTY (keystrokes stay in xterm). */
 export function PromptPanel({ sessionId }: PromptPanelProps): React.JSX.Element {
-  const blocks = blockCount(sessionId);
+  const [blocks, setBlocks] = useState(() => blockCount(sessionId));
+
+  useEffect(() => {
+    setBlocks(blockCount(sessionId));
+    return subscribeBlockChanges(sessionId, () => {
+      setBlocks(blockCount(sessionId));
+    });
+  }, [sessionId]);
 
   return (
     <div className="shrink-0 border-t border-elevated bg-rail px-3.5 pt-2 pb-3">
