@@ -57,6 +57,21 @@ every surface, using Playwright:
 - Check the browser console after the pass — any error logged during
   interactions is a finding.
 
+## 2c. Flow pass (MANDATORY — round trips, not single screens)
+
+State-transition bugs only appear across navigations. Walk these round
+trips and assert state survives each one:
+
+- Home → open a session → back to home: the open session must remain
+  visible and reachable (tab strip and/or RUNNING list), RUNNING intact.
+- Open a surface from a session → close it → still in the session.
+- Open the same host twice: no silent duplicate sessions unless that is
+  deliberate and visible.
+- Close a tab → land somewhere sensible with state intact.
+- After every flow: console clean, and the "way back" from every view is
+  obvious (a view you can enter but not leave, or whose entry control
+  does something else, is a blocker).
+
 ## 3. Audit
 
 Score each screenshot against `docs/DESIGN.md` §6 checklist. For every
