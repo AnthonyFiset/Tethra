@@ -7,6 +7,7 @@
  */
 @theme {
   --color-base: #0d0d0d;
+  --color-rail: #101010;
   --color-surface: #141414;
   --color-elevated: #1b1b1b;
   --color-hover: #222222;
@@ -40,6 +41,9 @@
   --text-micro--line-height: 1.4;
 
   --breakpoint-surface-nav: 1000px;
+
+  --width-rail: 224px;
+  --width-rail-collapsed: 52px;
 }
 
 @layer base {

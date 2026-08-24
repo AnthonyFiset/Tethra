@@ -56,3 +56,14 @@ export function attentionLabel(state: AgentAttentionState): string {
       return "running";
   }
 }
+
+export function attentionDotClass(state: AgentAttentionState): string {
+  switch (state) {
+    case "waiting":
+      return "bg-warning";
+    case "failed":
+      return "bg-danger";
+    default:
+      return "bg-success";
+  }
+}

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AssistBar } from "./components/AssistBar";
 import { CommandPalette } from "./components/CommandPalette";
+import { FilesView } from "./components/FilesView";
 import {
   Launcher,
   parseQuickConnect,
   type HostDraft,
 } from "./components/Launcher";
+import { LeftRail, type RailNavId } from "./components/LeftRail";
 import { HostAvatar, DEFAULT_HOST_COLOR } from "./components/HostAvatar";
 import { Logo } from "./components/Logo";
 import {
@@ -22,12 +24,10 @@ import { AssistSurface } from "./surfaces/AssistSurface";
 import { IdentitiesSurface } from "./surfaces/IdentitiesSurface";
 import { VaultSurface } from "./surfaces/VaultSurface";
 import {
-  SURFACE_LABELS,
   type SurfaceId,
 } from "./surfaces/SurfaceShell";
-import { Sidebar } from "./components/Sidebar";
-import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { TunnelsView } from "./components/TunnelsView";
 import { TunnelsPanel } from "./components/TunnelsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Button } from "./components/ui/Button";
@@ -36,6 +36,7 @@ import { ErrorBanner } from "./components/ui/Field";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
+import { SURFACE_NAV_EXPAND_MIN_PX } from "./lib/breakpoints";
 import { getIdleLockSecs, getLandingPref } from "./lib/prefs";
 import {
   mergeAttention,
@@ -80,6 +81,7 @@ import {
   respondHostKey,
   sendTerminalInput,
   syncNow,
+  syncStatus,
   touchProjectOpened,
   tunnelList,
   updateCheck,
@@ -94,6 +96,7 @@ import {
   type HostSummaryDto,
   type ProjectSummaryDto,
   type RunningSessionSummaryDto,
+  type SyncStatusDto,
   type TerminalEvent,
   type ToolsProbeDto,
   type VaultStatusDto,
@@ -298,7 +301,6 @@ function Workspace({
   const [openingLocal, setOpeningLocal] = useState(false);
   const [error, setError] = useState<string>();
   const [prompt, setPrompt] = useState<HostKeyPrompt>();
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [editor, setEditor] = useState<HostSummaryDto | "new">();
   const [hostDraft, setHostDraft] = useState<HostDraft>();
   const [projectEditor, setProjectEditor] = useState<
@@ -312,6 +314,12 @@ function Workspace({
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionId>("general");
   const [activeSurface, setActiveSurface] = useState<SurfaceId | null>(null);
+  const [railNav, setRailNav] = useState<RailNavId>("hosts");
+  const [syncInfo, setSyncInfo] = useState<SyncStatusDto>();
+  const [railCollapsed, setRailCollapsed] = useState(
+    () =>
+      !window.matchMedia(`(min-width: ${SURFACE_NAV_EXPAND_MIN_PX}px)`).matches,
+  );
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistKeysEpoch, setAssistKeysEpoch] = useState(0);
   const [muxHint, setMuxHint] = useState<{
@@ -322,9 +330,6 @@ function Workspace({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState<string>();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => window.localStorage.getItem("tethra.sidebar") === "rail",
-  );
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -425,6 +430,20 @@ function Workspace({
   }, []);
 
   useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${SURFACE_NAV_EXPAND_MIN_PX}px)`);
+    const onChange = () => setRailCollapsed(!mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!status.unlocked) return;
+    void syncStatus()
+      .then(setSyncInfo)
+      .catch(() => undefined);
+  }, [status.unlocked]);
+
+  useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
     const onChange = () => setNarrow(mq.matches);
     mq.addEventListener("change", onChange);
@@ -505,12 +524,25 @@ function Workspace({
     }
   }, [status.unlocked]);
 
-  useEffect(() => {
-    window.localStorage.setItem(
-      "tethra.sidebar",
-      sidebarCollapsed ? "rail" : "expanded",
-    );
-  }, [sidebarCollapsed]);
+  function handleRailNav(nav: RailNavId): void {
+    setRailNav(nav);
+    if (nav === "hosts") {
+      goLauncher();
+      return;
+    }
+    if (nav === "identities") {
+      openSurface("identities");
+      return;
+    }
+    if (nav === "assist") {
+      openSurface("assist");
+      return;
+    }
+    setActiveSurface(null);
+    if (appMode === "workspace") {
+      goLauncher();
+    }
+  }
 
   function adoptTransfer(transfer: WorkspaceTransfer): void {
     setTabs((current) => {
@@ -614,12 +646,8 @@ function Workspace({
     [activeId, tabs],
   );
 
-  function toggleSidebar(): void {
-    if (window.matchMedia("(max-width: 767px)").matches) {
-      setDrawerOpen((open) => !open);
-    } else {
-      setSidebarCollapsed((value) => !value);
-    }
+  function toggleRail(): void {
+    setRailCollapsed((value) => !value);
   }
 
   async function attachOutput(
@@ -809,7 +837,6 @@ function Workspace({
 
   function enterWorkspace(): void {
     setAppMode("workspace");
-    setDrawerOpen(false);
   }
 
   function openSettings(section: SettingsSectionId | string = "general"): void {
@@ -839,19 +866,25 @@ function Workspace({
     setSettingsOpen(false);
     setPaletteOpen(false);
     setActiveSurface(surface);
+    if (surface === "identities") setRailNav("identities");
+    if (surface === "assist") setRailNav("assist");
   }
 
   function closeSurface(): void {
     setActiveSurface(null);
+    if (railNav === "identities" || railNav === "assist") {
+      setRailNav("hosts");
+    }
   }
 
   /** View change only — never kills PTYs or remote mux sessions. */
   function goLauncher(): void {
     setAppMode("launcher");
-    setDrawerOpen(false);
     setAssistOpen(false);
     setZoomedId(undefined);
-    setActiveSurface(null);
+    if (!activeSurface) {
+      setRailNav("hosts");
+    }
   }
 
   function pasteIntoTerminal(sessionId: string, text: string): void {
@@ -976,7 +1009,7 @@ function Workspace({
         break;
       }
       case "view.toggle_sidebar":
-        toggleSidebar();
+        toggleRail();
         break;
       case "view.launcher":
         goLauncher();
@@ -1123,8 +1156,6 @@ function Workspace({
   async function connect(host: HostSummaryDto): Promise<void> {
     setError(undefined);
     setConnectingHostId(host.id);
-    setDrawerOpen(false);
-
     try {
       const opened = await openTerminal(host.id, 80, 24);
       const sessionId = opened.sessionId;
@@ -1155,8 +1186,6 @@ function Workspace({
   async function openLocal(): Promise<void> {
     setError(undefined);
     setOpeningLocal(true);
-    setDrawerOpen(false);
-
     try {
       const sessionId = await openLocalTerminal(80, 24);
       wireTerminal(sessionId);
@@ -1209,8 +1238,6 @@ function Workspace({
   async function openProject(project: ProjectSummaryDto): Promise<void> {
     setError(undefined);
     setOpeningProjectId(project.id);
-    setDrawerOpen(false);
-
     try {
       const agents = await listAgents();
       const { agent, migratedFrom } = resolveAgentForLaunch(
@@ -1560,7 +1587,6 @@ function Workspace({
   async function openFiles(host: HostSummaryDto): Promise<void> {
     setError(undefined);
     setOpeningFilesHostId(host.id);
-    setDrawerOpen(false);
     try {
       const [opened, home] = await Promise.all([
         openSftp(host.id),
@@ -1883,14 +1909,13 @@ function Workspace({
           if (mode === "workspace") return "launcher";
           return tabsRef.current.length > 0 ? "workspace" : "launcher";
         });
-        setDrawerOpen(false);
         setAssistOpen(false);
         setZoomedId(undefined);
         return;
       }
       if (event.key.toLowerCase() === "b") {
         event.preventDefault();
-        toggleSidebar();
+        toggleRail();
       }
       if (event.key.toLowerCase() === "f" && status.unlocked) {
         const tab = tabsRef.current.find(
@@ -1990,24 +2015,46 @@ function Workspace({
   }, [status.unlocked, assistOpen]);
 
   const inWorkspace = appMode === "workspace";
-  const connectionLabel = (() => {
-    if (!inWorkspace) return "Launcher";
-    if (!activeTab) return "Workspace";
-    if (activeTab.kind === "sftp") {
-      return activeTab.connected ? "Files" : "Files · offline";
-    }
-    if (activeTab.kind === "local") {
-      return activeTab.connected ? "Local" : "Local · closed";
-    }
-    const host = hosts.find((entry) => entry.id === activeTab.hostId);
-    const name = host?.label ?? activeTab.title;
-    const tunnels = tunnelActiveBySession[activeTab.sessionId] ?? 0;
-    if (!activeTab.connected) return `${name} · closed`;
-    if (tunnels > 0) {
-      return `${name} · ${tunnels} tunnel${tunnels === 1 ? "" : "s"}`;
-    }
-    return name;
-  })();
+
+  const activeTunnelCount = useMemo(
+    () =>
+      Object.values(tunnelActiveBySession).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+    [tunnelActiveBySession],
+  );
+
+  const titlebarTabs = useMemo(
+    () =>
+      tabs.map((tab) => {
+        const host =
+          tab.hostId !== "local"
+            ? hosts.find((entry) => entry.id === tab.hostId)
+            : undefined;
+        const project = tab.projectId
+          ? projects.find((entry) => entry.id === tab.projectId)
+          : undefined;
+        const runningId = ptyToRunning.current.get(tab.sessionId);
+        return {
+          sessionId: tab.sessionId,
+          title:
+            tab.kind === "local"
+              ? "Local"
+              : tab.kind === "sftp"
+                ? `${host?.label ?? tab.title} files`
+                : (host?.label ?? tab.title),
+          kind: tab.kind,
+          connected: tab.connected,
+          color: tab.color,
+          projectName: project?.name,
+          waiting:
+            runningId != null &&
+            sessionAttention[runningId]?.state === "waiting",
+        };
+      }),
+    [tabs, hosts, projects, sessionAttention],
+  );
 
   // Tab selection is source of truth for what to show. Layout only wins when
   // it's a real split that still contains the active session.
@@ -2027,17 +2074,31 @@ function Workspace({
   return (
     <div className="flex size-full flex-col bg-base">
       <TitleBar
-        connectionLabel={connectionLabel}
-        connected={Boolean(activeTab?.connected)}
+        tabs={titlebarTabs}
+        activeTabId={activeId}
+        inWorkspace={inWorkspace}
         openingLocal={openingLocal}
         canSplit={Boolean(activeTab && activeTab.kind !== "sftp")}
         zoomed={Boolean(zoomedId)}
         canZoom={canZoom}
         appVersion={appVersion}
-        showSidebarToggle={inWorkspace}
-        workspaceChrome={inWorkspace}
-        onToggleSidebar={toggleSidebar}
+        activeTunnelCount={activeTunnelCount}
         onOpenPalette={() => setPaletteOpen(true)}
+        onSelectTab={selectTab}
+        onCloseTab={(sessionId) => void closeTab(sessionId)}
+        onCloseOtherTabs={(keepId) => {
+          for (const tab of tabsRef.current) {
+            if (tab.sessionId !== keepId) void closeTab(tab.sessionId);
+          }
+        }}
+        onMoveTabToNewWindow={(sessionId) => {
+          activateSession(sessionId);
+          void moveActiveToNewWindow();
+        }}
+        onNewTab={() => {
+          if (hosts[0]) void connect(hosts[0]);
+          else goLauncher();
+        }}
         onOpenLocal={() => void openLocal()}
         onSplitRight={() => void splitPane("horizontal")}
         onSplitDown={() => void splitPane("vertical")}
@@ -2048,72 +2109,37 @@ function Workspace({
         onSettings={() => openSettings("general")}
         onAssistSettings={() => openSurface("assist")}
         onChangePassword={() => openSurface("vault")}
-        onOpenSurface={openSurface}
-        activeSurface={activeSurface}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
         onGoLauncher={inWorkspace ? goLauncher : undefined}
-        onGoWorkspace={
-          !inWorkspace && tabs.length > 0 ? enterWorkspace : undefined
-        }
       />
 
       <UpdateBanner />
 
-      <div
-        className="relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-150 max-md:block"
-        style={{
-          gridTemplateColumns: inWorkspace
-            ? `${sidebarCollapsed ? 52 : 248}px minmax(0, 1fr)`
-            : "minmax(0, 1fr)",
-        }}
-      >
-        {inWorkspace && (
-          <Sidebar
-            hosts={hosts}
-            projects={projects}
-            runningSessions={runningSessions}
-            sessionAttention={sessionAttention}
-            openTabs={tabs}
-            activeTabId={activeId}
-            collapsed={sidebarCollapsed}
-            drawerOpen={drawerOpen}
-            recoveryAvailable={status.recoveryAvailable}
-            connectingHostId={connectingHostId}
-            openingFilesHostId={openingFilesHostId}
-            openingProjectId={openingProjectId}
-            onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
-            onConnect={(host) => void connect(host)}
-            onFiles={(host) => void openFiles(host)}
-            onEdit={setEditor}
-            onDelete={setPendingDelete}
-            onAddHost={() => {
-              setHostDraft(undefined);
-              setEditor("new");
-            }}
-            onImport={() => setImportOpen(true)}
-            onOpenProject={(project) => void openProject(project)}
-            onEditProject={setProjectEditor}
-            onDeleteProject={setPendingDeleteProject}
-            onAddProject={() => setProjectEditor("new")}
-            onReattach={(session) => void reattachSession(session)}
-            onEndSession={(session) => void killRunningSession(session)}
-            onSelectTab={selectTab}
-            onCloseTab={(sessionId) => void closeTab(sessionId)}
-            onLock={() => void lockNow()}
-            agentLabel={(id) => agentDisplayName(agents, id)}
-          />
-        )}
+      <div className="flex min-h-0 flex-1">
+        <LeftRail
+          collapsed={railCollapsed}
+          vaultStatus={status}
+          syncStatus={syncInfo}
+          hostCount={hosts.length}
+          activeTunnelCount={activeTunnelCount}
+          runningSessions={runningSessions}
+          sessionAttention={sessionAttention}
+          hosts={hosts}
+          activeNav={
+            activeSurface === "identities"
+              ? "identities"
+              : activeSurface === "assist"
+                ? "assist"
+                : railNav
+          }
+          onNav={handleRailNav}
+          onOpenVault={() => openSurface("vault")}
+          onSettings={() => openSettings("general")}
+          onReattach={(session) => void reattachSession(session)}
+        />
 
-        {inWorkspace && drawerOpen && (
-          <button
-            aria-label="Close hosts"
-            onClick={() => setDrawerOpen(false)}
-            className="absolute inset-0 z-20 bg-black/50 md:hidden"
-          />
-        )}
-
-        <main className="relative flex min-h-0 min-w-0 flex-col">
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSurface === "vault" ? (
             <VaultSurface
               onClose={closeSurface}
@@ -2145,6 +2171,21 @@ function Workspace({
             <AgentsSurface agents={agents} onClose={closeSurface} />
           ) : activeSurface === "identities" ? (
             <IdentitiesSurface onClose={closeSurface} />
+          ) : railNav === "tunnels" ? (
+            <TunnelsView
+              hosts={hosts}
+              activeTunnelCount={activeTunnelCount}
+              onClose={() => {
+                setRailNav("hosts");
+              }}
+            />
+          ) : railNav === "files" ? (
+            <FilesView
+              hosts={hosts}
+              openingFilesHostId={openingFilesHostId}
+              onOpenFiles={(host) => void openFiles(host)}
+              onClose={() => setRailNav("hosts")}
+            />
           ) : !inWorkspace ? (
             <Launcher
               hosts={hosts}
@@ -2178,26 +2219,6 @@ function Workspace({
             />
           ) : (
             <>
-              {tabs.length > 0 && (
-                <TabBar
-                  tabs={tabs}
-                  activeId={activeId}
-                  onSelect={selectTab}
-                  onClose={(sessionId) => void closeTab(sessionId)}
-                  onCloseOthers={(keepId) => {
-                    for (const tab of tabsRef.current) {
-                      if (tab.sessionId !== keepId) {
-                        void closeTab(tab.sessionId);
-                      }
-                    }
-                  }}
-                  onMoveToNewWindow={(sessionId) => {
-                    activateSession(sessionId);
-                    void moveActiveToNewWindow();
-                  }}
-                />
-              )}
-
               {assistOpen &&
                 (() => {
                   const context = assistContextForActive();
@@ -2238,7 +2259,7 @@ function Workspace({
                       className="cursor-pointer text-accent hover:underline"
                       onClick={goLauncher}
                     >
-                      Back to Launcher
+                      Back to hosts
                     </button>
                   </div>
                 ) : (
@@ -2360,8 +2381,8 @@ function Workspace({
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         initialSection={settingsSection}
-        sidebarCollapsed={sidebarCollapsed}
-        onSidebarCollapsedChange={setSidebarCollapsed}
+        sidebarCollapsed={railCollapsed}
+        onSidebarCollapsedChange={setRailCollapsed}
         onOpenSurface={(surface) => {
           setSettingsOpen(false);
           openSurface(surface);
