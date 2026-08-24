@@ -20,7 +20,8 @@ interface BlockMeta {
 
 interface FinishedBlock {
   id: string;
-  start: IMarker;
+  prompt: IMarker;
+  command: IMarker;
   end: IMarker;
   commandText: string;
   outputText: string;
@@ -31,7 +32,8 @@ interface FinishedBlock {
 }
 
 interface ActiveBlock {
-  start: IMarker;
+  prompt: IMarker;
+  command: IMarker;
   meta: BlockMeta;
 }
 
@@ -45,6 +47,7 @@ interface SessionBlockContext {
 
 interface BlockTracker {
   open: {
+    promptStart?: IMarker;
     commandStart?: IMarker;
     outputStart?: IMarker;
     commandText?: string;
@@ -62,7 +65,8 @@ interface BlockTracker {
 export type BlockChromeEntry = {
   id: string;
   kind: "active" | "ok" | "failed";
-  startLine: number;
+  /** OSC 133;A prompt row — header anchors here. */
+  promptLine: number;
   endLine: number;
   commandText: string;
   outputText: string;
@@ -108,6 +112,11 @@ function notify(sessionId: string): void {
 function syncChrome(sessionId: string): void {
   scheduleBlockOverlaySync(sessionId);
   notify(sessionId);
+}
+
+function markerLine(marker: IMarker | undefined): number | undefined {
+  if (!marker || marker.isDisposed) return undefined;
+  return marker.line;
 }
 
 export function subscribeBlockChanges(
@@ -161,13 +170,15 @@ export function getBlockChromeSnapshot(
   const blocks: BlockChromeEntry[] = [];
 
   for (const block of tracker.finished) {
-    if (block.start.isDisposed || block.end.isDisposed) continue;
+    const promptLine = markerLine(block.prompt);
+    const endLine = markerLine(block.end);
+    if (promptLine == null || endLine == null) continue;
     blocks.push({
       id: block.id,
       kind:
         block.exitCode !== null && block.exitCode !== 0 ? "failed" : "ok",
-      startLine: block.start.line,
-      endLine: block.end.line,
+      promptLine,
+      endLine,
       commandText: block.commandText,
       outputText: block.outputText,
       exitCode: block.exitCode,
@@ -177,23 +188,27 @@ export function getBlockChromeSnapshot(
     });
   }
 
-  if (tracker.active?.start && !tracker.active.start.isDisposed) {
-    const terminal = getTerminalInstance(sessionId);
-    const endLine = terminal
-      ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY
-      : tracker.active.start.line;
-    blocks.push({
-      id: "active",
-      kind: "active",
-      startLine: tracker.active.start.line,
-      endLine: Math.max(tracker.active.start.line, endLine),
-      commandText: tracker.open.commandText ?? "",
-      outputText: "",
-      exitCode: null,
-      meta: tracker.active.meta,
-      lineCount: Math.max(1, endLine - tracker.active.start.line + 1),
-      collapsed: false,
-    });
+  if (tracker.active) {
+    const promptLine = markerLine(tracker.active.prompt);
+    const commandLine = markerLine(tracker.active.command);
+    if (promptLine != null && commandLine != null) {
+      const terminal = getTerminalInstance(sessionId);
+      const endLine = terminal
+        ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+        : commandLine;
+      blocks.push({
+        id: "active",
+        kind: "active",
+        promptLine,
+        endLine: Math.max(promptLine, endLine),
+        commandText: tracker.open.commandText ?? "",
+        outputText: "",
+        exitCode: null,
+        meta: tracker.active.meta,
+        lineCount: Math.max(1, endLine - promptLine + 1),
+        collapsed: false,
+      });
+    }
   }
 
   return {
@@ -239,23 +254,26 @@ function applyPhase(
   exitCode: number | null,
 ): void {
   switch (phase) {
-    case "promptStart":
-      tracker.open = {};
+    case "promptStart": {
+      const marker = terminal.registerMarker(0);
+      if (!marker) return;
+      tracker.open.promptStart = marker;
       break;
+    }
     case "commandStart": {
       const marker = terminal.registerMarker(0);
       if (!marker) return;
-      tracker.active = {
-        start: marker,
-        meta: {
-          cwd: getTerminalCwd(sessionId),
-          gitBranch: getTerminalGitBranch(sessionId),
-          startedAt: Date.now(),
-        },
+      const prompt = tracker.open.promptStart ?? marker;
+      const meta: BlockMeta = {
+        cwd: getTerminalCwd(sessionId),
+        gitBranch: getTerminalGitBranch(sessionId),
+        startedAt: Date.now(),
       };
+      tracker.active = { prompt, command: marker, meta };
       tracker.open = {
+        promptStart: prompt,
         commandStart: marker,
-        meta: tracker.active.meta,
+        meta,
       };
       break;
     }
@@ -274,14 +292,14 @@ function applyPhase(
     case "commandEnd": {
       const end = terminal.registerMarker(0);
       if (!end) return;
-      tracker.active = undefined;
-      const start = tracker.open.commandStart ?? end;
+      const command = tracker.open.commandStart ?? end;
+      const prompt = tracker.open.promptStart ?? command;
       const outputStart = tracker.open.outputStart;
       const commandText =
         tracker.open.commandText ??
         textBetween(terminal, tracker.open.commandStart, outputStart ?? end);
       const outputText = textBetween(terminal, outputStart, end);
-      const lineCount = Math.max(1, end.line - start.line + 1);
+      const lineCount = Math.max(1, end.line - prompt.line + 1);
       const meta: BlockMeta = {
         ...tracker.open.meta,
         cwd: tracker.open.meta?.cwd ?? getTerminalCwd(sessionId),
@@ -292,7 +310,8 @@ function applyPhase(
       };
       tracker.finished.push({
         id: nextBlockId(tracker),
-        start,
+        prompt,
+        command,
         end,
         commandText,
         outputText,
@@ -301,6 +320,7 @@ function applyPhase(
         lineCount,
         collapsed: lineCount >= COLLAPSE_LINE_THRESHOLD,
       });
+      tracker.active = undefined;
       while (tracker.finished.length > 80) {
         disposeFinished(tracker.finished.shift());
       }
@@ -332,7 +352,8 @@ function textBetween(
 
 function disposeFinished(block: FinishedBlock | undefined): void {
   if (!block) return;
-  block.start.dispose();
+  block.prompt.dispose();
+  block.command.dispose();
   block.end.dispose();
 }
 
@@ -341,6 +362,7 @@ export function disposeBlockTracker(sessionId: string): void {
   if (!tracker) return;
   tracker.active = undefined;
   for (const block of tracker.finished) disposeFinished(block);
+  tracker.open.promptStart?.dispose();
   tracker.open.commandStart?.dispose();
   tracker.open.outputStart?.dispose();
   trackers.delete(sessionId);

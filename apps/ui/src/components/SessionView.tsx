@@ -81,13 +81,13 @@ export function SessionView({
   ]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex size-full min-h-0 flex-col">
       <SessionContextBar
         cwd={cwd}
         gitBranch={gitBranch}
         meta={metaParts.length > 0 ? metaParts.join(" · ") : undefined}
       />
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <TerminalView
           sessionId={sessionId}
           active={active}

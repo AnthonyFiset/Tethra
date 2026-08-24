@@ -31,7 +31,7 @@ export type CursorStylePref = "block" | "underline" | "bar";
 
 export const DEFAULTS = {
   landing: "launcher" as LandingPref,
-  fontSize: 13,
+  fontSize: 12.5,
   fontFamily: "JetBrains Mono",
   lineHeight: 1.25,
   ligatures: false,
@@ -89,11 +89,12 @@ export function setLandingPref(value: LandingPref): void {
 export function getTerminalFontSize(): number {
   const raw = Number(readString(KEYS.fontSize));
   if (!Number.isFinite(raw) || raw < 10 || raw > 24) return DEFAULTS.fontSize;
-  return Math.round(raw);
+  return raw;
 }
 
 export function setTerminalFontSize(size: number): void {
-  writeString(KEYS.fontSize, String(Math.min(24, Math.max(10, Math.round(size)))));
+  const clamped = Math.min(24, Math.max(10, size));
+  writeString(KEYS.fontSize, String(clamped));
 }
 
 export function getTerminalLigatures(): boolean {

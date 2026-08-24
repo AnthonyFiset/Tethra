@@ -593,7 +593,7 @@ function emitMockSessionFixture(sessionId: string): void {
     }, at);
   };
   const block = (
-    phase: "commandStart" | "outputStart" | "commandEnd",
+    phase: "promptStart" | "commandStart" | "outputStart" | "commandEnd",
     exit_code: number | null = null,
     extra = 60,
   ): void => {
@@ -611,22 +611,21 @@ function emitMockSessionFixture(sessionId: string): void {
   data(`${cwdOsc}${branchOsc}${prompt}`, 120);
 
   // Finished ok
+  block("promptStart");
   data("git status\r\n");
   block("commandStart");
   data("On branch main\r\nnothing to commit, working tree clean\r\n");
   block("outputStart");
   block("commandEnd", 0);
   data(prompt, 100);
-
-  // Finished failed
+  block("promptStart");
   data("npm test\r\n");
   block("commandStart");
   data("FAIL src/app.test.ts\r\nTests: 0 passed, 1 failed\r\n");
   block("outputStart");
   block("commandEnd", 1);
   data(prompt, 100);
-
-  // Collapsed huge block (85 lines)
+  block("promptStart");
   data("npm install\r\n");
   block("commandStart");
   block("outputStart");
@@ -638,12 +637,11 @@ function emitMockSessionFixture(sessionId: string): void {
   );
   block("commandEnd", 0);
   data(prompt, 100);
-
-  // Active block + agent waiting
+  block("promptStart");
   data("claude\r\n");
   block("commandStart");
   block("outputStart");
-  data("Agent running — waiting for approval…\r\n", 100);
+  data("Agent running — waiting for approval…\r\nApprove file edit in src/lib.rs\r\n", 100);
   setTimeout(() => {
     emitTerminal(sessionId, {
       kind: "attention",

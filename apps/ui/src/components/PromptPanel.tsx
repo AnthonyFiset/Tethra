@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { blockCount, subscribeBlockChanges } from "../terminal/blocks";
+import { focusTerminal } from "../terminal/registry";
 
 interface PromptPanelProps {
   sessionId: string;
 }
 
-/** Visual frame + hint row beneath the PTY (keystrokes stay in xterm). */
+/** Bottom frame + hint row (keystrokes stay in xterm — click frame to focus). */
 export function PromptPanel({ sessionId }: PromptPanelProps): React.JSX.Element {
   const [blocks, setBlocks] = useState(() => blockCount(sessionId));
 
@@ -18,15 +19,12 @@ export function PromptPanel({ sessionId }: PromptPanelProps): React.JSX.Element 
 
   return (
     <div className="shrink-0 border-t border-elevated bg-rail px-3.5 pt-2 pb-3">
-      <div
-        className="flex min-h-11 items-center gap-[11px] rounded-[10px] border border-line-strong bg-surface px-4 py-2.5 font-mono text-[13px] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
-        aria-hidden="true"
-      >
-        <span className="font-semibold text-accent">❯</span>
-        <span className="text-fg-subtle">Type in the terminal above</span>
-        <span className="flex-1" />
-        <span className="text-[10.5px] text-fg-subtle">⏎ run</span>
-      </div>
+      <button
+        type="button"
+        onClick={() => focusTerminal(sessionId)}
+        className="block w-full min-h-11 cursor-pointer rounded-[10px] border border-line-strong bg-surface shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
+        aria-label="Focus terminal"
+      />
       <div className="flex gap-3.5 px-1 pt-1.5 text-[11px] text-fg-subtle">
         <span>⌘F find</span>
         <span>⌘K commands</span>

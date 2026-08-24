@@ -20,8 +20,12 @@ interface OverlayHost {
 const hosts = new Map<string, OverlayHost>();
 const pendingSync = new Map<string, number>();
 
-const HEADER_HEIGHT = 22;
-const MENU_RESERVE = 34;
+/** Reserve right edge for ⋮ menu column (header) — timestamps stop here. */
+const MENU_COLUMN_WIDTH = 34;
+/** Banner Review sits left of the ⋮ column. */
+const BANNER_MENU_GAP = 44;
+const BANNER_HEIGHT = 36;
+const BANNER_GAP = 4;
 
 export function setBlockOverlayHost(
   sessionId: string,
@@ -34,6 +38,7 @@ export function setBlockOverlayHost(
   const disposables: { dispose(): void }[] = [];
   disposables.push(terminal.onScroll(() => scheduleBlockOverlaySync(sessionId)));
   disposables.push(terminal.onResize(() => scheduleBlockOverlaySync(sessionId)));
+  disposables.push(terminal.onRender(() => scheduleBlockOverlaySync(sessionId)));
 
   hosts.set(sessionId, { root, terminal, disposables });
   scheduleBlockOverlaySync(sessionId);
@@ -64,6 +69,85 @@ export function disposeBlockOverlay(sessionId: string): void {
   hosts.delete(sessionId);
 }
 
+interface ViewportMetrics {
+  originTop: number;
+  rowHeight: number;
+  viewportHeight: number;
+  viewportStart: number;
+  viewportEnd: number;
+}
+
+function measureRowHeight(terminal: Terminal): number {
+  const row = terminal.element?.querySelector(
+    ".xterm-rows > div",
+  ) as HTMLElement | null;
+  if (row) {
+    const h = row.getBoundingClientRect().height;
+    if (h > 0) return h;
+  }
+  return terminal.options.fontSize! * (terminal.options.lineHeight ?? 1);
+}
+
+function getViewportMetrics(
+  terminal: Terminal,
+  root: HTMLElement,
+): ViewportMetrics {
+  const buffer = terminal.buffer.active;
+  const rowHeight = measureRowHeight(terminal);
+  const viewport = terminal.element?.querySelector(
+    ".xterm-viewport",
+  ) as HTMLElement | null;
+  const rootRect = root.getBoundingClientRect();
+
+  let originTop = 0;
+  let viewportHeight = root.clientHeight;
+  if (viewport) {
+    const vpRect = viewport.getBoundingClientRect();
+    originTop = vpRect.top - rootRect.top;
+    viewportHeight = vpRect.height;
+  }
+
+  return {
+    originTop,
+    rowHeight,
+    viewportHeight,
+    viewportStart: buffer.viewportY,
+    viewportEnd: buffer.viewportY + terminal.rows - 1,
+  };
+}
+
+/** Map buffer line → pixel rect within overlay root; null when line is off-screen. */
+function lineRect(
+  terminal: Terminal,
+  root: HTMLElement,
+  bufferLine: number,
+): { top: number; height: number } | null {
+  const vm = getViewportMetrics(terminal, root);
+  const rel = bufferLine - vm.viewportStart;
+  if (rel < 0 || rel >= terminal.rows) return null;
+  return {
+    top: vm.originTop + rel * vm.rowHeight,
+    height: vm.rowHeight,
+  };
+}
+
+/** Frame from prompt row through block end, clamped to the visible viewport. */
+function clampedFrame(
+  terminal: Terminal,
+  root: HTMLElement,
+  promptLine: number,
+  endLine: number,
+): { top: number; height: number } | null {
+  const vm = getViewportMetrics(terminal, root);
+  if (endLine < vm.viewportStart || promptLine > vm.viewportEnd) return null;
+
+  const startLine = Math.max(promptLine, vm.viewportStart);
+  const endClamped = Math.min(endLine, vm.viewportEnd);
+  const top = vm.originTop + (startLine - vm.viewportStart) * vm.rowHeight;
+  const height = (endClamped - startLine + 1) * vm.rowHeight;
+  return height > 0 ? { top, height } : null;
+}
+
 function syncBlockOverlay(sessionId: string): void {
   const host = hosts.get(sessionId);
   const snapshot = getBlockChromeSnapshot(sessionId);
@@ -77,69 +161,11 @@ function syncBlockOverlay(sessionId: string): void {
 
   for (const block of snapshot.blocks) {
     if (block.collapsed) {
-      renderCollapsed(sessionId, root, terminal, block, snapshot);
+      renderCollapsed(sessionId, root, terminal, block);
       continue;
     }
-    renderBlock(sessionId, root, terminal, block, snapshot);
+    renderBlock(root, terminal, block, snapshot);
   }
-}
-
-function rowMetrics(
-  terminal: Terminal,
-  root: HTMLElement,
-  bufferLine: number,
-): { top: number; height: number } | null {
-  const buffer = terminal.buffer.active;
-  const rel = bufferLine - buffer.viewportY;
-  if (rel < 0 || rel >= terminal.rows) return null;
-  const rows = terminal.element?.querySelector(".xterm-rows");
-  const row = rows?.children.item(rel) as HTMLElement | null;
-  if (!row) return null;
-  const rootRect = root.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  return {
-    top: rowRect.top - rootRect.top,
-    height: rowRect.height,
-  };
-}
-
-function blockBounds(
-  terminal: Terminal,
-  root: HTMLElement,
-  startLine: number,
-  endLine: number,
-): { top: number; height: number } | null {
-  const start = rowMetrics(terminal, root, startLine);
-  const end = rowMetrics(terminal, root, endLine);
-  const rootRect = root.getBoundingClientRect();
-  const rootHeight = root.clientHeight;
-
-  if (start && end) {
-    return { top: start.top, height: end.top + end.height - start.top };
-  }
-  if (start && !end) {
-    return { top: start.top, height: rootHeight - start.top };
-  }
-  if (!start && end) {
-    return { top: 0, height: end.top + end.height };
-  }
-
-  const buffer = terminal.buffer.active;
-  if (endLine < buffer.viewportY) return null;
-  if (startLine > buffer.viewportY + terminal.rows - 1) return null;
-
-  const cellHeight =
-    terminal.element
-      ?.querySelector(".xterm-rows > div")
-      ?.getBoundingClientRect().height ??
-    terminal.options.fontSize! * (terminal.options.lineHeight ?? 1);
-
-  const topLine = Math.max(startLine, buffer.viewportY);
-  const bottomLine = Math.min(endLine, buffer.viewportY + terminal.rows - 1);
-  const top = (topLine - buffer.viewportY) * cellHeight;
-  const height = (bottomLine - topLine + 1) * cellHeight;
-  void rootRect;
-  return { top, height };
 }
 
 function renderCollapsed(
@@ -147,15 +173,14 @@ function renderCollapsed(
   root: HTMLElement,
   terminal: Terminal,
   block: BlockChromeEntry,
-  snapshot: BlockChromeSnapshot,
 ): void {
-  const metrics = rowMetrics(terminal, root, block.startLine);
-  if (!metrics) return;
+  const prompt = lineRect(terminal, root, block.promptLine);
+  if (!prompt) return;
 
   const row = document.createElement("div");
   row.className = "tethra-block-overlay-collapsed";
-  row.style.top = `${metrics.top}px`;
-  row.style.height = `${metrics.height}px`;
+  row.style.top = `${prompt.top}px`;
+  row.style.height = `${prompt.height}px`;
 
   const duration =
     block.meta.endedAt && block.meta.startedAt
@@ -179,18 +204,23 @@ function renderCollapsed(
     scheduleBlockOverlaySync(sessionId);
   });
   root.appendChild(row);
-  void snapshot;
 }
 
 function renderBlock(
-  sessionId: string,
   root: HTMLElement,
   terminal: Terminal,
   block: BlockChromeEntry,
   snapshot: BlockChromeSnapshot,
 ): void {
-  const bounds = blockBounds(terminal, root, block.startLine, block.endLine);
-  if (!bounds || bounds.height <= 0) return;
+  const prompt = lineRect(terminal, root, block.promptLine);
+  if (!prompt) return;
+
+  const bounds = clampedFrame(
+    terminal,
+    root,
+    block.promptLine,
+    block.endLine,
+  );
 
   const failed = block.exitCode !== null && block.exitCode !== 0;
   const isActive = block.kind === "active";
@@ -201,45 +231,50 @@ function renderBlock(
       : BLOCK_COLORS.ok;
   const railOpacity = isActive ? "1" : failed ? "0.7" : "0.55";
 
-  const frame = document.createElement("div");
-  frame.className = isActive
-    ? "tethra-block-overlay-frame tethra-block-overlay-active"
-    : failed
-      ? "tethra-block-overlay-frame tethra-block-overlay-failed"
-      : "tethra-block-overlay-frame tethra-block-overlay-ok";
-  frame.style.top = `${bounds.top}px`;
-  frame.style.height = `${bounds.height}px`;
+  if (bounds) {
+    const frame = document.createElement("div");
+    frame.className = isActive
+      ? "tethra-block-overlay-frame tethra-block-overlay-active"
+      : failed
+        ? "tethra-block-overlay-frame tethra-block-overlay-failed"
+        : "tethra-block-overlay-frame tethra-block-overlay-ok";
+    frame.style.top = `${bounds.top}px`;
+    frame.style.height = `${bounds.height}px`;
 
-  const rail = document.createElement("div");
-  rail.className = "tethra-block-overlay-rail";
-  rail.style.background = railColor;
-  rail.style.opacity = railOpacity;
-  frame.appendChild(rail);
-
-  const headerTop = Math.max(0, bounds.top - HEADER_HEIGHT);
-  const header = buildHeader(block, snapshot, isActive);
-  header.style.top = `${headerTop}px`;
-  root.appendChild(header);
-
-  if (isActive && snapshot.context.waiting) {
-    const banner = buildWaitingBanner(snapshot);
-    const bannerHeight = 40;
-    banner.style.top = `${bounds.top + bounds.height - bannerHeight}px`;
-    root.appendChild(banner);
+    const rail = document.createElement("div");
+    rail.className = "tethra-block-overlay-rail";
+    rail.style.background = railColor;
+    rail.style.opacity = railOpacity;
+    frame.appendChild(rail);
+    root.appendChild(frame);
   }
 
-  root.appendChild(frame);
+  const header = buildHeader(block, isActive);
+  header.style.top = `${prompt.top}px`;
+  header.style.height = `${prompt.height}px`;
+  root.appendChild(header);
 
   const menu = buildMenuButton(block, snapshot);
-  menu.style.top = `${headerTop + 2}px`;
+  menu.style.top = `${prompt.top + 2}px`;
   root.appendChild(menu);
+
+  if (isActive && snapshot.context.waiting) {
+    const endRect = lineRect(terminal, root, block.endLine);
+    if (endRect) {
+      const vm = getViewportMetrics(terminal, root);
+      let bannerTop = endRect.top + endRect.height + BANNER_GAP;
+      const maxTop = vm.originTop + vm.viewportHeight - BANNER_HEIGHT;
+      bannerTop = Math.min(bannerTop, maxTop);
+      if (bannerTop + BANNER_HEIGHT > vm.originTop) {
+        const banner = buildWaitingBanner(snapshot);
+        banner.style.top = `${bannerTop}px`;
+        root.appendChild(banner);
+      }
+    }
+  }
 }
 
-function buildHeader(
-  block: BlockChromeEntry,
-  snapshot: BlockChromeSnapshot,
-  isActive: boolean,
-): HTMLElement {
+function buildHeader(block: BlockChromeEntry, isActive: boolean): HTMLElement {
   const header = document.createElement("div");
   header.className = "tethra-block-overlay-header";
 
@@ -265,21 +300,18 @@ function buildHeader(
       ? formatDuration(Date.now() - block.meta.startedAt)
       : "—";
     right.textContent = `running ${elapsed}`;
-    right.style.paddingRight = `${MENU_RESERVE}px`;
   } else if (block.exitCode != null && block.exitCode !== 0) {
     const duration =
       block.meta.endedAt && block.meta.startedAt
         ? formatDuration(block.meta.endedAt - block.meta.startedAt)
         : "—";
     right.innerHTML = `<span class="tethra-block-exit">exit ${block.exitCode}</span><span> · ${duration}${block.meta.endedAt ? ` · ${formatBlockTime(block.meta.endedAt)}` : ""}</span>`;
-    right.style.paddingRight = `${MENU_RESERVE}px`;
   } else if (block.meta.endedAt && block.meta.startedAt) {
     const duration = formatDuration(block.meta.endedAt - block.meta.startedAt);
     right.textContent = `${duration} · ${formatBlockTime(block.meta.endedAt)}`;
-    right.style.paddingRight = `${MENU_RESERVE}px`;
   }
+  right.style.paddingRight = `${MENU_COLUMN_WIDTH}px`;
   header.appendChild(right);
-  void snapshot;
   return header;
 }
 
