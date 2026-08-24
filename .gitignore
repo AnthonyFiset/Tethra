@@ -36,3 +36,4 @@ id_ed25519
 # Local-only maintainer notes (never publish)
 AZURE-PLAN.md
 _to_delete/
+.playwright-mcp/
