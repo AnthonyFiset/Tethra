@@ -32,7 +32,8 @@ export type CursorStylePref = "block" | "underline" | "bar";
 export const DEFAULTS = {
   landing: "launcher" as LandingPref,
   fontSize: 12.5,
-  fontFamily: "JetBrains Mono",
+  /** Must match @fontsource-variable/jetbrains-mono registered family. */
+  fontFamily: "JetBrains Mono Variable",
   lineHeight: 1.25,
   ligatures: false,
   cursorBlink: true,
@@ -88,6 +89,8 @@ export function setLandingPref(value: LandingPref): void {
 
 export function getTerminalFontSize(): number {
   const raw = Number(readString(KEYS.fontSize));
+  // Migrate pre-v0.5 default (13) to the session-reference size (12.5).
+  if (raw === 13) return DEFAULTS.fontSize;
   if (!Number.isFinite(raw) || raw < 10 || raw > 24) return DEFAULTS.fontSize;
   return raw;
 }

@@ -20,10 +20,9 @@ interface OverlayHost {
 const hosts = new Map<string, OverlayHost>();
 const pendingSync = new Map<string, number>();
 
-/** Reserve right edge for ⋮ menu column (header) — timestamps stop here. */
+/** Reserve right edge for ⋮ menu column — timestamps stop here. */
 const MENU_COLUMN_WIDTH = 34;
 /** Banner Review sits left of the ⋮ column. */
-const BANNER_MENU_GAP = 44;
 const BANNER_HEIGHT = 36;
 const BANNER_GAP = 4;
 
@@ -69,83 +68,106 @@ export function disposeBlockOverlay(sessionId: string): void {
   hosts.delete(sessionId);
 }
 
-interface ViewportMetrics {
-  originTop: number;
-  rowHeight: number;
-  viewportHeight: number;
-  viewportStart: number;
-  viewportEnd: number;
-}
-
-function measureRowHeight(terminal: Terminal): number {
-  const row = terminal.element?.querySelector(
-    ".xterm-rows > div",
+/** Actual rendered cell height from xterm (never a CSS constant). */
+function measureCellHeight(terminal: Terminal): number {
+  // xterm 6 + WebGL: no .xterm-rows — the helper textarea is sized to one cell.
+  const helper = terminal.element?.querySelector(
+    ".xterm-helper-textarea",
   ) as HTMLElement | null;
-  if (row) {
-    const h = row.getBoundingClientRect().height;
+  if (helper) {
+    const h = helper.getBoundingClientRect().height;
     if (h > 0) return h;
   }
+
+  const core = (
+    terminal as unknown as {
+      _core?: {
+        _renderService?: { dimensions?: { css?: { cell?: { height?: number } } } };
+      };
+    }
+  )._core;
+  const fromCore = core?._renderService?.dimensions?.css?.cell?.height;
+  if (typeof fromCore === "number" && fromCore > 0) return fromCore;
+
+  if (terminal.rows > 0) {
+    const screen = terminal.element?.querySelector(
+      ".xterm-screen",
+    ) as HTMLElement | null;
+    const screenH = screen?.getBoundingClientRect().height ?? 0;
+    if (screenH > 0) return screenH / terminal.rows;
+  }
+
   return terminal.options.fontSize! * (terminal.options.lineHeight ?? 1);
 }
 
-function getViewportMetrics(
-  terminal: Terminal,
-  root: HTMLElement,
-): ViewportMetrics {
-  const buffer = terminal.buffer.active;
-  const rowHeight = measureRowHeight(terminal);
-  const viewport = terminal.element?.querySelector(
-    ".xterm-viewport",
-  ) as HTMLElement | null;
-  const rootRect = root.getBoundingClientRect();
-
-  let originTop = 0;
-  let viewportHeight = root.clientHeight;
-  if (viewport) {
-    const vpRect = viewport.getBoundingClientRect();
-    originTop = vpRect.top - rootRect.top;
-    viewportHeight = vpRect.height;
-  }
-
-  return {
-    originTop,
-    rowHeight,
-    viewportHeight,
-    viewportStart: buffer.viewportY,
-    viewportEnd: buffer.viewportY + terminal.rows - 1,
-  };
-}
-
-/** Map buffer line → pixel rect within overlay root; null when line is off-screen. */
+/**
+ * Map a buffer line to overlay-root coordinates.
+ * Origin is .xterm-screen's top (where glyphs paint); row pitch is the live cell height.
+ */
 function lineRect(
   terminal: Terminal,
   root: HTMLElement,
   bufferLine: number,
-): { top: number; height: number } | null {
-  const vm = getViewportMetrics(terminal, root);
-  const rel = bufferLine - vm.viewportStart;
+): { top: number; height: number; left: number; width: number } | null {
+  const buffer = terminal.buffer.active;
+  const rel = bufferLine - buffer.viewportY;
   if (rel < 0 || rel >= terminal.rows) return null;
+
+  const rootRect = root.getBoundingClientRect();
+  const cellH = measureCellHeight(terminal);
+
+  // Prefer live DOM row when present (DOM renderer).
+  const rows = terminal.element?.querySelector(".xterm-rows");
+  const row = rows?.children.item(rel) as HTMLElement | null;
+  if (row) {
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.height > 0) {
+      return {
+        top: rowRect.top - rootRect.top,
+        height: rowRect.height,
+        left: rowRect.left - rootRect.left,
+        width: rowRect.width,
+      };
+    }
+  }
+
+  // WebGL (xterm 6): no .xterm-rows — screen origin + viewport-relative pitch.
+  const screen = terminal.element?.querySelector(
+    ".xterm-screen",
+  ) as HTMLElement | null;
+  if (!screen) return null;
+  const screenRect = screen.getBoundingClientRect();
   return {
-    top: vm.originTop + rel * vm.rowHeight,
-    height: vm.rowHeight,
+    top: screenRect.top - rootRect.top + rel * cellH,
+    height: cellH,
+    left: screenRect.left - rootRect.left,
+    width: screenRect.width,
   };
 }
 
-/** Frame from prompt row through block end, clamped to the visible viewport. */
+/** Frame from prompt row through block end, clamped to visible rows. */
 function clampedFrame(
   terminal: Terminal,
   root: HTMLElement,
   promptLine: number,
   endLine: number,
-): { top: number; height: number } | null {
-  const vm = getViewportMetrics(terminal, root);
-  if (endLine < vm.viewportStart || promptLine > vm.viewportEnd) return null;
+): { top: number; height: number; left: number; width: number } | null {
+  const buffer = terminal.buffer.active;
+  const viewportStart = buffer.viewportY;
+  const viewportEnd = buffer.viewportY + terminal.rows - 1;
+  if (endLine < viewportStart || promptLine > viewportEnd) return null;
 
-  const startLine = Math.max(promptLine, vm.viewportStart);
-  const endClamped = Math.min(endLine, vm.viewportEnd);
-  const top = vm.originTop + (startLine - vm.viewportStart) * vm.rowHeight;
-  const height = (endClamped - startLine + 1) * vm.rowHeight;
-  return height > 0 ? { top, height } : null;
+  const startLine = Math.max(promptLine, viewportStart);
+  const endClamped = Math.min(endLine, viewportEnd);
+  const start = lineRect(terminal, root, startLine);
+  const end = lineRect(terminal, root, endClamped);
+  if (!start || !end) return null;
+  return {
+    top: start.top,
+    height: end.top + end.height - start.top,
+    left: start.left,
+    width: start.width,
+  };
 }
 
 function syncBlockOverlay(sessionId: string): void {
@@ -168,19 +190,43 @@ function syncBlockOverlay(sessionId: string): void {
   }
 }
 
+function applyHorizontal(
+  el: HTMLElement,
+  left: number,
+  width: number,
+): void {
+  el.style.left = `${left}px`;
+  el.style.width = `${width}px`;
+  el.style.right = "auto";
+}
+
 function renderCollapsed(
   sessionId: string,
   root: HTMLElement,
   terminal: Terminal,
   block: BlockChromeEntry,
 ): void {
-  const prompt = lineRect(terminal, root, block.promptLine);
-  if (!prompt) return;
+  // Opaque cover over every visible line of the collapsed block — hides buffer
+  // text without stretching xterm. Summary chip sits on the prompt row when
+  // visible, else at the top of the visible span.
+  const cover = clampedFrame(
+    terminal,
+    root,
+    block.promptLine,
+    block.endLine,
+  );
+  if (!cover) return;
 
-  const row = document.createElement("div");
-  row.className = "tethra-block-overlay-collapsed";
-  row.style.top = `${prompt.top}px`;
-  row.style.height = `${prompt.height}px`;
+  const coverEl = document.createElement("div");
+  coverEl.className = "tethra-block-overlay-cover";
+  coverEl.style.top = `${cover.top}px`;
+  coverEl.style.height = `${cover.height}px`;
+  applyHorizontal(coverEl, cover.left, cover.width);
+  root.appendChild(coverEl);
+
+  const prompt = lineRect(terminal, root, block.promptLine);
+  const chipTop = prompt?.top ?? cover.top;
+  const chipHeight = prompt?.height ?? measureCellHeight(terminal);
 
   const duration =
     block.meta.endedAt && block.meta.startedAt
@@ -190,6 +236,12 @@ function renderCollapsed(
     block.exitCode !== null && block.exitCode !== 0
       ? BLOCK_COLORS.fail
       : BLOCK_COLORS.ok;
+
+  const row = document.createElement("div");
+  row.className = "tethra-block-overlay-collapsed";
+  row.style.top = `${chipTop}px`;
+  row.style.height = `${chipHeight}px`;
+  applyHorizontal(row, cover.left, cover.width);
 
   row.innerHTML = `
     <div class="tethra-block-overlay-rail" style="background:${railColor};opacity:0.4"></div>
@@ -213,6 +265,7 @@ function renderBlock(
   snapshot: BlockChromeSnapshot,
 ): void {
   const prompt = lineRect(terminal, root, block.promptLine);
+  // Header only when the OSC 133;A prompt row is on screen.
   if (!prompt) return;
 
   const bounds = clampedFrame(
@@ -240,6 +293,7 @@ function renderBlock(
         : "tethra-block-overlay-frame tethra-block-overlay-ok";
     frame.style.top = `${bounds.top}px`;
     frame.style.height = `${bounds.height}px`;
+    applyHorizontal(frame, bounds.left, bounds.width);
 
     const rail = document.createElement("div");
     rail.className = "tethra-block-overlay-rail";
@@ -252,22 +306,34 @@ function renderBlock(
   const header = buildHeader(block, isActive);
   header.style.top = `${prompt.top}px`;
   header.style.height = `${prompt.height}px`;
+  applyHorizontal(header, prompt.left, prompt.width);
   root.appendChild(header);
 
   const menu = buildMenuButton(block, snapshot);
-  menu.style.top = `${prompt.top + 2}px`;
+  menu.style.top = `${prompt.top + Math.max(0, (prompt.height - 24) / 2)}px`;
+  menu.style.left = "auto";
+  menu.style.right = `${Math.max(6, root.clientWidth - prompt.left - prompt.width + 6)}px`;
   root.appendChild(menu);
 
   if (isActive && snapshot.context.waiting) {
     const endRect = lineRect(terminal, root, block.endLine);
     if (endRect) {
-      const vm = getViewportMetrics(terminal, root);
       let bannerTop = endRect.top + endRect.height + BANNER_GAP;
-      const maxTop = vm.originTop + vm.viewportHeight - BANNER_HEIGHT;
-      bannerTop = Math.min(bannerTop, maxTop);
-      if (bannerTop + BANNER_HEIGHT > vm.originTop) {
+      // Prefer sitting just below the last line; if that would leave the
+      // viewport, pin inside the frame bottom so Review stays visible.
+      if (bounds) {
+        const maxInside = bounds.top + bounds.height - BANNER_HEIGHT - 2;
+        bannerTop = Math.min(bannerTop, maxInside);
+        bannerTop = Math.max(bannerTop, bounds.top + 2);
+      } else {
+        bannerTop = Math.min(bannerTop, root.clientHeight - BANNER_HEIGHT - 4);
+      }
+      if (bannerTop >= 0) {
         const banner = buildWaitingBanner(snapshot);
         banner.style.top = `${bannerTop}px`;
+        banner.style.left = `${prompt.left}px`;
+        banner.style.width = `${Math.max(120, prompt.width - MENU_COLUMN_WIDTH - 10)}px`;
+        banner.style.right = "auto";
         root.appendChild(banner);
       }
     }

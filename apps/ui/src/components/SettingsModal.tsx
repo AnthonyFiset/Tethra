@@ -620,7 +620,7 @@ function TerminalSection(): React.JSX.Element {
             apply();
           }}
         >
-          <option value="JetBrains Mono">JetBrains Mono</option>
+          <option value="JetBrains Mono Variable">JetBrains Mono</option>
           <option value="SF Mono">SF Mono</option>
           <option value="Menlo">Menlo</option>
           <option value="Cascadia Code">Cascadia Code</option>

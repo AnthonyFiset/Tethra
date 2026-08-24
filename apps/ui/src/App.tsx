@@ -111,6 +111,7 @@ import {
   createTerminal,
   disposeTerminal,
   focusTerminal,
+  getTerminalInstance,
   persistProjectScrollback,
   resetTerminal,
   restoreProjectScrollback,
@@ -120,10 +121,12 @@ import {
 import { injectShellText } from "./terminal/inject";
 import { clearScrollbackSnapshot } from "./terminal/scrollback";
 import {
+  flushBlockPhases,
   lastBlockCommand,
   queueBlockPhase,
   setBlockRerunHandler,
 } from "./terminal/blocks";
+import { scheduleBlockOverlaySync } from "./terminal/blockOverlay";
 import { SplitPanes } from "./terminal/SplitPanes";
 import { SessionView } from "./components/SessionView";
 import {
@@ -726,6 +729,13 @@ function Workspace({
               ? exitRaw.exit_code
               : null;
         queueBlockPhase(sessionId, event.phase, exitCode);
+        // Apply markers at the current cursor immediately — do not wait for the
+        // next PTY write (that left promptStart one line late).
+        const term = getTerminalInstance(sessionId);
+        if (term) {
+          flushBlockPhases(sessionId, term);
+          scheduleBlockOverlaySync(sessionId);
+        }
         if (typeof exitCode === "number") {
           lastExitCodes.current.set(sessionId, exitCode);
         }

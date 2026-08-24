@@ -45,6 +45,13 @@ export function shortenPath(cwd: string | undefined): string {
 }
 
 export function commandSummary(command: string): string {
-  const first = command.trim().split(/\s+/)[0] ?? "command";
-  return first.length > 40 ? `${first.slice(0, 37)}…` : first;
+  const trimmed = command.trim();
+  if (!trimmed) return "command";
+  const parts = trimmed.split(/\s+/);
+  // Keep short two-token forms ("npm install") readable in the collapsed row.
+  const summary =
+    parts.length >= 2 && (parts[0]?.length ?? 0) <= 8
+      ? `${parts[0]} ${parts[1]}`
+      : (parts[0] ?? "command");
+  return summary.length > 40 ? `${summary.slice(0, 37)}…` : summary;
 }

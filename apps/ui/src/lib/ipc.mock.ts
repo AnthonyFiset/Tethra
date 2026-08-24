@@ -577,79 +577,96 @@ function b64Terminal(text: string): string {
 function emitMockSessionFixture(sessionId: string): void {
   const cwdOsc = "\x1b]7;file://tethra-vm/home/anthony/srv/tethra\x07";
   const branchOsc = "\x1b]133;G;main\x07";
+  // No leading \r\n — promptStart binds to this same line before the command.
   const prompt =
-    "\r\n\x1b[32manthony@tethra-vm\x1b[0m:\x1b[34m~/srv/tethra\x1b[0m$ ";
+    "\x1b[32manthony@tethra-vm\x1b[0m:\x1b[34m~/srv/tethra\x1b[0m$ ";
 
-  let delay = 40;
-  const data = (text: string, extra = 80): void => {
-    const at = delay;
-    delay += extra;
-    setTimeout(() => {
-      emitTerminal(sessionId, {
-        kind: "data",
-        data: b64Terminal(text),
-        dropped: false,
-      });
-    }, at);
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const data = (text: string) => {
+    emitTerminal(sessionId, {
+      kind: "data",
+      data: b64Terminal(text),
+      dropped: false,
+    });
   };
   const block = (
     phase: "promptStart" | "commandStart" | "outputStart" | "commandEnd",
     exit_code: number | null = null,
-    extra = 60,
-  ): void => {
-    const at = delay;
-    delay += extra;
-    setTimeout(() => {
-      emitTerminal(sessionId, {
-        kind: "block",
-        phase,
-        exit_code,
-      });
-    }, at);
+  ) => {
+    emitTerminal(sessionId, { kind: "block", phase, exit_code });
   };
 
-  data(`${cwdOsc}${branchOsc}${prompt}`, 120);
+  void (async () => {
+    await sleep(80);
+    data(`${cwdOsc}${branchOsc}`);
+    await sleep(40);
 
-  // Finished ok
-  block("promptStart");
-  data("git status\r\n");
-  block("commandStart");
-  data("On branch main\r\nnothing to commit, working tree clean\r\n");
-  block("outputStart");
-  block("commandEnd", 0);
-  data(prompt, 100);
-  block("promptStart");
-  data("npm test\r\n");
-  block("commandStart");
-  data("FAIL src/app.test.ts\r\nTests: 0 passed, 1 failed\r\n");
-  block("outputStart");
-  block("commandEnd", 1);
-  data(prompt, 100);
-  block("promptStart");
-  data("npm install\r\n");
-  block("commandStart");
-  block("outputStart");
-  data(
-    Array.from({ length: 85 }, (_, i) => `added package-${i + 1}@1.0.0\r\n`).join(
-      "",
-    ),
-    150,
-  );
-  block("commandEnd", 0);
-  data(prompt, 100);
-  block("promptStart");
-  data("claude\r\n");
-  block("commandStart");
-  block("outputStart");
-  data("Agent running — waiting for approval…\r\nApprove file edit in src/lib.rs\r\n", 100);
-  setTimeout(() => {
+    // Finished ok — A+B at prompt (matches bash integration), then command, then C/D.
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("git status\r\n");
+    await sleep(80);
+    block("outputStart");
+    data("On branch main\r\nnothing to commit, working tree clean\r\n");
+    await sleep(80);
+    block("commandEnd", 0);
+
+    // Finished failed
+    await sleep(60);
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("npm test\r\n");
+    await sleep(80);
+    block("outputStart");
+    data("FAIL src/app.test.ts\r\nTests: 0 passed, 1 failed\r\n");
+    await sleep(80);
+    block("commandEnd", 1);
+
+    // Collapsed huge block (85 lines)
+    await sleep(60);
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("npm install\r\n");
+    await sleep(80);
+    block("outputStart");
+    data(
+      Array.from(
+        { length: 85 },
+        (_, i) => `added package-${i + 1}@1.0.0\r\n`,
+      ).join(""),
+    );
+    await sleep(150);
+    block("commandEnd", 0);
+
+    // Active block + agent waiting
+    await sleep(60);
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("claude\r\n");
+    await sleep(80);
+    block("outputStart");
+    // Keep buffer free of the banner copy — chrome owns that string.
+    data("Agent running — waiting for approval…\r\n");
+    await sleep(100);
     emitTerminal(sessionId, {
       kind: "attention",
       state: "waiting",
       message: "Approve file edit in src/lib.rs",
       source: "osc",
     });
-  }, delay + 80);
+  })();
 }
 
 // --- Vault ---

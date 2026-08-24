@@ -255,7 +255,16 @@ function applyPhase(
 ): void {
   switch (phase) {
     case "promptStart": {
-      const marker = terminal.registerMarker(0);
+      // Bind to the prompt row. If the cursor already advanced to an empty
+      // following line (block event arrived after the command newline), mark
+      // the previous line instead of leaving a constant off-by-one.
+      let offset = 0;
+      const buf = terminal.buffer.active;
+      const absY = buf.baseY + buf.cursorY;
+      const line = buf.getLine(absY);
+      const text = line?.translateToString(true).trim() ?? "";
+      if (!text && absY > 0) offset = -1;
+      const marker = terminal.registerMarker(offset);
       if (!marker) return;
       tracker.open.promptStart = marker;
       break;
@@ -280,11 +289,23 @@ function applyPhase(
     case "outputStart": {
       const marker = terminal.registerMarker(0);
       if (!marker) return;
-      const commandText = textBetween(
-        terminal,
-        tracker.open.commandStart,
-        marker,
-      );
+      // Prefer text on the prompt/command line (bash fires B at prompt start,
+      // before the user types — so the command lives on that line by C time).
+      let commandText = "";
+      const promptLine = tracker.open.commandStart ?? tracker.open.promptStart;
+      if (promptLine && !promptLine.isDisposed) {
+        const line = terminal.buffer.active.getLine(promptLine.line);
+        const raw = line?.translateToString(true) ?? "";
+        // Strip a common user@host:path$ / ❯ prefix if present.
+        commandText = raw.replace(/^.*?[$#%>] ?/, "").trim();
+      }
+      if (!commandText) {
+        commandText = textBetween(
+          terminal,
+          tracker.open.commandStart,
+          marker,
+        );
+      }
       tracker.open.outputStart = marker;
       tracker.open.commandText = commandText;
       break;

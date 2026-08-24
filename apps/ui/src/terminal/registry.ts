@@ -142,6 +142,11 @@ export function createTerminal(
   const existing = terminals.get(sessionId);
   if (existing) return existing;
 
+  // Font metrics must come from Terminal options (not CSS). Reference: 12.5px.
+  const fontSize = getTerminalFontSize();
+  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+  const lineHeight = getTerminalLineHeight();
+
   const terminal = new Terminal({
     allowProposedApi: true,
     cursorBlink: getTerminalCursorBlink(),
@@ -151,9 +156,9 @@ export function createTerminal(
     ignoreBracketedPasteMode: false,
     // macOS Option sends meta for readline / agent keybindings.
     macOptionIsMeta: true,
-    fontFamily: `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace`,
-    fontSize: getTerminalFontSize(),
-    lineHeight: getTerminalLineHeight(),
+    fontFamily,
+    fontSize,
+    lineHeight,
     letterSpacing: 0,
     scrollback: getTerminalScrollback(),
     // iTerm/Terminal.app–like ED2: push cleared viewport into scrollback instead
@@ -162,7 +167,15 @@ export function createTerminal(
     scrollOnUserInput: true,
     theme: themeFromAppTokens(),
   });
+  // Re-assert after construction — some addons/themes can clobber options.
+  terminal.options.fontSize = fontSize;
+  terminal.options.fontFamily = fontFamily;
+  terminal.options.lineHeight = lineHeight;
   applyFontFeatures(terminal);
+  // Dev harness: expose for overlay/font debugging in the browser console.
+  if (import.meta.env.VITE_TETHRA_MOCK === "1") {
+    (window as unknown as { __tethraTerm?: Terminal }).__tethraTerm = terminal;
+  }
   const fit = new FitAddon();
   terminal.loadAddon(fit);
 
@@ -281,6 +294,31 @@ export function attachTerminal(
       // xterm's DOM/canvas renderer remains active as the required fallback.
     }
   }
+  // Wait for JetBrains Mono to resolve before measuring cells / fitting —
+  // otherwise first paint uses a fallback face and cell height drifts.
+  void (async () => {
+    try {
+      await document.fonts.load(
+        `${getTerminalFontSize()}px "JetBrains Mono Variable"`,
+      );
+      await document.fonts.ready;
+    } catch {
+      // ignore
+    }
+    if (!terminals.has(sessionId)) return;
+    const size = getTerminalFontSize();
+    const family = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+    record.terminal.options.fontSize = size;
+    record.terminal.options.fontFamily = family;
+    record.terminal.options.lineHeight = getTerminalLineHeight();
+    fitTerminal(sessionId);
+    try {
+      record.terminal.refresh(0, record.terminal.rows - 1);
+    } catch {
+      // ignore
+    }
+    scheduleBlockOverlaySync(sessionId);
+  })();
   fitTerminal(sessionId);
   record.terminal.focus();
 }
@@ -302,10 +340,13 @@ export function writeTerminal(
 ): void {
   const record = terminals.get(sessionId);
   if (!record) return;
+  // Bind any pending OSC 133 markers to the cursor BEFORE these bytes move it.
+  // (Block events can arrive between writes; flushing only in the write
+  // callback left markers one line late.)
+  flushBlockPhases(sessionId, record.terminal);
   const raw = data instanceof Uint8Array ? data : Uint8Array.from(data);
   const bytes = record.syncFilter.push(raw);
   if (bytes.length === 0) {
-    flushBlockPhases(sessionId, record.terminal);
     refreshActiveBlock(sessionId, record.terminal);
     scheduleBlockOverlaySync(sessionId);
     return;
@@ -320,7 +361,7 @@ export function writeTerminal(
 /** Re-apply prefs from localStorage to every live terminal. */
 export function applyTerminalPrefs(): void {
   const fontSize = getTerminalFontSize();
-  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace`;
+  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
   const lineHeight = getTerminalLineHeight();
   const cursorBlink = getTerminalCursorBlink();
   const cursorStyle = getTerminalCursorStyle();

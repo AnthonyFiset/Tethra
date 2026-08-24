@@ -187,9 +187,10 @@ export function TerminalView({
         aria-label="SSH terminal"
         className="size-full overflow-hidden px-3.5 py-2"
       />
+      {/* Unpadded: overlay math uses live .xterm-rows rects against this root. */}
       <div
         ref={overlayRef}
-        className="tethra-block-overlay-root absolute inset-0 overflow-hidden px-3.5 py-2"
+        className="tethra-block-overlay-root absolute inset-0 overflow-hidden"
         aria-hidden="true"
       />
 
