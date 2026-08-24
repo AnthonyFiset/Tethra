@@ -199,17 +199,9 @@
 
 .tethra-block-overlay-frame,
 .tethra-block-overlay-header,
-.tethra-block-overlay-collapsed,
-.tethra-block-overlay-waiting,
-.tethra-block-overlay-cover {
+.tethra-block-overlay-waiting {
   position: absolute;
   box-sizing: border-box;
-}
-
-.tethra-block-overlay-cover {
-  background: var(--terminal-bg, #0d0d0d);
-  pointer-events: none;
-  z-index: 0;
 }
 
 .tethra-block-overlay-frame {
@@ -266,33 +258,6 @@
   z-index: 1;
 }
 
-.tethra-block-overlay-collapsed {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 14px;
-  border-radius: 8px;
-  color: var(--color-fg-subtle);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  pointer-events: auto;
-  cursor: pointer;
-  background: #0d0d0d;
-  z-index: 1;
-}
-
-.tethra-block-overlay-chevron {
-  color: var(--color-fg-subtle);
-}
-
-.tethra-block-overlay-cmd {
-  color: var(--color-fg-muted);
-}
-
-.tethra-block-overlay-lines,
-.tethra-block-overlay-time {
-  font-size: 11px;
-}
 
 .tethra-block-overlay-spacer {
   flex: 1;

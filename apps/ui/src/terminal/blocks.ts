@@ -9,7 +9,6 @@ import {
   disposeBlockOverlay,
   scheduleBlockOverlaySync,
 } from "./blockOverlay";
-import { COLLAPSE_LINE_THRESHOLD } from "./blockChrome";
 
 interface BlockMeta {
   cwd?: string;
@@ -28,7 +27,6 @@ interface FinishedBlock {
   exitCode: number | null;
   meta: BlockMeta;
   lineCount: number;
-  collapsed: boolean;
 }
 
 interface ActiveBlock {
@@ -73,7 +71,6 @@ export type BlockChromeEntry = {
   exitCode: number | null;
   meta: BlockMeta;
   lineCount: number;
-  collapsed: boolean;
 };
 
 export type BlockChromeSnapshot = {
@@ -148,19 +145,6 @@ export function setBlockSessionContext(
   syncChrome(sessionId);
 }
 
-export function setBlockCollapsed(
-  sessionId: string,
-  blockId: string,
-  collapsed: boolean,
-): void {
-  const tracker = trackers.get(sessionId);
-  if (!tracker) return;
-  const block = tracker.finished.find((entry) => entry.id === blockId);
-  if (!block) return;
-  block.collapsed = collapsed;
-  syncChrome(sessionId);
-}
-
 export function getBlockChromeSnapshot(
   sessionId: string,
 ): BlockChromeSnapshot | undefined {
@@ -184,7 +168,6 @@ export function getBlockChromeSnapshot(
       exitCode: block.exitCode,
       meta: block.meta,
       lineCount: block.lineCount,
-      collapsed: block.collapsed,
     });
   }
 
@@ -206,7 +189,6 @@ export function getBlockChromeSnapshot(
         exitCode: null,
         meta: tracker.active.meta,
         lineCount: Math.max(1, endLine - promptLine + 1),
-        collapsed: false,
       });
     }
   }
@@ -339,7 +321,6 @@ function applyPhase(
         exitCode,
         meta,
         lineCount,
-        collapsed: lineCount >= COLLAPSE_LINE_THRESHOLD,
       });
       tracker.active = undefined;
       while (tracker.finished.length > 80) {

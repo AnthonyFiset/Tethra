@@ -38,7 +38,7 @@ export function FilesView({
                   type="button"
                   disabled={busy}
                   onClick={() => onOpenFiles(host)}
-                  className="flex w-full cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-strong disabled:opacity-50"
+                  className="flex w-full cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-strong hover:bg-hover disabled:opacity-50"
                 >
                   <span
                     className="grid size-9 shrink-0 place-items-center rounded-[10px] text-sm font-bold"

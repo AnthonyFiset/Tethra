@@ -123,7 +123,7 @@ export function LeftRail({
           type="button"
           onClick={onOpenVault}
           className={cn(
-            "flex w-full cursor-pointer items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 py-2 text-left transition-colors hover:border-line-strong",
+            "flex w-full cursor-pointer items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 py-2 text-left transition-colors hover:border-line-strong hover:bg-hover",
             collapsed && "justify-center px-0",
           )}
         >
@@ -170,7 +170,7 @@ export function LeftRail({
                 collapsed && "w-9 justify-center px-0",
                 active
                   ? "bg-hover font-medium text-fg"
-                  : "text-fg-muted hover:bg-hover/60 hover:text-fg",
+                  : "text-fg-muted hover:bg-hover hover:text-fg",
               )}
             >
               <span
@@ -230,7 +230,7 @@ export function LeftRail({
                   key={session.id}
                   type="button"
                   onClick={() => onReattach(session)}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition-colors hover:bg-hover/60 hover:text-fg"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
                 >
                   <span
                     className="grid size-5 shrink-0 place-items-center rounded-md"
@@ -268,7 +268,7 @@ export function LeftRail({
             type="button"
             onClick={onSettings}
             className={cn(
-              "flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-fg-subtle transition-colors hover:bg-hover/60 hover:text-fg",
+              "flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-fg-subtle transition-colors hover:bg-hover hover:text-fg",
               collapsed && "w-9 justify-center px-0",
             )}
           >

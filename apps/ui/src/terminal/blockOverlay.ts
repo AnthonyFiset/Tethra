@@ -2,10 +2,9 @@ import type { Terminal } from "@xterm/xterm";
 import { writeClipboardText } from "../lib/ipc";
 import { armShellInjectGate } from "./inject";
 import type { BlockChromeSnapshot, BlockChromeEntry } from "./blocks";
-import { getBlockChromeSnapshot, setBlockCollapsed } from "./blocks";
+import { getBlockChromeSnapshot } from "./blocks";
 import {
   BLOCK_COLORS,
-  commandSummary,
   formatBlockTime,
   formatDuration,
   shortenPath,
@@ -182,10 +181,6 @@ function syncBlockOverlay(sessionId: string): void {
   root.replaceChildren();
 
   for (const block of snapshot.blocks) {
-    if (block.collapsed) {
-      renderCollapsed(sessionId, root, terminal, block);
-      continue;
-    }
     renderBlock(root, terminal, block, snapshot);
   }
 }
@@ -200,62 +195,18 @@ function applyHorizontal(
   el.style.right = "auto";
 }
 
-function renderCollapsed(
-  sessionId: string,
-  root: HTMLElement,
+/** Last buffer line in [promptLine, endLine] that still has visible text. */
+function lastContentLine(
   terminal: Terminal,
-  block: BlockChromeEntry,
-): void {
-  // Opaque cover over every visible line of the collapsed block — hides buffer
-  // text without stretching xterm. Summary chip sits on the prompt row when
-  // visible, else at the top of the visible span.
-  const cover = clampedFrame(
-    terminal,
-    root,
-    block.promptLine,
-    block.endLine,
-  );
-  if (!cover) return;
-
-  const coverEl = document.createElement("div");
-  coverEl.className = "tethra-block-overlay-cover";
-  coverEl.style.top = `${cover.top}px`;
-  coverEl.style.height = `${cover.height}px`;
-  applyHorizontal(coverEl, cover.left, cover.width);
-  root.appendChild(coverEl);
-
-  const prompt = lineRect(terminal, root, block.promptLine);
-  const chipTop = prompt?.top ?? cover.top;
-  const chipHeight = prompt?.height ?? measureCellHeight(terminal);
-
-  const duration =
-    block.meta.endedAt && block.meta.startedAt
-      ? formatDuration(block.meta.endedAt - block.meta.startedAt)
-      : "—";
-  const railColor =
-    block.exitCode !== null && block.exitCode !== 0
-      ? BLOCK_COLORS.fail
-      : BLOCK_COLORS.ok;
-
-  const row = document.createElement("div");
-  row.className = "tethra-block-overlay-collapsed";
-  row.style.top = `${chipTop}px`;
-  row.style.height = `${chipHeight}px`;
-  applyHorizontal(row, cover.left, cover.width);
-
-  row.innerHTML = `
-    <div class="tethra-block-overlay-rail" style="background:${railColor};opacity:0.4"></div>
-    <span class="tethra-block-overlay-chevron">›</span>
-    <span class="tethra-block-overlay-cmd">${escapeHtml(commandSummary(block.commandText))}</span>
-    <span class="tethra-block-overlay-lines">${block.lineCount.toLocaleString()} lines</span>
-    <span class="tethra-block-overlay-spacer"></span>
-    <span class="tethra-block-overlay-time">${duration}${block.meta.endedAt ? ` · ${formatBlockTime(block.meta.endedAt)}` : ""}</span>
-  `;
-  row.addEventListener("click", () => {
-    setBlockCollapsed(sessionId, block.id, false);
-    scheduleBlockOverlaySync(sessionId);
-  });
-  root.appendChild(row);
+  promptLine: number,
+  endLine: number,
+): number {
+  const buf = terminal.buffer.active;
+  for (let y = endLine; y >= promptLine; y--) {
+    const text = buf.getLine(y)?.translateToString(true).trim() ?? "";
+    if (text) return y;
+  }
+  return endLine;
 }
 
 function renderBlock(
@@ -316,17 +267,24 @@ function renderBlock(
   root.appendChild(menu);
 
   if (isActive && snapshot.context.waiting) {
-    const endRect = lineRect(terminal, root, block.endLine);
-    if (endRect) {
-      let bannerTop = endRect.top + endRect.height + BANNER_GAP;
-      // Prefer sitting just below the last line; if that would leave the
-      // viewport, pin inside the frame bottom so Review stays visible.
-      if (bounds) {
-        const maxInside = bounds.top + bounds.height - BANNER_HEIGHT - 2;
-        bannerTop = Math.min(bannerTop, maxInside);
-        bannerTop = Math.max(bannerTop, bounds.top + 2);
-      } else {
-        bannerTop = Math.min(bannerTop, root.clientHeight - BANNER_HEIGHT - 4);
+    // Anchor below the last *text* line so trailing empty cursor rows don't
+    // push the banner off-screen (which used to clamp it over block content).
+    const contentLine = lastContentLine(
+      terminal,
+      block.promptLine,
+      block.endLine,
+    );
+    const contentRect = lineRect(terminal, root, contentLine);
+    if (contentRect) {
+      const maxTop = root.clientHeight - BANNER_HEIGHT - 4;
+      let bannerTop = contentRect.top + contentRect.height + BANNER_GAP;
+      // Never pull the banner up over the last text line — clip off the
+      // bottom of the overlay instead of covering buffer glyphs.
+      if (bannerTop > maxTop) {
+        bannerTop = Math.max(contentRect.top + contentRect.height + 1, maxTop);
+      }
+      if (bannerTop < contentRect.top + contentRect.height) {
+        bannerTop = contentRect.top + contentRect.height + 1;
       }
       if (bannerTop >= 0) {
         const banner = buildWaitingBanner(snapshot);
@@ -513,12 +471,4 @@ function showBlockMenu(
   document.body.appendChild(menu);
   window.addEventListener("mousedown", onDown, true);
   window.addEventListener("keydown", onKey, true);
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

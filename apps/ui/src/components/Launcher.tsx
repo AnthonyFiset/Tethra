@@ -1,5 +1,5 @@
-import { Folder, Plus, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, Folder, Plus, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   HostSummaryDto,
   ProjectSummaryDto,
@@ -69,6 +69,26 @@ export function Launcher({
   const [quick, setQuick] = useState("");
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (!sortMenuRef.current?.contains(event.target as Node)) {
+        setSortMenuOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSortMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [sortMenuOpen]);
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -86,6 +106,14 @@ export function Launcher({
     }));
   }, [allTags, hosts]);
 
+  const runningByHost = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const session of runningSessions) {
+      map.set(session.hostId, (map.get(session.hostId) ?? 0) + 1);
+    }
+    return map;
+  }, [runningSessions]);
+
   const filteredHosts = useMemo(() => {
     let list = [...hosts];
     if (activeTags.length > 0) {
@@ -95,20 +123,16 @@ export function Launcher({
     }
     list.sort((a, b) => {
       if (sortMode === "name") return a.label.localeCompare(b.label);
-      const aOpen = openHostIds?.has(a.id) ? 0 : 1;
-      const bOpen = openHostIds?.has(b.id) ? 0 : 1;
-      return aOpen - bOpen || a.label.localeCompare(b.label);
+      // Recent: open tabs → running agents → everyone else, then name.
+      const rank = (id: string): number => {
+        if (openHostIds?.has(id)) return 0;
+        if (runningByHost.has(id)) return 1;
+        return 2;
+      };
+      return rank(a.id) - rank(b.id) || a.label.localeCompare(b.label);
     });
     return list;
-  }, [hosts, activeTags, sortMode, openHostIds]);
-
-  const runningByHost = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const session of runningSessions) {
-      map.set(session.hostId, (map.get(session.hostId) ?? 0) + 1);
-    }
-    return map;
-  }, [runningSessions]);
+  }, [hosts, activeTags, sortMode, openHostIds, runningByHost]);
 
   const emptyVault = hosts.length === 0;
 
@@ -185,21 +209,56 @@ export function Launcher({
                 key={tag}
                 type="button"
                 onClick={() => toggleTag(tag)}
-                className="h-6 cursor-pointer rounded-full border border-line px-[11px] text-[11.5px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
+                className="h-6 cursor-pointer rounded-full border border-line px-[11px] text-[11.5px] text-fg-muted transition-colors hover:border-line-strong hover:bg-hover hover:text-fg"
               >
                 {tag}
               </button>
             ))}
           <span className="flex-1" />
-          <button
-            type="button"
-            onClick={() =>
-              setSortMode((m) => (m === "recent" ? "name" : "recent"))
-            }
-            className="flex cursor-pointer items-center gap-1 text-[11.5px] text-fg-subtle hover:text-fg-muted"
-          >
-            Arrange by: {sortMode === "recent" ? "Recent" : "Name"}
-          </button>
+          <div ref={sortMenuRef} className="relative">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={sortMenuOpen}
+              onClick={() => setSortMenuOpen((open) => !open)}
+              className="flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-fg-subtle transition-colors hover:bg-hover hover:text-fg-muted"
+            >
+              Arrange by: {sortMode === "recent" ? "Recent" : "Name"}
+              <ChevronDown size={11} strokeWidth={2} />
+            </button>
+            {sortMenuOpen && (
+              <div
+                role="menu"
+                className="absolute top-full right-0 z-20 mt-1 min-w-[7.5rem] rounded-md border border-line-strong bg-elevated p-1 shadow-lg shadow-black/40"
+              >
+                {(
+                  [
+                    { id: "recent", label: "Recent" },
+                    { id: "name", label: "Name" },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={sortMode === option.id}
+                    onClick={() => {
+                      setSortMode(option.id);
+                      setSortMenuOpen(false);
+                    }}
+                    className={cn(
+                      "flex w-full cursor-pointer items-center rounded px-2.5 py-1.5 text-left text-[12px] transition-colors",
+                      sortMode === option.id
+                        ? "bg-hover text-fg"
+                        : "text-fg-muted hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -244,7 +303,7 @@ export function Launcher({
                       key={tag}
                       type="button"
                       onClick={() => toggleTag(tag)}
-                      className="flex cursor-pointer items-center gap-[11px] rounded-panel border border-line bg-surface px-[15px] py-[13px] text-left transition-colors hover:border-line-strong"
+                      className="flex cursor-pointer items-center gap-[11px] rounded-panel border border-line bg-surface px-[15px] py-[13px] text-left transition-colors hover:border-line-strong hover:bg-hover"
                     >
                       <span
                         className="grid size-8 shrink-0 place-items-center rounded-[9px]"
@@ -338,7 +397,7 @@ function HostTile({
 
   return (
     <div
-      className="group relative flex min-w-0 cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-[14px] transition-colors hover:border-line-strong"
+      className="group relative flex min-w-0 cursor-pointer items-center gap-3 rounded-panel border border-line bg-surface px-4 py-[14px] transition-colors hover:border-line-strong hover:bg-hover"
       onClick={() => {
         if (!connecting) onConnect();
       }}

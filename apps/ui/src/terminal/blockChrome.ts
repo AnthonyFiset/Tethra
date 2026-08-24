@@ -18,8 +18,6 @@ export const BLOCK_COLORS = {
   menuWidth: "190px",
 } as const;
 
-export const COLLAPSE_LINE_THRESHOLD = 80;
-
 export function formatBlockTime(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, {
     hour: "numeric",
@@ -42,16 +40,4 @@ export function shortenPath(cwd: string | undefined): string {
   if (!cwd) return "";
   const home = cwd.replace(/^\/Users\/[^/]+/, "~");
   return home.replace(/^\/home\/[^/]+/, "~");
-}
-
-export function commandSummary(command: string): string {
-  const trimmed = command.trim();
-  if (!trimmed) return "command";
-  const parts = trimmed.split(/\s+/);
-  // Keep short two-token forms ("npm install") readable in the collapsed row.
-  const summary =
-    parts.length >= 2 && (parts[0]?.length ?? 0) <= 8
-      ? `${parts[0]} ${parts[1]}`
-      : (parts[0] ?? "command");
-  return summary.length > 40 ? `${summary.slice(0, 37)}…` : summary;
 }

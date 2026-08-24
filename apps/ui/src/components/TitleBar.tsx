@@ -129,7 +129,7 @@ export function TitleBar({
           onClick={onOpenPalette}
           className={cn(
             "relative z-10 mx-auto flex h-[26px] w-full max-w-[300px] cursor-pointer items-center gap-2 rounded-md border border-line bg-surface px-2.5",
-            "text-[12px] text-fg-subtle transition-colors hover:border-line-strong hover:text-fg-muted",
+            "text-[12px] text-fg-subtle transition-colors hover:border-line-strong hover:bg-hover hover:text-fg-muted",
           )}
         >
           <Search size={13} />

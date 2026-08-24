@@ -628,7 +628,7 @@ function emitMockSessionFixture(sessionId: string): void {
     await sleep(80);
     block("commandEnd", 1);
 
-    // Collapsed huge block (85 lines)
+    // Long finished block (full output visible — no collapse in v0.5)
     await sleep(60);
     data(`\r\n${prompt}`);
     await sleep(120);
