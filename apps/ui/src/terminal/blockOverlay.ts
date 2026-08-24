@@ -309,6 +309,7 @@ function buildHeader(block: BlockChromeEntry, isActive: boolean): HTMLElement {
   header.className = "tethra-block-overlay-header";
 
   const path = document.createElement("span");
+  path.className = "tethra-block-header-path";
   path.textContent = shortenPath(block.meta.cwd) || "—";
   header.appendChild(path);
 
@@ -317,6 +318,26 @@ function buildHeader(block: BlockChromeEntry, isActive: boolean): HTMLElement {
     branch.className = "tethra-block-branch";
     branch.textContent = block.meta.gitBranch;
     header.appendChild(branch);
+  }
+
+  const command = (block.commandText || "").trim();
+  if (command) {
+    const cmdWrap = document.createElement("span");
+    cmdWrap.className = "tethra-block-header-cmd";
+    const prompt = document.createElement("span");
+    prompt.className = isActive
+      ? "tethra-block-header-prompt is-active"
+      : block.exitCode != null && block.exitCode !== 0
+        ? "tethra-block-header-prompt is-failed"
+        : "tethra-block-header-prompt is-ok";
+    prompt.textContent = "❯";
+    const cmd = document.createElement("span");
+    cmd.className = "tethra-block-header-cmd-text";
+    cmd.textContent = command;
+    cmd.title = command;
+    cmdWrap.appendChild(prompt);
+    cmdWrap.appendChild(cmd);
+    header.appendChild(cmdWrap);
   }
 
   const spacer = document.createElement("span");

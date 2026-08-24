@@ -264,16 +264,58 @@
   z-index: 1;
 }
 
+.tethra-block-header-path {
+  flex-shrink: 0;
+}
+
+.tethra-block-header-cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.tethra-block-header-prompt {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.tethra-block-header-prompt.is-ok {
+  color: #3fb950;
+}
+
+.tethra-block-header-prompt.is-failed {
+  color: var(--color-danger);
+}
+
+.tethra-block-header-prompt.is-active {
+  color: #3d8ef0;
+}
+
+.tethra-block-header-cmd-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-fg);
+  font-size: 12.5px;
+}
 
 .tethra-block-overlay-spacer {
-  flex: 1;
+  flex: 0 0 8px;
+  min-width: 8px;
 }
 
 .tethra-block-branch {
+  flex-shrink: 0;
   color: #8bb8ff;
 }
 
 .tethra-block-header-meta {
+  flex-shrink: 0;
   color: var(--color-fg-subtle);
 }
 
