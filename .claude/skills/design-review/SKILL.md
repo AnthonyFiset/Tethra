@@ -26,10 +26,19 @@ Use the Claude-in-Chrome tools (load via ToolSearch if deferred): open the
 URL in a fresh tab and screenshot each surface at TWO window sizes —
 1440×900 and 900×600 (the small size exposes scroll/clipping bugs):
 
-- Launcher/home, Hosts list, a host form (edit mode)
+- Launcher/home, Hosts list
 - A terminal session (mock), Files/SFTP, Tunnels, Identities/Vault
 - Settings — EVERY section, and scroll each section to the bottom
-- Command palette open; one modal open (e.g. add tunnel)
+- Command palette open
+- **EVERY dialog/modal/sheet in the app — no sampling.** Enumerate them
+  from the code (`grep -rl "Dialog\|Modal" apps/ui/src`) and open each
+  one: host form (edit, with all sections), project form, add tunnel,
+  rename, assist settings, tools hint. For each, at the SMALL size run
+  the §3 check programmatically: dialog height ≤ viewport, one
+  `overflow-y: auto` body, header/footer reachable, nothing clipped
+  offscreen (`getBoundingClientRect` top ≥ 0 and bottom ≤ innerHeight).
+  A skipped dialog is a failed review — the host-form clipping bug
+  shipped because a review sampled instead of enumerating.
 
 ## 3. Audit
 
