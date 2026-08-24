@@ -1026,7 +1026,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "argon2 0.5.3",
  "async-trait",
@@ -4221,7 +4221,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4231,7 +4231,7 @@ dependencies = [
 
 [[package]]
 name = "platform-desktop"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4246,7 +4246,7 @@ dependencies = [
 
 [[package]]
 name = "platform-ios"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6505,7 +6505,7 @@ dependencies = [
 
 [[package]]
 name = "tethra"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6535,7 +6535,7 @@ dependencies = [
 
 [[package]]
 name = "tethra-sync-server"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "argon2 0.5.3",
  "axum",
