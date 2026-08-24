@@ -1,41 +1,25 @@
 import { useEffect, useState } from "react";
 import {
-  Bot,
   Keyboard,
-  KeyRound,
   Monitor,
   Palette,
-  RefreshCw,
   Settings2,
-  Sparkles,
   TerminalSquare,
   Wrench,
   X,
 } from "lucide-react";
-import {
-  identityDelete,
-  identityRename,
-  identitySetSyncSecret,
-  listIdentities,
-  updateCheck,
-  vaultSetIdleLockSecs,
-  type AgentSpecDto,
-  type IdentitySummaryDto,
-} from "../lib/ipc";
+import { updateCheck } from "../lib/ipc";
+import type { SurfaceId } from "../surfaces/SurfaceShell";
 import { useChrome } from "../lib/ChromeContext";
 import { modKeyLabel, shiftModLabel, type ChromeStyle } from "../lib/chrome";
 import {
   DEFAULTS,
   getChromeOpacity,
   getDefaultShell,
-  getIdleLockSecs,
-  getLandingPref,
+    getLandingPref,
   getLoginShell,
   getMaterialPref,
   getTerminalBell,
-  getNotifyDone,
-  getNotifyFailed,
-  getNotifyWaiting,
   getTerminalCopyOnSelect,
   getTerminalCursorBlink,
   getTerminalCursorStyle,
@@ -45,18 +29,13 @@ import {
   getTerminalLineHeight,
   getTerminalOpacity,
   getTerminalScrollback,
-  IDLE_LOCK_OPTIONS,
-  resetTerminalPrefs,
+    resetTerminalPrefs,
   setChromeOpacity,
   setDefaultShell,
-  setIdleLockSecs,
-  setLandingPref,
+    setLandingPref,
   setLoginShell,
   setMaterialPref,
   setTerminalBell,
-  setNotifyDone,
-  setNotifyFailed,
-  setNotifyWaiting,
   setTerminalCopyOnSelect,
   setTerminalCursorBlink,
   setTerminalCursorStyle,
@@ -76,9 +55,6 @@ import {
   loadMaterialCapabilities,
 } from "../lib/materials";
 import type { MaterialCapabilities } from "../lib/ipc";
-import { AssistSettingsPanel } from "./AssistSettingsModal";
-import { SyncSettingsPanel } from "./SyncSettingsModal";
-import { ChangePasswordPanel } from "../vault/ChangePasswordModal";
 import { Button } from "./ui/Button";
 import { Dialog } from "./ui/Dialog";
 import { ErrorBanner, Field } from "./ui/Field";
@@ -89,12 +65,27 @@ export type SettingsSectionId =
   | "appearance"
   | "terminal"
   | "shell"
-  | "vault"
-  | "sync"
-  | "ai"
-  | "agents"
   | "keyboard"
   | "advanced";
+
+/** Former settings sections that are now first-class surfaces. */
+export type MigratedSettingsSection = "vault" | "sync" | "ai" | "agents";
+
+export function surfaceForSettingsSection(
+  section: string,
+): SurfaceId | undefined {
+  switch (section) {
+    case "vault":
+    case "sync":
+      return "vault";
+    case "ai":
+      return "assist";
+    case "agents":
+      return "agents";
+    default:
+      return undefined;
+  }
+}
 
 const SECTIONS: Array<{
   id: SettingsSectionId;
@@ -106,7 +97,7 @@ const SECTIONS: Array<{
     id: "general",
     label: "General",
     icon: <Settings2 size={14} />,
-    keywords: "startup landing updates",
+    keywords: "startup landing updates vault sync assist agents identities",
   },
   {
     id: "appearance",
@@ -127,30 +118,6 @@ const SECTIONS: Array<{
     keywords: "shell integration osc login env",
   },
   {
-    id: "vault",
-    label: "Vault",
-    icon: <KeyRound size={14} />,
-    keywords: "password lock master recovery idle auto-lock identity ssh key",
-  },
-  {
-    id: "sync",
-    label: "Sync",
-    icon: <RefreshCw size={14} />,
-    keywords: "backend sync host join reset",
-  },
-  {
-    id: "ai",
-    label: "AI providers",
-    icon: <Sparkles size={14} />,
-    keywords: "assist anthropic openai azure api key model",
-  },
-  {
-    id: "agents",
-    label: "Agents",
-    icon: <Bot size={14} />,
-    keywords: "claude codex aider catalog byok inject notify notification waiting",
-  },
-  {
     id: "keyboard",
     label: "Keyboard",
     icon: <Keyboard size={14} />,
@@ -163,200 +130,6 @@ const SECTIONS: Array<{
     keywords: "diagnostics reset layout version catalog",
   },
 ];
-
-interface SettingsModalProps {
-  open: boolean;
-  onClose: () => void;
-  initialSection?: SettingsSectionId;
-  sidebarCollapsed: boolean;
-  onSidebarCollapsedChange: (collapsed: boolean) => void;
-  onHostsMayHaveChanged: () => void;
-  onVaultReplaced: () => void;
-  onAssistChanged?: () => void;
-  agents: AgentSpecDto[];
-  appVersion?: string;
-}
-
-export function SettingsModal({
-  open,
-  onClose,
-  initialSection = "general",
-  sidebarCollapsed,
-  onSidebarCollapsedChange,
-  onHostsMayHaveChanged,
-  onVaultReplaced,
-  onAssistChanged,
-  agents,
-  appVersion,
-}: SettingsModalProps): React.JSX.Element | null {
-  const chrome = useChrome();
-  const [section, setSection] = useState<SettingsSectionId>(initialSection);
-  const pageShell = chrome !== "mac";
-
-  useEffect(() => {
-    if (open) setSection(initialSection);
-  }, [open, initialSection]);
-
-  useEffect(() => {
-    if (!open || !pageShell) return;
-    function onKey(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, pageShell, onClose]);
-
-  if (!open) return null;
-
-  const body = (
-    <SettingsBody
-      section={section}
-      setSection={setSection}
-      sidebarCollapsed={sidebarCollapsed}
-      onSidebarCollapsedChange={onSidebarCollapsedChange}
-      onHostsMayHaveChanged={onHostsMayHaveChanged}
-      onVaultReplaced={onVaultReplaced}
-      onAssistChanged={onAssistChanged}
-      agents={agents}
-      appVersion={appVersion}
-      onClose={onClose}
-      chrome={chrome}
-      tall={pageShell}
-    />
-  );
-
-  if (pageShell) {
-    return (
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        className="fixed inset-0 z-50 flex flex-col bg-base"
-      >
-        <div className="titlebar flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
-          <span className="text-[15px] font-semibold text-fg">Settings</span>
-          <button
-            type="button"
-            aria-label="Close settings"
-            onClick={onClose}
-            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1">{body}</div>
-      </div>
-    );
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      title="Settings"
-      titleSrOnly
-      width="xl"
-      contentClassName="!p-0 overflow-hidden"
-    >
-      {body}
-    </Dialog>
-  );
-}
-
-function SettingsBody({
-  section,
-  setSection,
-  sidebarCollapsed,
-  onSidebarCollapsedChange,
-  onHostsMayHaveChanged,
-  onVaultReplaced,
-  onAssistChanged,
-  agents,
-  appVersion,
-  onClose,
-  chrome,
-  tall,
-}: {
-  section: SettingsSectionId;
-  setSection: (id: SettingsSectionId) => void;
-  sidebarCollapsed: boolean;
-  onSidebarCollapsedChange: (collapsed: boolean) => void;
-  onHostsMayHaveChanged: () => void;
-  onVaultReplaced: () => void;
-  onAssistChanged?: () => void;
-  agents: AgentSpecDto[];
-  appVersion?: string;
-  onClose: () => void;
-  chrome: ChromeStyle;
-  tall: boolean;
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        "flex h-full",
-        tall ? "min-h-0" : "min-h-[420px] max-h-[min(72vh,640px)]",
-      )}
-    >
-      <nav
-        aria-label="Settings sections"
-        className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-line bg-surface p-2"
-      >
-        {SECTIONS.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            onClick={() => setSection(entry.id)}
-            className={cn(
-              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
-              section === entry.id
-                ? "bg-hover text-fg"
-                : "text-fg-muted hover:bg-hover/60 hover:text-fg",
-            )}
-          >
-            <span className="text-fg-subtle">{entry.icon}</span>
-            {entry.label}
-          </button>
-        ))}
-      </nav>
-      <div className="min-w-0 flex-1 overflow-y-auto p-5">
-        <SectionHeading section={section} />
-        {section === "general" && <GeneralSection appVersion={appVersion} />}
-        {section === "appearance" && (
-          <AppearanceSection
-            sidebarCollapsed={sidebarCollapsed}
-            onSidebarCollapsedChange={onSidebarCollapsedChange}
-            chrome={chrome}
-          />
-        )}
-        {section === "terminal" && <TerminalSection />}
-        {section === "shell" && <ShellSection />}
-        {section === "vault" && <VaultSection onPasswordDone={onClose} />}
-        {section === "sync" && (
-          <SyncSettingsPanel
-            onHostsMayHaveChanged={onHostsMayHaveChanged}
-            onVaultReplaced={onVaultReplaced}
-          />
-        )}
-        {section === "ai" && (
-          <AssistSettingsPanel embedded onChanged={onAssistChanged} />
-        )}
-        {section === "agents" && <AgentsSection agents={agents} />}
-        {section === "keyboard" && <KeyboardSection chrome={chrome} />}
-        {section === "advanced" && (
-          <AdvancedSection
-            onResetSidebar={() => onSidebarCollapsedChange(false)}
-            appVersion={appVersion}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
 
 /** Map palette search terms → settings section. */
 export function settingsSectionForQuery(
@@ -395,10 +168,178 @@ function SectionHeading({
   );
 }
 
+interface SettingsModalProps {
+  open: boolean;
+  onClose: () => void;
+  initialSection?: SettingsSectionId;
+  sidebarCollapsed: boolean;
+  onSidebarCollapsedChange: (collapsed: boolean) => void;
+  onOpenSurface: (surface: SurfaceId) => void;
+  appVersion?: string;
+}
+
+export function SettingsModal({
+  open,
+  onClose,
+  initialSection = "general",
+  sidebarCollapsed,
+  onSidebarCollapsedChange,
+  onOpenSurface,
+  appVersion,
+}: SettingsModalProps): React.JSX.Element | null {
+  const chrome = useChrome();
+  const [section, setSection] = useState<SettingsSectionId>(initialSection);
+  const pageShell = chrome !== "mac";
+
+  useEffect(() => {
+    if (open) setSection(initialSection);
+  }, [open, initialSection]);
+
+  useEffect(() => {
+    if (!open || !pageShell) return;
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, pageShell, onClose]);
+
+  if (!open) return null;
+
+  const body = (
+    <SettingsBody
+      section={section}
+      setSection={setSection}
+      sidebarCollapsed={sidebarCollapsed}
+      onSidebarCollapsedChange={onSidebarCollapsedChange}
+      onOpenSurface={onOpenSurface}
+      appVersion={appVersion}
+      chrome={chrome}
+      tall={pageShell}
+    />
+  );
+
+  if (pageShell) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        className="fixed inset-0 z-50 flex flex-col bg-base"
+      >
+        <div className="titlebar flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
+          <span className="text-[15px] font-semibold text-fg">Settings</span>
+          <button
+            type="button"
+            aria-label="Close settings"
+            onClick={onClose}
+            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1">{body}</div>
+      </div>
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Settings"
+      titleSrOnly
+      width="xl"
+      scrollBody={false}
+      contentClassName="h-[85vh] p-0"
+    >
+      {body}
+    </Dialog>
+  );
+}
+
+function SettingsBody({
+  section,
+  setSection,
+  sidebarCollapsed,
+  onSidebarCollapsedChange,
+  onOpenSurface,
+  appVersion,
+  chrome,
+  tall,
+}: {
+  section: SettingsSectionId;
+  setSection: (id: SettingsSectionId) => void;
+  sidebarCollapsed: boolean;
+  onSidebarCollapsedChange: (collapsed: boolean) => void;
+  onOpenSurface: (surface: SurfaceId) => void;
+  appVersion?: string;
+  chrome: ChromeStyle;
+  tall: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="flex h-full min-h-0">
+      <nav
+        aria-label="Settings sections"
+        className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface p-2"
+      >
+        {SECTIONS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            onClick={() => setSection(entry.id)}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
+              section === entry.id
+                ? "bg-hover text-fg"
+                : "text-fg-muted hover:bg-hover/60 hover:text-fg",
+            )}
+          >
+            <span className="text-fg-subtle">{entry.icon}</span>
+            {entry.label}
+          </button>
+        ))}
+      </nav>
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-5">
+        <SectionHeading section={section} />
+        {section === "general" && (
+          <GeneralSection
+            appVersion={appVersion}
+            onOpenSurface={onOpenSurface}
+          />
+        )}
+        {section === "appearance" && (
+          <AppearanceSection
+            sidebarCollapsed={sidebarCollapsed}
+            onSidebarCollapsedChange={onSidebarCollapsedChange}
+            chrome={chrome}
+          />
+        )}
+        {section === "terminal" && <TerminalSection />}
+        {section === "shell" && <ShellSection />}
+        {section === "keyboard" && <KeyboardSection chrome={chrome} />}
+        {section === "advanced" && (
+          <AdvancedSection
+            onResetSidebar={() => onSidebarCollapsedChange(false)}
+            appVersion={appVersion}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function GeneralSection({
   appVersion,
+  onOpenSurface,
 }: {
   appVersion?: string;
+  onOpenSurface: (surface: SurfaceId) => void;
 }): React.JSX.Element {
   const [landing, setLanding] = useState<LandingPref>(() => getLandingPref());
   const [updateMsg, setUpdateMsg] = useState<string>();
@@ -406,6 +347,31 @@ function GeneralSection({
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-3">
+        <span className="text-ui font-medium text-fg">Manage</span>
+        <p className="m-0 text-micro text-fg-muted">
+          Workflow features live on their own surfaces — not in Settings.
+        </p>
+        <div className="flex flex-col gap-1">
+          {(
+            [
+              ["vault", "Manage vault →"],
+              ["assist", "Manage Assist providers →"],
+              ["agents", "Manage agents →"],
+              ["identities", "Manage identities →"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className="cursor-pointer text-left text-ui text-accent hover:underline"
+              onClick={() => onOpenSurface(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       <PrefRow
         title="Default landing"
         detail="Where the main window opens after unlock"
@@ -872,405 +838,6 @@ function ShellSection(): React.JSX.Element {
         <strong className="font-medium text-fg">per host</strong> in the host
         editor.
       </p>
-    </div>
-  );
-}
-
-function AgentsSection({
-  agents,
-}: {
-  agents: AgentSpecDto[];
-}): React.JSX.Element {
-  const active = agents.filter((agent) => agent.status !== "deprecated");
-  const deprecated = agents.filter((agent) => agent.status === "deprecated");
-  const [notifyWaiting, setWaiting] = useState(() => getNotifyWaiting());
-  const [notifyDone, setDone] = useState(() => getNotifyDone());
-  const [notifyFailed, setFailed] = useState(() => getNotifyFailed());
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="m-0 text-micro text-fg-muted">
-        Bundled catalog. Bind an Assist key on a project to inject{" "}
-        <code className="font-mono">byokEnv</code> at launch.
-      </p>
-      <div className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-3">
-        <span className="text-ui font-medium text-fg">Notifications</span>
-        <p className="m-0 text-micro text-fg-muted">
-          Desktop alerts when a running agent needs you. Defaults: waiting and
-          failed on, done off.
-        </p>
-        <label className="flex items-center gap-2 text-ui text-fg">
-          <input
-            type="checkbox"
-            checked={notifyWaiting}
-            onChange={(event) => {
-              setWaiting(event.target.checked);
-              setNotifyWaiting(event.target.checked);
-            }}
-          />
-          Notify on waiting
-        </label>
-        <label className="flex items-center gap-2 text-ui text-fg">
-          <input
-            type="checkbox"
-            checked={notifyFailed}
-            onChange={(event) => {
-              setFailed(event.target.checked);
-              setNotifyFailed(event.target.checked);
-            }}
-          />
-          Notify on failed
-        </label>
-        <label className="flex items-center gap-2 text-ui text-fg">
-          <input
-            type="checkbox"
-            checked={notifyDone}
-            onChange={(event) => {
-              setDone(event.target.checked);
-              setNotifyDone(event.target.checked);
-            }}
-          />
-          Notify on done
-        </label>
-      </div>
-      <ul className="m-0 flex list-none flex-col gap-1 p-0">
-        {active.map((agent) => (
-          <li
-            key={agent.id}
-            className="flex items-center gap-2 rounded-md border border-line bg-base px-3 py-2"
-          >
-            <span className="min-w-0 flex-1 truncate text-ui text-fg">
-              {agent.name}
-            </span>
-            <span className="shrink-0 font-mono text-micro text-fg-subtle">
-              {agent.command || "—"}
-            </span>
-            {(agent.byokEnv?.length ?? 0) > 0 && (
-              <span className="shrink-0 text-micro text-fg-subtle">
-                BYOK
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-      {deprecated.length > 0 && (
-        <div>
-          <span className="text-micro font-medium text-fg-subtle">
-            Deprecated
-          </span>
-          <ul className="mt-1 flex list-none flex-col gap-1 p-0">
-            {deprecated.map((agent) => (
-              <li
-                key={agent.id}
-                className="rounded-md border border-line px-3 py-2 text-micro text-fg-subtle"
-              >
-                {agent.name}
-                {agent.successor ? ` → ${agent.successor}` : ""}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <p className="m-0 text-micro text-fg-subtle">
-        Catalog edits:{" "}
-        <code className="font-mono">crates/core/data/agents.json</code>. Custom
-        presets land in a later release.
-      </p>
-    </div>
-  );
-}
-
-function VaultSection({
-  onPasswordDone,
-}: {
-  onPasswordDone: () => void;
-}): React.JSX.Element {
-  const [idleSecs, setIdleSecs] = useState(() => getIdleLockSecs());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-
-  return (
-    <div className="flex flex-col gap-5">
-      <PrefRow
-        title="Auto-lock"
-        detail="Lock the vault after idle time with no vault activity"
-        defaultLabel="15 minutes"
-        onReset={() => {
-          setIdleSecs(DEFAULTS.idleLockSecs);
-          setIdleLockSecs(DEFAULTS.idleLockSecs);
-          setBusy(true);
-          void vaultSetIdleLockSecs(DEFAULTS.idleLockSecs)
-            .then((applied) => setIdleSecs(applied))
-            .catch((reason: unknown) => setError(String(reason)))
-            .finally(() => setBusy(false));
-        }}
-      >
-        <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
-          value={idleSecs}
-          disabled={busy}
-          onChange={(event) => {
-            const next = Number(event.target.value);
-            setIdleSecs(next);
-            setIdleLockSecs(next);
-            setError(undefined);
-            setBusy(true);
-            void vaultSetIdleLockSecs(next)
-              .then((applied) => setIdleSecs(applied))
-              .catch((reason: unknown) => setError(String(reason)))
-              .finally(() => setBusy(false));
-          }}
-        >
-          {IDLE_LOCK_OPTIONS.map((option) => (
-            <option key={option.secs} value={option.secs}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </PrefRow>
-      {error && <p className="m-0 text-micro text-danger">{error}</p>}
-      <IdentitiesPanel />
-      <div>
-        <h4 className="mt-0 mb-3 text-ui font-medium text-fg">
-          Change master password
-        </h4>
-        <ChangePasswordPanel onDone={onPasswordDone} />
-      </div>
-    </div>
-  );
-}
-
-function IdentitiesPanel(): React.JSX.Element {
-  const [identities, setIdentities] = useState<IdentitySummaryDto[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const [renaming, setRenaming] = useState<IdentitySummaryDto>();
-  const [renameLabel, setRenameLabel] = useState("");
-  const [pendingDelete, setPendingDelete] = useState<{
-    identity: IdentitySummaryDto;
-    dependents: { id: string; label: string }[];
-  }>();
-
-  async function refresh(): Promise<void> {
-    setIdentities(await listIdentities());
-  }
-
-  useEffect(() => {
-    void refresh().catch((reason: unknown) => setError(String(reason)));
-  }, []);
-
-  async function saveRename(): Promise<void> {
-    if (!renaming) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      await identityRename(renaming.id, renameLabel);
-      setRenaming(undefined);
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove(
-    identity: IdentitySummaryDto,
-    force: boolean,
-  ): Promise<void> {
-    setBusy(true);
-    setError(undefined);
-    try {
-      const result = await identityDelete(identity.id, force);
-      if (!result.deleted) {
-        setPendingDelete({
-          identity,
-          dependents: result.dependentHosts,
-        });
-        return;
-      }
-      setPendingDelete(undefined);
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <h4 className="mt-0 mb-1 text-ui font-medium text-fg">Identities</h4>
-        <p className="m-0 text-micro text-fg-subtle">
-          Password and SSH key identities stored in the vault. Keys sync only if
-          you turn it on per key (same opt-in as passwords).
-        </p>
-      </div>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-      <ul className="m-0 flex list-none flex-col gap-1 p-0">
-        {identities.map((identity) => (
-          <li
-            key={identity.id}
-            className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-2"
-          >
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-ui font-medium text-fg">
-                  {identity.label}
-                </span>
-                <span className="block truncate text-micro text-fg-subtle">
-                  {identity.kind === "sshKey" ? "SSH key" : "Password"}
-                  {identity.fingerprint ? ` · ${identity.fingerprint}` : ""}
-                  {` · used by ${identity.usageCount}`}
-                  {identity.syncSecret ? " · syncs" : " · local only"}
-                </span>
-              </span>
-              <Button
-                variant="subtle"
-                disabled={busy}
-                onClick={() => {
-                  setRenaming(identity);
-                  setRenameLabel(identity.label);
-                }}
-              >
-                Rename
-              </Button>
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() => void remove(identity, false)}
-              >
-                Delete
-              </Button>
-            </div>
-            <label className="flex cursor-pointer items-start gap-2.5 border-t border-line pt-2">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={identity.syncSecret}
-                disabled={busy}
-                onChange={(event) =>
-                  void (async () => {
-                    setBusy(true);
-                    setError(undefined);
-                    try {
-                      await identitySetSyncSecret(
-                        identity.id,
-                        event.target.checked,
-                      );
-                      await refresh();
-                    } catch (reason) {
-                      setError(String(reason));
-                    } finally {
-                      setBusy(false);
-                    }
-                  })()
-                }
-              />
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-ui font-medium text-fg">
-                  {identity.kind === "sshKey"
-                    ? "Sync this key to other devices"
-                    : "Sync this password to other devices"}
-                </span>
-                <span className="text-micro text-fg-subtle">
-                  Off by default. When on, encrypted credentials ride vault
-                  sync. Turning off stops future sync; devices that already
-                  have a copy keep it.
-                </span>
-              </span>
-            </label>
-          </li>
-        ))}
-        {identities.length === 0 && (
-          <li className="rounded-md border border-dashed border-line px-3 py-4 text-center text-micro text-fg-subtle">
-            No identities yet. Import an SSH key when adding a host, or save a
-            host with a password.
-          </li>
-        )}
-      </ul>
-
-      {renaming && (
-        <Dialog
-          open
-          onOpenChange={(next) => {
-            if (!next) setRenaming(undefined);
-          }}
-          kicker="Identity"
-          title="Rename identity"
-          description="Update the label shown in host forms and settings."
-          footer={
-            <>
-              <Button
-                variant="subtle"
-                disabled={busy}
-                onClick={() => setRenaming(undefined)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                disabled={busy || !renameLabel.trim()}
-                onClick={() => void saveRename()}
-              >
-                Save
-              </Button>
-            </>
-          }
-        >
-          <Field
-            label="Label"
-            value={renameLabel}
-            onChange={(event) => setRenameLabel(event.target.value)}
-            disabled={busy}
-            autoFocus
-          />
-        </Dialog>
-      )}
-
-      {pendingDelete && (
-        <Dialog
-          open
-          onOpenChange={(next) => {
-            if (!next) setPendingDelete(undefined);
-          }}
-          kicker="Identity"
-          title="Delete identity?"
-          description="This identity is still attached to hosts. Force delete clears those links."
-          footer={
-            <>
-              <Button
-                variant="subtle"
-                disabled={busy}
-                onClick={() => setPendingDelete(undefined)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() => void remove(pendingDelete.identity, true)}
-              >
-                Delete anyway
-              </Button>
-            </>
-          }
-        >
-          <p className="m-0 text-ui text-fg-muted">
-            Used by:
-          </p>
-          <ul className="mt-2 mb-0 flex list-none flex-col gap-1 p-0">
-            {pendingDelete.dependents.map((host) => (
-              <li
-                key={host.id}
-                className="rounded-md border border-line px-3 py-2 text-ui text-fg"
-              >
-                {host.label}
-              </li>
-            ))}
-          </ul>
-        </Dialog>
-      )}
     </div>
   );
 }

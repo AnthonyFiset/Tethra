@@ -41,6 +41,12 @@ if [[ -n "$matches" ]]; then
   exit 1
 fi
 
+echo "==> mock IPC has zero Tauri imports"
+if grep -n '@tauri-apps/' apps/ui/src/lib/ipc.mock.ts; then
+  echo "FAIL: ipc.mock.ts must not import @tauri-apps/*"
+  exit 1
+fi
+
 echo "==> frontend build (node $(node -v))"
 if [[ ! -d apps/ui/node_modules ]]; then
   npm ci --prefix apps/ui

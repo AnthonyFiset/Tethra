@@ -1,6 +1,7 @@
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { useCallback, useState } from "react";
 import {
   AppWindow,
+  ChevronDown,
   Columns2,
   Info,
   KeyRound,
@@ -20,8 +21,18 @@ import {
 import { cn } from "../lib/cn";
 import { useChrome } from "../lib/ChromeContext";
 import { modKeyLabel, shiftModLabel } from "../lib/chrome";
+import { useSurfaceNavExpanded } from "../lib/breakpoints";
+import {
+  SURFACE_LABELS,
+  type SurfaceId,
+} from "../surfaces/SurfaceShell";
 import { Logo } from "./Logo";
 import { IconButton } from "./ui/Button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./ui/DropdownMenu";
 import { Tooltip } from "./ui/Tooltip";
 
 interface TitleBarProps {
@@ -48,6 +59,8 @@ interface TitleBarProps {
   onSettings?: () => void;
   onAssistSettings: () => void;
   onChangePassword: () => void;
+  onOpenSurface?: (surface: SurfaceId) => void;
+  activeSurface?: SurfaceId | null;
   onAbout: () => void;
   onLock: () => void;
   /** Return to Launcher without closing sessions. */
@@ -78,6 +91,8 @@ export function TitleBar({
   onSettings,
   onAssistSettings,
   onChangePassword,
+  onOpenSurface,
+  activeSurface,
   onAbout,
   onLock,
   onGoLauncher,
@@ -86,6 +101,10 @@ export function TitleBar({
   const chrome = useChrome();
   const mod = modKeyLabel(chrome);
   const shiftMod = shiftModLabel(chrome);
+  const surfaces = Object.keys(SURFACE_LABELS) as SurfaceId[];
+  const [surfacesOpen, setSurfacesOpen] = useState(false);
+  const closeSurfacesMenu = useCallback(() => setSurfacesOpen(false), []);
+  useSurfaceNavExpanded(closeSurfacesMenu);
 
   return (
     <header className="titlebar flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface">
@@ -119,6 +138,67 @@ export function TitleBar({
           size={17}
           className="max-[520px]:[&>span]:hidden"
         />
+
+        {onOpenSurface && (
+          <>
+            <nav
+              aria-label="Surfaces"
+              className="ml-1 hidden items-center gap-0.5 surface-nav:flex"
+            >
+              {surfaces.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onOpenSurface(id)}
+                  className={cn(
+                    "h-7 cursor-pointer rounded-md px-2 text-micro transition-colors",
+                    activeSurface === id
+                      ? "bg-hover text-fg"
+                      : "text-fg-muted hover:bg-hover/60 hover:text-fg",
+                  )}
+                >
+                  {SURFACE_LABELS[id]}
+                </button>
+              ))}
+            </nav>
+            <DropdownMenu.Root
+              open={surfacesOpen}
+              onOpenChange={setSurfacesOpen}
+            >
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label="Surfaces"
+                  className={cn(
+                    "surface-nav:hidden ml-1 inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2 text-micro transition-colors",
+                    "text-fg-muted hover:bg-hover/60 hover:text-fg",
+                    "data-[state=open]:bg-hover data-[state=open]:text-fg",
+                  )}
+                >
+                  {activeSurface
+                    ? SURFACE_LABELS[activeSurface]
+                    : "Surfaces"}
+                  <ChevronDown size={13} className="opacity-70" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenuContent align="start" sideOffset={6} className="min-w-40">
+                  {surfaces.map((id) => (
+                    <DropdownMenuItem
+                      key={id}
+                      onSelect={() => onOpenSurface(id)}
+                      className={
+                        activeSurface === id ? "text-fg" : undefined
+                      }
+                    >
+                      {SURFACE_LABELS[id]}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          </>
+        )}
       </div>
 
       {/* Dedicated drag strip — not an ancestor of buttons. */}
@@ -223,79 +303,75 @@ export function TitleBar({
             </IconButton>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              align="end"
-              sideOffset={6}
-              className="z-[2147483001] min-w-52 rounded-md border border-line-strong bg-elevated p-1 shadow-xl shadow-black/60"
-            >
-              <MenuItem icon={<Search size={14} />} onSelect={onOpenPalette}>
+            <DropdownMenuContent align="end" sideOffset={6} className="min-w-52">
+              <DropdownMenuItem icon={<Search size={14} />} onSelect={onOpenPalette}>
                 Command palette
                 <span className="ml-auto text-fg-subtle">{mod}K</span>
-              </MenuItem>
+              </DropdownMenuItem>
               {onGoLauncher && (
-                <MenuItem
+                <DropdownMenuItem
                   icon={<LayoutGrid size={14} />}
                   onSelect={onGoLauncher}
                 >
                   Launcher
                   <span className="ml-auto text-fg-subtle">{mod}Esc</span>
-                </MenuItem>
+                </DropdownMenuItem>
               )}
               {onGoWorkspace && (
-                <MenuItem
+                <DropdownMenuItem
                   icon={<PanelsTopLeft size={14} />}
                   onSelect={onGoWorkspace}
                 >
                   Workspace
                   <span className="ml-auto text-fg-subtle">{mod}Esc</span>
-                </MenuItem>
+                </DropdownMenuItem>
               )}
-              <MenuItem icon={<AppWindow size={14} />} onSelect={onNewWindow}>
+              <DropdownMenuItem icon={<AppWindow size={14} />} onSelect={onNewWindow}>
                 New window
-              </MenuItem>
+              </DropdownMenuItem>
               {workspaceChrome && (
-                <MenuItem
+                <DropdownMenuItem
                   icon={<AppWindow size={14} />}
                   onSelect={onMoveToNewWindow}
                 >
                   Move tab to new window
-                </MenuItem>
+                </DropdownMenuItem>
               )}
               <DropdownMenu.Separator className="my-1 h-px bg-line" />
               {onSettings && (
-                <MenuItem icon={<Settings size={14} />} onSelect={onSettings}>
+                <DropdownMenuItem icon={<Settings size={14} />} onSelect={onSettings}>
                   Settings…
                   <span className="ml-auto text-fg-subtle">
                     {chrome === "mac" ? "⌘," : "Ctrl+,"}
                   </span>
-                </MenuItem>
+                </DropdownMenuItem>
               )}
-              <MenuItem icon={<RefreshCw size={14} />} onSelect={onSync}>
+              <DropdownMenuItem icon={<RefreshCw size={14} />} onSelect={onSync}>
                 Vault sync
-              </MenuItem>
-              <MenuItem
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 icon={<Sparkles size={14} />}
                 onSelect={onAssistSettings}
               >
                 Assist providers
-              </MenuItem>
-              <MenuItem
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 icon={<KeyRound size={14} />}
                 onSelect={onChangePassword}
               >
                 Change master password
-              </MenuItem>
+              </DropdownMenuItem>
               <DropdownMenu.Separator className="my-1 h-px bg-line" />
-              <MenuItem icon={<Info size={14} />} onSelect={onAbout}>
+              <DropdownMenuItem icon={<Info size={14} />} onSelect={onAbout}>
                 About Tethra
-              </MenuItem>
+              </DropdownMenuItem>
               {appVersion && (
                 <div className="px-2 py-1.5 text-micro text-fg-subtle">
                   Version {appVersion}
                   {import.meta.env.DEV ? " (dev)" : ""}
                 </div>
               )}
-            </DropdownMenu.Content>
+            </DropdownMenuContent>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
@@ -310,25 +386,5 @@ export function TitleBar({
         </div>
       </div>
     </header>
-  );
-}
-
-function MenuItem({
-  icon,
-  onSelect,
-  children,
-}: {
-  icon: React.ReactNode;
-  onSelect: () => void;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <DropdownMenu.Item
-      onSelect={onSelect}
-      className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-ui text-fg-muted outline-none select-none data-[highlighted]:bg-hover data-[highlighted]:text-fg"
-    >
-      {icon}
-      {children}
-    </DropdownMenu.Item>
   );
 }

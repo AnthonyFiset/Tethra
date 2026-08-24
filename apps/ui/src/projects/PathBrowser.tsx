@@ -315,7 +315,7 @@ export function PathBrowser({
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      <div className="max-h-56 min-h-40 overflow-y-auto rounded-md border border-line bg-elevated">
+      <div className="min-h-40 overflow-y-auto rounded-md border border-line bg-elevated">
         {loading ? (
           <div className="grid h-40 place-items-center text-fg-subtle">
             <LoaderCircle size={18} className="animate-spin" />

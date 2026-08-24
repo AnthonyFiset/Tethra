@@ -14,8 +14,17 @@ import {
 } from "./components/ToolsHintDialog";
 import {
   SettingsModal,
+  surfaceForSettingsSection,
   type SettingsSectionId,
 } from "./components/SettingsModal";
+import { AgentsSurface } from "./surfaces/AgentsSurface";
+import { AssistSurface } from "./surfaces/AssistSurface";
+import { IdentitiesSurface } from "./surfaces/IdentitiesSurface";
+import { VaultSurface } from "./surfaces/VaultSurface";
+import {
+  SURFACE_LABELS,
+  type SurfaceId,
+} from "./surfaces/SurfaceShell";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
@@ -302,6 +311,7 @@ function Workspace({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionId>("general");
+  const [activeSurface, setActiveSurface] = useState<SurfaceId | null>(null);
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistKeysEpoch, setAssistKeysEpoch] = useState(0);
   const [muxHint, setMuxHint] = useState<{
@@ -802,9 +812,37 @@ function Workspace({
     setDrawerOpen(false);
   }
 
-  function openSettings(section: SettingsSectionId = "general"): void {
-    setSettingsSection(section);
+  function openSettings(section: SettingsSectionId | string = "general"): void {
+    const surface = surfaceForSettingsSection(section);
+    if (surface) {
+      openSurface(surface);
+      return;
+    }
+    const prefSections: SettingsSectionId[] = [
+      "general",
+      "appearance",
+      "terminal",
+      "shell",
+      "keyboard",
+      "advanced",
+    ];
+    setSettingsSection(
+      prefSections.includes(section as SettingsSectionId)
+        ? (section as SettingsSectionId)
+        : "general",
+    );
+    setActiveSurface(null);
     setSettingsOpen(true);
+  }
+
+  function openSurface(surface: SurfaceId): void {
+    setSettingsOpen(false);
+    setPaletteOpen(false);
+    setActiveSurface(surface);
+  }
+
+  function closeSurface(): void {
+    setActiveSurface(null);
   }
 
   /** View change only — never kills PTYs or remote mux sessions. */
@@ -813,6 +851,7 @@ function Workspace({
     setDrawerOpen(false);
     setAssistOpen(false);
     setZoomedId(undefined);
+    setActiveSurface(null);
   }
 
   function pasteIntoTerminal(sessionId: string, text: string): void {
@@ -2005,10 +2044,12 @@ function Workspace({
         onToggleZoom={() => toggleZoom()}
         onNewWindow={() => openNewWindow()}
         onMoveToNewWindow={() => void moveActiveToNewWindow()}
-        onSync={() => openSettings("sync")}
+        onSync={() => openSurface("vault")}
         onSettings={() => openSettings("general")}
-        onAssistSettings={() => openSettings("ai")}
-        onChangePassword={() => openSettings("vault")}
+        onAssistSettings={() => openSurface("assist")}
+        onChangePassword={() => openSurface("vault")}
+        onOpenSurface={openSurface}
+        activeSurface={activeSurface}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
         onGoLauncher={inWorkspace ? goLauncher : undefined}
@@ -2073,7 +2114,38 @@ function Workspace({
         )}
 
         <main className="relative flex min-h-0 min-w-0 flex-col">
-          {!inWorkspace ? (
+          {activeSurface === "vault" ? (
+            <VaultSurface
+              onClose={closeSurface}
+              onHostsMayHaveChanged={() => {
+                void listHosts()
+                  .then(setHosts)
+                  .catch((reason: unknown) => setError(String(reason)));
+              }}
+              onVaultReplaced={() => {
+                closeSurface();
+                setHosts([]);
+                setProjects([]);
+                setRunningSessions([]);
+                setTabs([]);
+                setActiveId(undefined);
+                setLayout(null);
+                setAppMode("launcher");
+                void vaultStatus()
+                  .then(onStatus)
+                  .catch((reason: unknown) => setError(String(reason)));
+              }}
+            />
+          ) : activeSurface === "assist" ? (
+            <AssistSurface
+              onClose={closeSurface}
+              onChanged={() => setAssistKeysEpoch((n) => n + 1)}
+            />
+          ) : activeSurface === "agents" ? (
+            <AgentsSurface agents={agents} onClose={closeSurface} />
+          ) : activeSurface === "identities" ? (
+            <IdentitiesSurface onClose={closeSurface} />
+          ) : !inWorkspace ? (
             <Launcher
               hosts={hosts}
               projects={projects}
@@ -2135,7 +2207,7 @@ function Workspace({
                       context={context}
                       reloadToken={assistKeysEpoch}
                       onInsert={insertAssistCommand}
-                      onOpenSettings={() => openSettings("ai")}
+                      onOpenSettings={() => openSurface("assist")}
                       onClose={() => setAssistOpen(false)}
                     />
                   );
@@ -2276,9 +2348,10 @@ function Workspace({
           setEditor("new");
         }}
         onImport={() => setImportOpen(true)}
-        onSync={() => openSettings("sync")}
+        onSync={() => openSurface("vault")}
         onSettings={(section) => openSettings(section ?? "general")}
-        onAssistSettings={() => openSettings("ai")}
+        onAssistSettings={() => openSurface("assist")}
+        onOpenSurface={openSurface}
         onLock={() => void lockNow()}
         agentLabel={(id) => agentDisplayName(agents, id)}
       />
@@ -2289,32 +2362,10 @@ function Workspace({
         initialSection={settingsSection}
         sidebarCollapsed={sidebarCollapsed}
         onSidebarCollapsedChange={setSidebarCollapsed}
-        onHostsMayHaveChanged={() => {
-          void listHosts()
-            .then(setHosts)
-            .catch((reason: unknown) => setError(String(reason)));
-          void listProjects()
-            .then(setProjects)
-            .catch((reason: unknown) => setError(String(reason)));
-          void refreshRunningSessions().catch((reason: unknown) =>
-            setError(String(reason)),
-          );
-        }}
-        onVaultReplaced={() => {
+        onOpenSurface={(surface) => {
           setSettingsOpen(false);
-          setHosts([]);
-          setProjects([]);
-          setRunningSessions([]);
-          setTabs([]);
-          setActiveId(undefined);
-          setLayout(null);
-          setAppMode("launcher");
-          void vaultStatus()
-            .then(onStatus)
-            .catch((reason: unknown) => setError(String(reason)));
+          openSurface(surface);
         }}
-        onAssistChanged={() => setAssistKeysEpoch((n) => n + 1)}
-        agents={agents}
         appVersion={appVersion}
       />
 

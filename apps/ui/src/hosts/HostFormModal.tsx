@@ -220,8 +220,37 @@ export function HostFormModal({
       kicker="Host"
       title={initial ? "Edit host" : "Add host"}
       description="Metadata and auth identities are encrypted in the vault. Secrets never linger in React state."
+      header={
+        <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
+          <HostAvatar label={label || "?"} color={color} />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-ui font-medium text-fg">
+              {label || "Untitled host"}
+            </span>
+            <span className="truncate text-micro text-fg-subtle">
+              {username || "user"}@{hostname || "hostname"}:{port || "22"}
+            </span>
+          </span>
+        </div>
+      }
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="subtle"
+            disabled={busy}
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" form="host-form" variant="primary" disabled={busy}>
+            {busy ? "Saving…" : initial ? "Save host" : "Create host"}
+          </Button>
+        </>
+      }
     >
       <form
+        id="host-form"
         onSubmit={(event) => void submit(event)}
         className="flex flex-col gap-3"
       >
@@ -243,18 +272,6 @@ export function HostFormModal({
               arrives automatically).
             </ErrorBanner>
           )}
-
-        <div className="flex items-center gap-3 rounded-md border border-line bg-base px-3 py-2.5">
-          <HostAvatar label={label || "?"} color={color} />
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-ui font-medium text-fg">
-              {label || "Untitled host"}
-            </span>
-            <span className="truncate text-micro text-fg-subtle">
-              {username || "user"}@{hostname || "hostname"}:{port || "22"}
-            </span>
-          </span>
-        </div>
 
         <Field
           label="Label"
@@ -734,20 +751,6 @@ export function HostFormModal({
               </div>
             ))
           )}
-        </div>
-
-        <div className="mt-2 flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="subtle"
-            disabled={busy}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button variant="primary" disabled={busy}>
-            {busy ? "Saving…" : initial ? "Save host" : "Create host"}
-          </Button>
         </div>
       </form>
     </Dialog>

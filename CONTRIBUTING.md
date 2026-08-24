@@ -29,6 +29,16 @@ scripts/ci-check.sh          # full local gate
 cd apps/tauri/src-tauri && npx --prefix ../../ui tauri dev
 ```
 
+Browser-only UI harness (no Tauri / no vault on disk):
+
+```bash
+cd apps/ui && npm run dev:web   # http://localhost:5173
+```
+
+`dev:web` sets `VITE_TETHRA_MOCK=1` so Vite swaps `lib/ipc.ts` for a
+deterministic fixture mock (`lib/ipc.mock.ts`). Use it for design review and
+future Playwright/WDIO e2e — mock code is not included in production builds.
+
 Hard rules (see [`PROJECT.md`](PROJECT.md)):
 
 - `crates/core` must not depend on Tauri
