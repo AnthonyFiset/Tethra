@@ -40,6 +40,23 @@ URL in a fresh tab and screenshot each surface at TWO window sizes —
   A skipped dialog is a failed review — the host-form clipping bug
   shipped because a review sampled instead of enumerating.
 
+## 2b. Interaction pass (MANDATORY — screenshots cannot catch these)
+
+Static captures miss broken hover states and dead controls entirely. On
+every surface, using Playwright:
+
+- **Hover** each interactive element class once (host card, rail item,
+  tab, block, button, chip) and screenshot mid-hover — verify a visible
+  hover state exists and uses the tokens (`--color-hover`/elevated).
+- **Click every control that promises behavior** and assert the behavior:
+  a sort control must reorder, a filter chip must filter, a toggle must
+  toggle. A control that does nothing is a FAKE CONTROL — blocker-level
+  finding (DESIGN.md no-filler rule), either wire it or remove it.
+- **Keyboard**: Tab reaches the primary controls; Esc closes the top
+  layer; Enter activates the focused control.
+- Check the browser console after the pass — any error logged during
+  interactions is a finding.
+
 ## 3. Audit
 
 Score each screenshot against `docs/DESIGN.md` §6 checklist. For every
