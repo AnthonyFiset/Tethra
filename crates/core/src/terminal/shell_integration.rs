@@ -41,6 +41,14 @@ if [ -z "${TETHRA_SHELL_INTEGRATION:-}" ]; then
     PROMPT_COMMAND="__tethra_precmd"
   fi
   trap '__tethra_preexec' DEBUG
+  # Warp-style Tab: cycle candidates inline (zsh menu-select feel) instead of
+  # bash's default bell + reprint-the-list-on-every-press.
+  if [ -n "${BASH_VERSION:-}" ]; then
+    bind 'set show-all-if-ambiguous on' 2>/dev/null
+    bind 'set menu-complete-display-prefix on' 2>/dev/null
+    bind '"\t": menu-complete' 2>/dev/null
+    bind '"\e[Z": menu-complete-backward' 2>/dev/null
+  fi
   __tethra_prompt_start
 fi
 "#;

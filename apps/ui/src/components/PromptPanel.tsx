@@ -90,6 +90,15 @@ export function PromptPanel({
 }: PromptPanelProps): React.JSX.Element {
   const [blocks, setBlocks] = useState(() => blockCount(sessionId));
   const [mirror, setMirror] = useState("");
+  /**
+   * Optimistic local echo: printable keys render immediately instead of
+   * waiting for the remote shell's echo (a full network round trip on SSH).
+   * `base` is the mirror value the prediction started from; as echoed
+   * characters arrive they consume the predicted prefix.
+   */
+  const [pending, setPending] = useState("");
+  const pendingBase = useRef("");
+  const mirrorRef = useRef("");
   const [interactive, setInteractive] = useState(false);
   /** Mirror failed → uncover live PS1; box is caret-only. */
   const [uncover, setUncover] = useState(false);
@@ -104,6 +113,9 @@ export function PromptPanel({
   useEffect(() => {
     setBlocks(blockCount(sessionId));
     setMirror("");
+    mirrorRef.current = "";
+    setPending("");
+    pendingBase.current = "";
     setUncover(false);
     uncoverRef.current = false;
     mirrorMisses.current = 0;
@@ -135,9 +147,32 @@ export function PromptPanel({
     }
     const line = readActiveShellInputLine(sessionId);
     if (line == null) {
+      mirrorRef.current = "";
       setMirror("");
+      setPending("");
+      pendingBase.current = "";
       return;
     }
+    // Reconcile prediction: echoed characters consume the predicted prefix;
+    // anything the shell echoed differently (completion, control) drops the
+    // remaining prediction — the shell's line is always the truth.
+    setPending((chars) => {
+      if (!chars) {
+        pendingBase.current = line;
+        return chars;
+      }
+      const base = pendingBase.current;
+      if (line.startsWith(base)) {
+        const echoed = line.slice(base.length);
+        if (chars.startsWith(echoed)) {
+          pendingBase.current = line;
+          return chars.slice(echoed.length);
+        }
+      }
+      pendingBase.current = line;
+      return "";
+    });
+    mirrorRef.current = line;
     setMirror(line);
     if (forwardedSinceMirror.current > 0) {
       // Empty after Enter/arrows is expected — do not trip uncover fallback.
@@ -175,6 +210,25 @@ export function PromptPanel({
     };
     // uncover/interactive toggle rebind
   }, [sessionId, interactive, uncover]);
+
+  /** Optimistic echo for the box only — the shell's echo reconciles it. */
+  function predictKey(event: KeyboardEvent): void {
+    if (uncoverRef.current || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+    if (event.key.length === 1) {
+      setPending((p) => {
+        if (!p) pendingBase.current = mirrorRef.current;
+        return p + event.key;
+      });
+    } else if (event.key === "Backspace") {
+      setPending((p) => (p ? p.slice(0, -1) : p));
+    } else {
+      // Tab / Enter / arrows / Escape — the shell rewrites the line.
+      setPending("");
+      pendingBase.current = mirrorRef.current;
+    }
+  }
 
   async function forwardBytes(
     data: Uint8Array,
@@ -238,6 +292,7 @@ export function PromptPanel({
       event.preventDefault();
       event.stopPropagation();
       areaRef.current?.focus({ preventScroll: true });
+      predictKey(event);
       const edit =
         event.key.length === 1 ||
         event.key === "Backspace" ||
@@ -286,7 +341,7 @@ export function PromptPanel({
 
       <textarea
         ref={areaRef}
-        value={uncover ? "" : mirror}
+        value={uncover ? "" : mirror + pending}
         rows={1}
         readOnly={interactive || uncover}
         spellCheck={false}
@@ -304,6 +359,7 @@ export function PromptPanel({
           if (!bytes) return;
           event.preventDefault();
           event.stopPropagation();
+          predictKey(event.nativeEvent);
           const edit =
             event.key.length === 1 ||
             event.key === "Backspace" ||
