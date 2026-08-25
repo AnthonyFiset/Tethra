@@ -48,6 +48,11 @@ if [ -z "${TETHRA_SHELL_INTEGRATION:-}" ]; then
     bind 'set menu-complete-display-prefix on' 2>/dev/null
     bind '"\t": menu-complete' 2>/dev/null
     bind '"\e[Z": menu-complete-backward' 2>/dev/null
+    # Match the local zsh feel: colored candidate lists (dirs/types) and a
+    # colored completion prefix. Readline has no moving highlight bar.
+    bind 'set colored-stats on' 2>/dev/null
+    bind 'set colored-completion-prefix on' 2>/dev/null
+    bind 'set visible-stats on' 2>/dev/null
   fi
   __tethra_prompt_start
 fi

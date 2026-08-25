@@ -47,15 +47,16 @@ export function setBlockOverlayHost(
 
 export function scheduleBlockOverlaySync(sessionId: string): void {
   if (!hosts.has(sessionId)) return;
-  const pending = pendingSync.get(sessionId);
-  if (pending != null) cancelAnimationFrame(pending);
-  pendingSync.set(
-    sessionId,
-    requestAnimationFrame(() => {
-      pendingSync.delete(sessionId);
-      syncBlockOverlay(sessionId);
-    }),
-  );
+  // Pre-paint coalescing: a microtask runs before the browser paints the
+  // frame xterm just rendered, so covers/headers land in the SAME paint.
+  // rAF ran a frame later and flashed raw PS1/output for ~16ms on every
+  // write burst (visible on ls and on session attach).
+  if (pendingSync.has(sessionId)) return;
+  pendingSync.set(sessionId, 1);
+  queueMicrotask(() => {
+    pendingSync.delete(sessionId);
+    syncBlockOverlay(sessionId);
+  });
 }
 
 export function disposeBlockOverlay(sessionId: string): void {
