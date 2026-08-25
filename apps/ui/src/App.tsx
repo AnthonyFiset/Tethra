@@ -38,6 +38,8 @@ import { Button } from "./components/ui/Button";
 import { Dialog } from "./components/ui/Dialog";
 import { ErrorBanner } from "./components/ui/Field";
 import { TooltipProvider } from "./components/ui/Tooltip";
+import { cn } from "./lib/cn";
+import { BlockMenuHost } from "./terminal/BlockMenuHost";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
 import { SURFACE_NAV_EXPAND_MIN_PX } from "./lib/breakpoints";
@@ -119,15 +121,16 @@ import {
   persistProjectScrollback,
   resetTerminal,
   restoreProjectScrollback,
+  scheduleFlushBlockPhases,
   writeTerminal,
   writeTerminalMessage,
 } from "./terminal/registry";
 import { injectShellText } from "./terminal/inject";
 import { clearScrollbackSnapshot } from "./terminal/scrollback";
 import {
-  flushBlockPhases,
   lastBlockCommand,
   queueBlockPhase,
+  sessionRunsAgentCommand,
   setBlockRerunHandler,
 } from "./terminal/blocks";
 import { scheduleBlockOverlaySync } from "./terminal/blockOverlay";
@@ -734,13 +737,9 @@ function Workspace({
               ? exitRaw.exit_code
               : null;
         queueBlockPhase(sessionId, event.phase, exitCode);
-        // Apply markers at the current cursor immediately — do not wait for the
-        // next PTY write (that left promptStart one line late).
-        const term = getTerminalInstance(sessionId);
-        if (term) {
-          flushBlockPhases(sessionId, term);
-          scheduleBlockOverlaySync(sessionId);
-        }
+        // Flush only after preceding PTY writes for this session have landed.
+        // Immediate flush raced terminal.write and parked markers on output rows.
+        scheduleFlushBlockPhases(sessionId);
         if (typeof exitCode === "number") {
           lastExitCodes.current.set(sessionId, exitCode);
         }
@@ -759,6 +758,17 @@ function Workspace({
         // Waiting banner + desktop notify share this path. Ignore silence —
         // only BEL / OSC 9 / OSC 777 (sources bel|osc) arm waiting.
         if (event.source === "silence") {
+          return;
+        }
+        // A bare BEL is only agent attention when an agent is actually
+        // running here (project session, or a known agent CLI in the
+        // current block). Shell bells — tab-completion, ^G — must never
+        // raise the "Waiting for you" banner on a plain terminal.
+        if (
+          event.source === "bel" &&
+          !ptyToRunning.current.has(sessionId) &&
+          !sessionRunsAgentCommand(sessionId)
+        ) {
           return;
         }
         applyPtyAttention(
@@ -1205,7 +1215,10 @@ function Workspace({
     // for a new session (tab-strip +, modifier).
     if (!opts?.forceNew) {
       const existing = tabsRef.current.find(
-        (tab) => tab.hostId === host.id && tab.kind === "terminal",
+        (tab) =>
+          tab.hostId === host.id &&
+          tab.kind === "terminal" &&
+          tab.connected,
       );
       if (existing) {
         activateSession(existing.sessionId);
@@ -1217,8 +1230,33 @@ function Workspace({
 
     setError(undefined);
     setConnectingHostId(host.id);
+    const t0 = performance.now();
+    // Optimistic pane: show workspace + connecting tab before SSH returns.
+    const pendingId = `pending-${crypto.randomUUID()}`;
+    setTabs((current) => [
+      ...current,
+      {
+        sessionId: pendingId,
+        hostId: host.id,
+        title: host.label,
+        kind: "terminal",
+        connected: false,
+        color: host.color,
+      },
+    ]);
+    activateSession(pendingId);
+    enterWorkspace();
+    const tPaint = performance.now();
+    console.info(
+      `[tethra-open] ${host.label} optimistic paint ${(tPaint - t0).toFixed(0)}ms`,
+    );
+
     try {
       const opened = await openTerminal(host.id, 80, 24);
+      const tOpen = performance.now();
+      console.info(
+        `[tethra-open] ${host.label} open_terminal ${(tOpen - t0).toFixed(0)}ms (ssh=${(tOpen - tPaint).toFixed(0)}ms)`,
+      );
       const sessionId = opened.sessionId;
       wireTerminal(sessionId);
       void attachOutput(sessionId, "Connection closed.");
@@ -1230,23 +1268,35 @@ function Workspace({
             : entry,
         ),
       );
-      setTabs((current) => [
-        ...current,
-        {
-          sessionId,
-          hostId: host.id,
-          title: host.label,
-          kind: "terminal",
-          connected: true,
-          color: host.color,
-          agentForward: opened.agentForward,
-          agentForwardHint: opened.agentForwardHint ?? undefined,
-        },
-      ]);
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.sessionId === pendingId
+            ? {
+                sessionId,
+                hostId: host.id,
+                title: host.label,
+                kind: "terminal" as const,
+                connected: true,
+                color: host.color,
+                agentForward: opened.agentForward,
+                agentForwardHint: opened.agentForwardHint ?? undefined,
+              }
+            : tab,
+        ),
+      );
       activateSession(sessionId);
-      enterWorkspace();
+      // Probes stay off the critical path.
+      void maybeShowToolsHint(sessionId, host.id, []);
+      console.info(
+        `[tethra-open] ${host.label} ready ${(performance.now() - t0).toFixed(0)}ms`,
+      );
     } catch (reason) {
+      setTabs((current) => current.filter((tab) => tab.sessionId !== pendingId));
       setError(String(reason));
+      console.warn(
+        `[tethra-open] ${host.label} failed after ${(performance.now() - t0).toFixed(0)}ms`,
+        reason,
+      );
     } finally {
       setConnectingHostId(undefined);
     }
@@ -2206,9 +2256,73 @@ function Workspace({
     if (tabs[0]) return leaf(tabs[0].sessionId);
     return null;
   })();
+  const layoutIsSplit = effectiveLayout?.type === "split";
+  const ptyTabs = tabs.filter(
+    (tab) => tab.kind === "terminal" || tab.kind === "local",
+  );
   const canZoom = Boolean(
     zoomedId || (effectiveLayout && effectiveLayout.type === "split"),
   );
+
+  function renderTerminalSession(
+    tab: (typeof tabs)[number],
+    focused: boolean,
+    visible: boolean,
+  ): React.JSX.Element {
+    const runningId = ptyToRunning.current.get(tab.sessionId);
+    const runningAttention = runningId
+      ? sessionAttention[runningId]
+      : undefined;
+    const attachedAttention = ptyAttention[tab.sessionId];
+    const attention = attachedAttention ?? runningAttention;
+    const runningSession = runningId
+      ? runningSessions.find((s) => s.id === runningId)
+      : undefined;
+    return (
+      <SessionView
+        pane
+        sessionId={tab.sessionId}
+        host={
+          tab.hostId !== "local"
+            ? hosts.find((h) => h.id === tab.hostId)
+            : undefined
+        }
+        cwd={tab.cwd}
+        gitBranch={tab.gitBranch}
+        connected={tab.connected}
+        active={focused}
+        visible={visible}
+        color={tab.color ?? DEFAULT_HOST_COLOR}
+        findOpen={inWorkspace && findSessionId === tab.sessionId}
+        waiting={attention?.state === "waiting"}
+        waitingMessage={attention?.message}
+        isAgentSession={Boolean(tab.projectId ?? runningSession?.projectId)}
+        onReview={() => {
+          activateSession(tab.sessionId);
+          void focusMainWindow();
+        }}
+        onJumpToAgent={() => {
+          activateSession(tab.sessionId);
+          setAssistOpen(true);
+        }}
+        sessionStartedAt={runningSession?.startedAt}
+        onFindOpen={() => setFindSessionId(tab.sessionId)}
+        onFindClose={() =>
+          setFindSessionId((current) =>
+            current === tab.sessionId ? undefined : current,
+          )
+        }
+        onPaste={(text) => pasteIntoTerminal(tab.sessionId, text)}
+        onSplitRight={() => void splitPane("horizontal")}
+        onSplitDown={() => void splitPane("vertical")}
+        onClose={() => void closeTab(tab.sessionId)}
+        onAssist={() => {
+          activateSession(tab.sessionId);
+          setAssistOpen(true);
+        }}
+      />
+    );
+  }
 
   const sessionFocused =
     inWorkspace &&
@@ -2351,194 +2465,209 @@ function Workspace({
               onOpenFiles={(host) => void openFiles(host)}
               onClose={() => setRailNav("hosts")}
             />
-          ) : !inWorkspace ? (
-            <Launcher
-              hosts={hosts}
-              projects={projects}
-              runningSessions={runningSessions}
-              sessionAttention={sessionAttention}
-              openHostIds={openHostIds}
-              error={error}
-              connectingHostId={connectingHostId}
-              openingFilesHostId={openingFilesHostId}
-              openingProjectId={openingProjectId}
-              onConnect={(host, opts) => void connect(host, opts)}
-              onFiles={(host) => void openFiles(host)}
-              onAgent={openAgentOnHost}
-              onEditHost={setEditor}
-              onDeleteHost={setPendingDelete}
-              onOpenProject={(project) => void openProject(project)}
-              onEditProject={setProjectEditor}
-              onDeleteProject={setPendingDeleteProject}
-              onReattach={(session) => void reattachSession(session)}
-              onEndSession={(session) => void killRunningSession(session)}
-              onAddHost={() => {
-                setHostDraft(undefined);
-                setEditor("new");
-              }}
-              onAddProject={() => setProjectEditor("new")}
-              onImport={() => setImportOpen(true)}
-              onLocal={() => void openLocal()}
-              onQuickConnect={handleQuickConnect}
-              agentLabel={(id) => agentDisplayName(agents, id)}
-            />
           ) : (
             <>
-              {assistOpen &&
-                (() => {
-                  const context = assistContextForActive();
-                  if (!context) return null;
-                  return (
-                    <AssistBar
-                      context={context}
-                      reloadToken={assistKeysEpoch}
-                      onInsert={insertAssistCommand}
-                      onOpenSettings={() => openSurface("assist")}
-                      onClose={() => setAssistOpen(false)}
-                    />
-                  );
-                })()}
-
-              {activeTab &&
-                activeTab.kind === "terminal" &&
-                activeTab.connected && (
-                  <TunnelsPanel
-                    sessionId={activeTab.sessionId}
-                    connected={activeTab.connected}
-                    agentForward={activeTab.agentForward}
-                    agentForwardHint={activeTab.agentForwardHint}
-                  />
-                )}
-
-              <section className="relative min-h-0 flex-1">
-                {zoomedId && (
-                  <div className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-line bg-elevated/90 px-2 py-0.5 text-micro text-fg-muted">
-                    Zoomed — Esc to exit
-                  </div>
-                )}
-                {tabs.length === 0 || !effectiveLayout ? (
-                  <div className="grid size-full place-items-center gap-2 p-8 text-ui text-fg-muted">
-                    <span>No open tabs.</span>
-                    <button
-                      type="button"
-                      className="cursor-pointer text-accent hover:underline"
-                      onClick={goLauncher}
-                    >
-                      Back to hosts
-                    </button>
-                  </div>
-                ) : (
-                  <SplitPanes
-                    layout={effectiveLayout}
-                    focusedId={activeId}
-                    zoomedId={zoomedId}
-                    narrow={narrow}
-                    onFocus={setActiveId}
-                    onLayoutChange={setLayout}
-                    renderPane={(sessionId, focused) => {
-                      const tab = tabs.find(
-                        (entry) => entry.sessionId === sessionId,
-                      );
-                      if (!tab) return null;
-                      if (tab.kind === "sftp") {
-                        return (
-                          <SftpBrowser
-                            key={tab.sessionId}
-                            pane
-                            sessionId={tab.sessionId}
-                            initialRemotePath={tab.remotePath ?? "."}
-                            initialLocalPath={tab.localPath ?? "/"}
-                            active={focused}
-                          />
-                        );
-                      }
-                      const runningId = ptyToRunning.current.get(
-                        tab.sessionId,
-                      );
-                      const runningAttention = runningId
-                        ? sessionAttention[runningId]
-                        : undefined;
-                      const attachedAttention = ptyAttention[tab.sessionId];
-                      const attention = attachedAttention ?? runningAttention;
-                      const runningSession = runningId
-                        ? runningSessions.find((s) => s.id === runningId)
-                        : undefined;
+              {/* Keep session panes mounted across home round-trips so xterm
+                  scrollback survives. Hide with invisible — never unmount. */}
+              {tabs.length > 0 && effectiveLayout ? (
+                <div
+                  className={cn(
+                    "flex min-h-0 min-w-0 flex-1 flex-col",
+                    !inWorkspace &&
+                      "pointer-events-none absolute inset-0 z-0 opacity-0",
+                  )}
+                  aria-hidden={!inWorkspace}
+                >
+                  {assistOpen &&
+                    inWorkspace &&
+                    (() => {
+                      const context = assistContextForActive();
+                      if (!context) return null;
                       return (
-                        <SessionView
-                          key={tab.sessionId}
-                          pane
-                          sessionId={tab.sessionId}
-                          host={
-                            tab.hostId !== "local"
-                              ? hosts.find((h) => h.id === tab.hostId)
-                              : undefined
-                          }
-                          cwd={tab.cwd}
-                          gitBranch={tab.gitBranch}
-                          connected={tab.connected}
-                          active={focused}
-                          visible
-                          color={tab.color ?? DEFAULT_HOST_COLOR}
-                          findOpen={findSessionId === tab.sessionId}
-                          waiting={attention?.state === "waiting"}
-                          waitingMessage={attention?.message}
-                          isAgentSession={Boolean(
-                            tab.projectId ?? runningSession?.projectId,
-                          )}
-                          onReview={() => {
-                            activateSession(tab.sessionId);
-                            void focusMainWindow();
-                          }}
-                          onJumpToAgent={() => {
-                            activateSession(tab.sessionId);
-                            setAssistOpen(true);
-                          }}
-                          sessionStartedAt={runningSession?.startedAt}
-                          onFindOpen={() => setFindSessionId(tab.sessionId)}
-                          onFindClose={() =>
-                            setFindSessionId((current) =>
-                              current === tab.sessionId ? undefined : current,
-                            )
-                          }
-                          onPaste={(text) =>
-                            pasteIntoTerminal(tab.sessionId, text)
-                          }
-                          onSplitRight={() => void splitPane("horizontal")}
-                          onSplitDown={() => void splitPane("vertical")}
-                          onClose={() => void closeTab(tab.sessionId)}
-                          onAssist={() => {
-                            activateSession(tab.sessionId);
-                            setAssistOpen(true);
-                          }}
+                        <AssistBar
+                          context={context}
+                          reloadToken={assistKeysEpoch}
+                          onInsert={insertAssistCommand}
+                          onOpenSettings={() => openSurface("assist")}
+                          onClose={() => setAssistOpen(false)}
                         />
                       );
-                    }}
-                  />
-                )}
-              </section>
+                    })()}
 
-              {agentNotice && (
-                <button
-                  type="button"
-                  onClick={() => setAgentNotice(undefined)}
-                  className="absolute right-4 bottom-16 z-20 max-w-96 cursor-pointer rounded-md border border-accent/40 bg-elevated px-3 py-2 text-left text-micro text-fg shadow-lg shadow-black/50"
-                >
-                  {agentNotice}
-                </button>
-              )}
+                  {inWorkspace &&
+                    activeTab &&
+                    activeTab.kind === "terminal" &&
+                    activeTab.connected && (
+                      <TunnelsPanel
+                        sessionId={activeTab.sessionId}
+                        connected={activeTab.connected}
+                        agentForward={activeTab.agentForward}
+                        agentForwardHint={activeTab.agentForwardHint}
+                      />
+                    )}
 
-              {error && tabs.length > 0 && (
-                <button
-                  onClick={() => setError(undefined)}
-                  className="absolute right-4 bottom-4 z-20 max-w-96 cursor-pointer rounded-md border border-danger/40 bg-elevated px-3 py-2 text-left text-micro text-danger shadow-lg shadow-black/50"
-                >
-                  {error}
-                </button>
-              )}
+                  <section className="relative min-h-0 flex-1">
+                    {zoomedId && inWorkspace && (
+                      <div className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-line bg-elevated/90 px-2 py-0.5 text-micro text-fg-muted">
+                        Zoomed — Esc to exit
+                      </div>
+                    )}
+
+                    {/* Persistent PTY pool: every terminal stays mounted across
+                        home ↔ session and tab switches (sftp). Hide with
+                        opacity (not visibility:hidden — that breaks xterm
+                        paint on WKWebView). Split layouts still use
+                        SplitPanes below for geometry. */}
+                    {ptyTabs.map((tab) => {
+                      const ownedBySplit =
+                        layoutIsSplit &&
+                        effectiveLayout != null &&
+                        containsSession(effectiveLayout, tab.sessionId);
+                      if (ownedBySplit) return null;
+                      const focused = tab.sessionId === activeId;
+                      const show =
+                        inWorkspace &&
+                        focused &&
+                        (tab.kind === "terminal" || tab.kind === "local") &&
+                        activeTab?.sessionId === tab.sessionId;
+                      return (
+                        <div
+                          key={tab.sessionId}
+                          className={cn(
+                            "absolute inset-0",
+                            show
+                              ? "z-10"
+                              : "pointer-events-none absolute inset-0 -z-10 opacity-0",
+                          )}
+                          aria-hidden={!show}
+                        >
+                          {renderTerminalSession(
+                            tab,
+                            show && focused,
+                            show,
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {layoutIsSplit && effectiveLayout ? (
+                      <SplitPanes
+                        layout={effectiveLayout}
+                        focusedId={activeId}
+                        zoomedId={zoomedId}
+                        narrow={narrow}
+                        onFocus={setActiveId}
+                        onLayoutChange={setLayout}
+                        renderPane={(sessionId, focused) => {
+                          const tab = tabs.find(
+                            (entry) => entry.sessionId === sessionId,
+                          );
+                          if (!tab) return null;
+                          if (tab.kind === "sftp") {
+                            return (
+                              <SftpBrowser
+                                key={tab.sessionId}
+                                pane
+                                sessionId={tab.sessionId}
+                                initialRemotePath={tab.remotePath ?? "."}
+                                initialLocalPath={tab.localPath ?? "/"}
+                                active={focused && inWorkspace}
+                              />
+                            );
+                          }
+                          return renderTerminalSession(
+                            tab,
+                            focused && inWorkspace,
+                            inWorkspace,
+                          );
+                        }}
+                      />
+                    ) : null}
+
+                    {inWorkspace && activeTab?.kind === "sftp" ? (
+                      <div className="absolute inset-0 z-20">
+                        <SftpBrowser
+                          key={activeTab.sessionId}
+                          pane
+                          sessionId={activeTab.sessionId}
+                          initialRemotePath={activeTab.remotePath ?? "."}
+                          initialLocalPath={activeTab.localPath ?? "/"}
+                          active
+                        />
+                      </div>
+                    ) : null}
+                  </section>
+
+                  {agentNotice && inWorkspace && (
+                    <button
+                      type="button"
+                      onClick={() => setAgentNotice(undefined)}
+                      className="absolute right-4 bottom-16 z-20 max-w-96 cursor-pointer rounded-md border border-accent/40 bg-elevated px-3 py-2 text-left text-micro text-fg shadow-lg shadow-black/50"
+                    >
+                      {agentNotice}
+                    </button>
+                  )}
+
+                  {error && tabs.length > 0 && inWorkspace && (
+                    <button
+                      onClick={() => setError(undefined)}
+                      className="absolute right-4 bottom-4 z-20 max-w-96 cursor-pointer rounded-md border border-danger/40 bg-elevated px-3 py-2 text-left text-micro text-danger shadow-lg shadow-black/50"
+                    >
+                      {error}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+
+              {!inWorkspace ? (
+                <Launcher
+                  hosts={hosts}
+                  projects={projects}
+                  runningSessions={runningSessions}
+                  sessionAttention={sessionAttention}
+                  openHostIds={openHostIds}
+                  error={error}
+                  connectingHostId={connectingHostId}
+                  openingFilesHostId={openingFilesHostId}
+                  openingProjectId={openingProjectId}
+                  onConnect={(host, opts) => void connect(host, opts)}
+                  onFiles={(host) => void openFiles(host)}
+                  onAgent={openAgentOnHost}
+                  onEditHost={setEditor}
+                  onDeleteHost={setPendingDelete}
+                  onOpenProject={(project) => void openProject(project)}
+                  onEditProject={setProjectEditor}
+                  onDeleteProject={setPendingDeleteProject}
+                  onReattach={(session) => void reattachSession(session)}
+                  onEndSession={(session) => void killRunningSession(session)}
+                  onAddHost={() => {
+                    setHostDraft(undefined);
+                    setEditor("new");
+                  }}
+                  onAddProject={() => setProjectEditor("new")}
+                  onImport={() => setImportOpen(true)}
+                  onLocal={() => void openLocal()}
+                  onQuickConnect={handleQuickConnect}
+                  agentLabel={(id) => agentDisplayName(agents, id)}
+                />
+              ) : tabs.length === 0 || !effectiveLayout ? (
+                <div className="grid size-full place-items-center gap-2 p-8 text-ui text-fg-muted">
+                  <span>No open tabs.</span>
+                  <button
+                    type="button"
+                    className="cursor-pointer text-accent hover:underline"
+                    onClick={goLauncher}
+                  >
+                    Back to hosts
+                  </button>
+                </div>
+              ) : null}
             </>
           )}
         </main>
       </div>
+
+      <BlockMenuHost />
 
       <CommandPalette
         open={paletteOpen}

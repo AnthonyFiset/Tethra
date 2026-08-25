@@ -9,6 +9,7 @@ import {
   formatDuration,
   shortenPath,
 } from "./blockChrome";
+import { requestBlockMenu } from "./blockMenuBridge";
 
 interface OverlayHost {
   root: HTMLElement;
@@ -19,8 +20,8 @@ interface OverlayHost {
 const hosts = new Map<string, OverlayHost>();
 const pendingSync = new Map<string, number>();
 
-/** Reserve right edge for ⋮ menu column — timestamps stop here. */
-const MENU_COLUMN_WIDTH = 34;
+/** Right pad for hover action cluster. */
+const ACTIONS_WIDTH = 108;
 /** Gap between last block text row and the waiting banner. */
 const BANNER_GAP = 4;
 
@@ -36,6 +37,9 @@ export function setBlockOverlayHost(
   disposables.push(terminal.onScroll(() => scheduleBlockOverlaySync(sessionId)));
   disposables.push(terminal.onResize(() => scheduleBlockOverlaySync(sessionId)));
   disposables.push(terminal.onRender(() => scheduleBlockOverlaySync(sessionId)));
+  disposables.push(
+    terminal.buffer.onBufferChange(() => scheduleBlockOverlaySync(sessionId)),
+  );
 
   hosts.set(sessionId, { root, terminal, disposables });
   scheduleBlockOverlaySync(sessionId);
@@ -68,7 +72,6 @@ export function disposeBlockOverlay(sessionId: string): void {
 
 /** Actual rendered cell height from xterm (never a CSS constant). */
 function measureCellHeight(terminal: Terminal): number {
-  // xterm 6 + WebGL: no .xterm-rows — the helper textarea is sized to one cell.
   const helper = terminal.element?.querySelector(
     ".xterm-helper-textarea",
   ) as HTMLElement | null;
@@ -98,10 +101,6 @@ function measureCellHeight(terminal: Terminal): number {
   return terminal.options.fontSize! * (terminal.options.lineHeight ?? 1);
 }
 
-/**
- * Map a buffer line to overlay-root coordinates.
- * Origin is .xterm-screen's top (where glyphs paint); row pitch is the live cell height.
- */
 function lineRect(
   terminal: Terminal,
   root: HTMLElement,
@@ -113,37 +112,41 @@ function lineRect(
 
   const rootRect = root.getBoundingClientRect();
   const cellH = measureCellHeight(terminal);
+  // Always derive height from the measured cell — never trust a DOM row's
+  // getBoundingClientRect().height alone (WebGL/odd layouts returned the
+  // full screen height, so opaque PS1 covers blanked all remote output).
+  const height = cellH > 0 ? cellH : 16;
 
-  // Prefer live DOM row when present (DOM renderer).
   const rows = terminal.element?.querySelector(".xterm-rows");
   const row = rows?.children.item(rel) as HTMLElement | null;
   if (row) {
     const rowRect = row.getBoundingClientRect();
     if (rowRect.height > 0) {
+      // Use the row's top for alignment, but never its height if it's > 2 cells.
+      const safeH =
+        rowRect.height <= height * 2 ? rowRect.height : height;
       return {
         top: rowRect.top - rootRect.top,
-        height: rowRect.height,
+        height: safeH,
         left: rowRect.left - rootRect.left,
         width: rowRect.width,
       };
     }
   }
 
-  // WebGL (xterm 6): no .xterm-rows — screen origin + viewport-relative pitch.
   const screen = terminal.element?.querySelector(
     ".xterm-screen",
   ) as HTMLElement | null;
   if (!screen) return null;
   const screenRect = screen.getBoundingClientRect();
   return {
-    top: screenRect.top - rootRect.top + rel * cellH,
-    height: cellH,
+    top: screenRect.top - rootRect.top + rel * height,
+    height,
     left: screenRect.left - rootRect.left,
     width: screenRect.width,
   };
 }
 
-/** Frame from prompt row through block end, clamped to visible rows. */
 function clampedFrame(
   terminal: Terminal,
   root: HTMLElement,
@@ -179,9 +182,158 @@ function syncBlockOverlay(sessionId: string): void {
   const { root, terminal } = host;
   root.replaceChildren();
 
-  for (const block of snapshot.blocks) {
-    renderBlock(root, terminal, block, snapshot);
+  // Alt-screen / TUI: hide block chrome — keys go to the app.
+  if (terminal.buffer.active.type === "alternate") return;
+
+  const buf = terminal.buffer.active;
+  const viewportStart = buf.viewportY;
+  const viewportEnd = buf.viewportY + terminal.rows - 1;
+
+  // Collect viewport PS1 rows once, then assign each block an exclusive cover
+  // line. Only *strict* prompt rows — never "~" alone or arbitrary "#"/">" hits.
+  const promptRows: { y: number; cmd: string }[] = [];
+  for (let y = viewportStart; y <= viewportEnd; y++) {
+    const raw = buf.getLine(y)?.translateToString(true) ?? "";
+    if (!raw.trim()) continue;
+    if (!lineLooksLikePrompt(raw)) continue;
+    const cmd = stripPs1Local(raw).trim();
+    promptRows.push({ y, cmd });
   }
+  const usedRows = new Set<number>();
+
+  for (const block of snapshot.blocks) {
+    const coverLine = pickExclusiveCoverLine(
+      terminal,
+      block,
+      snapshot,
+      promptRows,
+      usedRows,
+    );
+    // No confident cover → no chrome (never paint over output).
+    renderBlock(root, terminal, block, snapshot, coverLine);
+  }
+
+  // While composing in the input box, bash tab-completion redraws the prompt
+  // (candidates print, PS1 reprints below). Those redraw rows — and any bare
+  // idle PS1 rows near the cursor — leak raw "root@host:~#" text between the
+  // styled blocks. Blank every unused STRICT prompt row near the cursor.
+  // Output rows are safe: only user@host / ornament-~ prompt shapes qualify.
+  const activeBlock = snapshot.blocks.find((b) => b.kind === "active");
+  if (activeBlock?.composing && !snapshot.uncoverLivePrompt) {
+    const cursorRow = buf.baseY + buf.cursorY;
+    const from = Math.max(viewportStart, cursorRow - 24);
+    for (let y = from; y <= Math.min(cursorRow, viewportEnd); y++) {
+      if (usedRows.has(y)) continue;
+      const raw = buf.getLine(y)?.translateToString(true) ?? "";
+      if (!raw.trim()) continue;
+      if (!strictPromptRow(raw)) continue;
+      const rect = lineRect(terminal, root, y);
+      if (!rect) continue;
+      usedRows.add(y);
+      const blank = document.createElement("div");
+      blank.className = "tethra-block-overlay-blank";
+      blank.style.top = `${rect.top}px`;
+      blank.style.height = `${rect.height}px`;
+      applyHorizontal(blank, rect.left, rect.width);
+      root.appendChild(blank);
+    }
+  }
+}
+
+/**
+ * Much stricter than lineLooksLikePrompt: only unmistakable PS1 shapes.
+ * Used for blanking — a false positive here would hide real output, so
+ * the loose "glyph somewhere in the head" branch is deliberately absent
+ * (ls -l symlink arrows contain ">" and must never be blanked).
+ */
+function strictPromptRow(raw: string): boolean {
+  const t = raw.trimEnd();
+  if (!t) return false;
+  if (/^[\w.-]+@[\w.-]+:[^\s]*[#\$](?:\s|$)/.test(t)) return true;
+  if (/^[\w.-]+@[\w.-]+[^\n]{0,60}[$#%❯](?:\s|$)/.test(t)) return true;
+  const line = t.replace(/^[·•∙▲▶►▸☛➢✩★◆◇○●]\s*/u, "").trimStart();
+  if (/^~(?:\/\S*)?\s*[$#%❯>]?\s*$/.test(line)) return true;
+  // "~ ❯ ls" style (path + glyph + short typed text) — the glyph is required,
+  // so multi-column output rows never qualify.
+  if (/^~(?:\/\S*)?\s+[$#%❯]\s+\S[^\n]{0,160}$/.test(line)) return true;
+  return false;
+}
+
+/**
+ * Pick a unique viewport row for this block's opaque PS1 cover.
+ */
+function pickExclusiveCoverLine(
+  terminal: Terminal,
+  block: BlockChromeEntry,
+  snapshot: BlockChromeSnapshot,
+  promptRows: { y: number; cmd: string }[],
+  usedRows: Set<number>,
+): number | null {
+  const isActive = block.kind === "active";
+  if (isActive && snapshot.uncoverLivePrompt) return null;
+
+  const cmd = block.commandText.trim();
+  const buf = terminal.buffer.active;
+  const viewportStart = buf.viewportY;
+  const viewportEnd = buf.viewportY + terminal.rows - 1;
+
+  const tryTake = (y: number | null | undefined): number | null => {
+    if (y == null || y < viewportStart || y > viewportEnd) return null;
+    if (usedRows.has(y)) return null;
+    usedRows.add(y);
+    return y;
+  };
+
+  // 1) Exact command match on an unused prompt row nearest the marker.
+  if (cmd) {
+    const prefer = block.promptLine;
+    const matches = promptRows.filter(
+      (r) => !usedRows.has(r.y) && (r.cmd === cmd || r.cmd.startsWith(`${cmd} `)),
+    );
+    matches.sort(
+      (a, b) => Math.abs(a.y - prefer) - Math.abs(b.y - prefer),
+    );
+    if (matches[0]) return tryTake(matches[0].y);
+  }
+
+  // 2) Active idle: cover the cursor/marker row.
+  if (isActive && !cmd) {
+    return (
+      tryTake(block.commandLine) ??
+      tryTake(block.promptLine) ??
+      null
+    );
+  }
+
+  // 3) Active with command but theme strip failed — cover marker if unused
+  // and the row is still prompt-shaped.
+  if (isActive && cmd) {
+    for (const y of [block.commandLine, block.promptLine]) {
+      const raw = buf.getLine(y)?.translateToString(true) ?? "";
+      if (!lineLooksLikePrompt(raw)) continue;
+      if (raw.includes(cmd)) {
+        const taken = tryTake(y);
+        if (taken != null) return taken;
+      }
+    }
+  }
+
+  // 4) Finished: marker row only if it still shows this command *and*
+  // looks like a PS1 (never cover an output row that equals the command text,
+  // e.g. ls of a single dir named "test").
+  if (cmd) {
+    for (const y of [block.commandLine, block.promptLine]) {
+      if (y < viewportStart || y > viewportEnd || usedRows.has(y)) continue;
+      const raw = buf.getLine(y)?.translateToString(true) ?? "";
+      if (!lineLooksLikePrompt(raw)) continue;
+      const stripped = stripPs1Local(raw).trim();
+      if (stripped === cmd || stripped.startsWith(`${cmd} `)) {
+        return tryTake(y);
+      }
+    }
+  }
+
+  return null;
 }
 
 function applyHorizontal(
@@ -194,7 +346,54 @@ function applyHorizontal(
   el.style.right = "auto";
 }
 
-/** Last buffer line in [promptLine, endLine] that still has visible text. */
+function stripPs1Local(raw: string): string {
+  let line = raw.replace(/^[·•∙▲▶►▸☛➢✩★◆◇○●]\s*/u, "").trimStart();
+  line = line.replace(/^[·•∙▲▶►▸☛➢✩★◆◇○●]\s*/u, "").trimStart();
+
+  const classic = line.match(/^[\w.-]+@[\w.-]+:[^\s]*[#\$]\s*(.*)$/);
+  if (classic) return (classic[1] ?? "").trim();
+
+  const userHost = line.match(
+    /^[\w.-]+@[\w.-]+\s+[^\n]*?[$#%>❯➢➤›»⟩〉➜⇒→▶]\s*(.*)$/,
+  );
+  if (userHost) return (userHost[1] ?? "").trim();
+
+  if (/[$#%>❯➢➤›»⟩〉➜⇒→▶]/.test(line.slice(0, 80))) {
+    const head = line.slice(0, 80);
+    const tail = line.slice(80);
+    line = head.replace(/^.*?[$#%>❯➢➤›»⟩〉➜⇒→▶] ?/, "") + tail;
+    const pathPref = line.match(/^~(?:\/\S*)? (.*)$/);
+    if (pathPref) return (pathPref[1] ?? "").trim();
+    return line.trim();
+  }
+  const pathPref = line.match(/^~(?:\/\S*)? (.*)$/);
+  if (pathPref) return (pathPref[1] ?? "").trim();
+  const homeCmd = raw.match(/~(?:\/\S*)?\s+(\S.*)$/);
+  if (homeCmd) return (homeCmd[1] ?? "").trim();
+  return line.trim();
+}
+
+function lineLooksLikePrompt(raw: string): boolean {
+  const t = raw.trimEnd();
+  if (!t) return false;
+  if (/^[\w.-]+@[\w.-]+:[^\s]*[#\$](?:\s|$)/.test(t)) return true;
+  if (/^[\w.-]+@[\w.-]+.*[$#%>❯➢➤›»⟩〉➜⇒→▶](?:\s|$)/.test(t)) return true;
+  const line = t.replace(/^[·•∙▲▶►▸☛➢✩★◆◇○●]\s*/u, "").trimStart();
+  if (/^~(?:\/\S*)?$/.test(line.trim())) return true;
+  if (
+    /^~(?:\/\S*)?\s+/.test(line) &&
+    /[$#%>❯➢➤›»⟩〉➜⇒→▶]/.test(t.slice(0, 80))
+  ) {
+    return true;
+  }
+  if (/^~(?:\/\S*)?\s+\S/.test(line) && line.split(/\s+/).length <= 6) {
+    return true;
+  }
+  const head = t.slice(0, 80);
+  if (/[$#%>❯➢➤›»⟩〉➜⇒→▶]/.test(head) && t.length < 200) return true;
+  return false;
+}
+
 function lastContentLine(
   terminal: Terminal,
   promptLine: number,
@@ -213,77 +412,80 @@ function renderBlock(
   terminal: Terminal,
   block: BlockChromeEntry,
   snapshot: BlockChromeSnapshot,
+  coverLine: number | null,
 ): void {
-  const prompt = lineRect(terminal, root, block.promptLine);
-  // Header only when the OSC 133;A prompt row is on screen.
-  if (!prompt) return;
-
-  const bounds = clampedFrame(
-    terminal,
-    root,
-    block.promptLine,
-    block.endLine,
-  );
-
-  const failed = block.exitCode !== null && block.exitCode !== 0;
   const isActive = block.kind === "active";
-  const railColor = isActive
-    ? BLOCK_COLORS.accent
-    : failed
-      ? BLOCK_COLORS.fail
-      : BLOCK_COLORS.ok;
-  const railOpacity = isActive ? "1" : failed ? "0.7" : "0.55";
-
-  // Opaque headers replace the prompt row. Only do that when we have a
-  // command to show — otherwise idle/empty prompts look like a black terminal
-  // (WKWebView DOM glyphs are under the #0d0d0d header).
   const hasCommand = Boolean(block.commandText.trim());
-  const coverPrompt = hasCommand;
 
-  if (bounds) {
-    const frame = document.createElement("div");
-    frame.className = isActive
-      ? "tethra-block-overlay-frame tethra-block-overlay-active"
-      : failed
-        ? "tethra-block-overlay-frame tethra-block-overlay-failed"
-        : "tethra-block-overlay-frame tethra-block-overlay-ok";
-    // Frame sits slightly left of glyphs; outline-offset puts the stroke
-    // in the gutter. Stop before the ⋮ so the right edge never fragments.
-    const frameLeft = Math.max(0, bounds.left - 5);
-    const frameRightPad = MENU_COLUMN_WIDTH + 6;
-    const frameWidth = Math.max(
-      48,
-      bounds.left + bounds.width - frameLeft - frameRightPad,
-    );
-    frame.style.top = `${Math.max(0, bounds.top - 2)}px`;
-    frame.style.height = `${bounds.height + 4}px`;
-    applyHorizontal(frame, frameLeft, frameWidth);
+  const cover =
+    coverLine == null
+      ? null
+      : clampedFrame(terminal, root, coverLine, coverLine);
 
-    const rail = document.createElement("div");
-    rail.className = "tethra-block-overlay-rail";
-    rail.style.background = railColor;
-    rail.style.opacity = railOpacity;
-    frame.appendChild(rail);
-    root.appendChild(frame);
+  // Composing (typing in the input box, command not running yet): blank the
+  // PS1 row and render NOTHING else — no meta strip, no elapsed timer, no
+  // action cluster. The input box is the only visible editor.
+  if (isActive && block.composing) {
+    if (cover) {
+      const blank = document.createElement("div");
+      blank.className = "tethra-block-overlay-blank";
+      blank.style.top = `${cover.top}px`;
+      blank.style.height = `${cover.height}px`;
+      applyHorizontal(blank, cover.left, cover.width);
+      root.appendChild(blank);
+    }
+    return;
   }
 
-  if (coverPrompt) {
-    const header = buildHeader(block, isActive);
-    header.style.top = `${prompt.top}px`;
-    header.style.height = `${prompt.height}px`;
-    applyHorizontal(header, prompt.left, prompt.width);
-    root.appendChild(header);
+  // Warp: elevated tint on the cover row only — never span prompt→end
+  // (that painted a veil over remote command output when markers drifted).
+  if (cover && isActive) {
+    const tint = document.createElement("div");
+    tint.className = "tethra-block-overlay-tint";
+    tint.style.top = `${cover.top}px`;
+    tint.style.height = `${cover.height}px`;
+    applyHorizontal(tint, cover.left, Math.max(48, cover.width - 4));
+    root.appendChild(tint);
   }
 
-  const menu = buildMenuButton(block, snapshot);
-  menu.style.top = `${prompt.top + Math.max(0, (prompt.height - 24) / 2)}px`;
-  menu.style.left = "auto";
-  menu.style.right = `${Math.max(6, root.clientWidth - prompt.left - prompt.width + 6)}px`;
-  root.appendChild(menu);
+  // Don't paint meta-only chrome for finished blocks (defensive).
+  // Active idle prompt still gets an opaque cover so raw PS1 stays hidden.
+  // Hard-cap height to ~1.5 cells so a bad layout never blankets output.
+  if (cover) {
+    if (!hasCommand && !isActive) {
+      // skip
+    } else {
+      const cellCap = Math.max(cover.height, 8) * 1.5;
+      const group = document.createElement("div");
+      group.className = "tethra-block-chrome-group";
+      group.style.top = `${cover.top}px`;
+      group.style.height = `${Math.min(cover.height, cellCap)}px`;
+      group.style.maxHeight = `${cellCap}px`;
+      group.style.overflow = "hidden";
+      applyHorizontal(group, cover.left, cover.width);
+
+      const header = buildHeader(block, isActive);
+      header.style.position = "absolute";
+      header.style.inset = "0";
+      group.appendChild(header);
+
+      if (hasCommand || isActive) {
+        const actions = buildActionCluster(
+          block,
+          snapshot,
+          hasCommand,
+          isActive,
+        );
+        actions.style.top = `${Math.max(0, (cover.height - 22) / 2)}px`;
+        actions.style.right = "4px";
+        actions.style.left = "auto";
+        group.appendChild(actions);
+      }
+      root.appendChild(group);
+    }
+  }
 
   if (isActive && snapshot.context.waiting) {
-    // Sit strictly below the last text row. Near the viewport bottom, use a
-    // compact banner so Review stays on-screen without covering glyphs.
     const contentLine = lastContentLine(
       terminal,
       block.promptLine,
@@ -291,6 +493,7 @@ function renderBlock(
     );
     const contentRect = lineRect(terminal, root, contentLine);
     const endRect = lineRect(terminal, root, block.endLine);
+    const prompt = lineRect(terminal, root, block.promptLine);
     if (contentRect) {
       const minTop = contentRect.top + contentRect.height + BANNER_GAP;
       let bannerTop =
@@ -311,8 +514,10 @@ function renderBlock(
         const banner = buildWaitingBanner(snapshot);
         if (compact) banner.classList.add("tethra-block-waiting-compact");
         banner.style.top = `${bannerTop}px`;
-        banner.style.left = `${prompt.left}px`;
-        banner.style.width = `${Math.max(120, prompt.width - MENU_COLUMN_WIDTH - 10)}px`;
+        const left = prompt?.left ?? cover?.left ?? 0;
+        const width = prompt?.width ?? cover?.width ?? root.clientWidth;
+        banner.style.left = `${left}px`;
+        banner.style.width = `${Math.max(120, width - ACTIONS_WIDTH - 10)}px`;
         banner.style.right = "auto";
         root.appendChild(banner);
       }
@@ -320,65 +525,63 @@ function renderBlock(
   }
 }
 
+/**
+ * Warp anatomy: one row — dim meta · bold command.
+ * Must fit a single cell height so the opaque cover fully hides PS1.
+ */
 function buildHeader(block: BlockChromeEntry, isActive: boolean): HTMLElement {
   const header = document.createElement("div");
   header.className = "tethra-block-overlay-header";
 
-  const path = document.createElement("span");
-  path.className = "tethra-block-header-path";
-  path.textContent = shortenPath(block.meta.cwd) || "—";
-  header.appendChild(path);
+  const metaBits: string[] = [];
+  const path = shortenPath(block.meta.cwd);
+  if (path) metaBits.push(path);
+  if (block.meta.gitBranch) metaBits.push(block.meta.gitBranch);
+  if (isActive) {
+    const elapsed = block.meta.startedAt
+      ? formatDuration(Date.now() - block.meta.startedAt)
+      : null;
+    if (elapsed) metaBits.push(elapsed);
+  } else if (block.exitCode != null && block.exitCode !== 0) {
+    metaBits.push(`exit ${block.exitCode}`);
+    if (block.meta.endedAt && block.meta.startedAt) {
+      metaBits.push(
+        formatDuration(block.meta.endedAt - block.meta.startedAt),
+      );
+    }
+    if (block.meta.endedAt) metaBits.push(formatBlockTime(block.meta.endedAt));
+  } else if (block.meta.endedAt && block.meta.startedAt) {
+    metaBits.push(formatDuration(block.meta.endedAt - block.meta.startedAt));
+    metaBits.push(formatBlockTime(block.meta.endedAt));
+  }
 
-  if (block.meta.gitBranch) {
-    const branch = document.createElement("span");
-    branch.className = "tethra-block-branch";
-    branch.textContent = block.meta.gitBranch;
-    header.appendChild(branch);
+  if (metaBits.length > 0) {
+    const meta = document.createElement("span");
+    meta.className = "tethra-block-header-meta-line";
+    meta.textContent = metaBits.join(" · ");
+    header.appendChild(meta);
   }
 
   const command = (block.commandText || "").trim();
   if (command) {
     const cmdWrap = document.createElement("span");
     cmdWrap.className = "tethra-block-header-cmd";
-    const prompt = document.createElement("span");
-    prompt.className = isActive
+    const mark = document.createElement("span");
+    mark.className = isActive
       ? "tethra-block-header-prompt is-active"
       : block.exitCode != null && block.exitCode !== 0
         ? "tethra-block-header-prompt is-failed"
         : "tethra-block-header-prompt is-ok";
-    prompt.textContent = "❯";
+    mark.textContent = "❯";
     const cmd = document.createElement("span");
     cmd.className = "tethra-block-header-cmd-text";
     cmd.textContent = command;
     cmd.title = command;
-    cmdWrap.appendChild(prompt);
+    cmdWrap.appendChild(mark);
     cmdWrap.appendChild(cmd);
     header.appendChild(cmdWrap);
   }
 
-  const spacer = document.createElement("span");
-  spacer.className = "tethra-block-overlay-spacer";
-  header.appendChild(spacer);
-
-  const right = document.createElement("span");
-  right.className = "tethra-block-header-meta";
-  if (isActive) {
-    const elapsed = block.meta.startedAt
-      ? formatDuration(Date.now() - block.meta.startedAt)
-      : "—";
-    right.textContent = `running ${elapsed}`;
-  } else if (block.exitCode != null && block.exitCode !== 0) {
-    const duration =
-      block.meta.endedAt && block.meta.startedAt
-        ? formatDuration(block.meta.endedAt - block.meta.startedAt)
-        : "—";
-    right.innerHTML = `<span class="tethra-block-exit">exit ${block.exitCode}</span><span> · ${duration}${block.meta.endedAt ? ` · ${formatBlockTime(block.meta.endedAt)}` : ""}</span>`;
-  } else if (block.meta.endedAt && block.meta.startedAt) {
-    const duration = formatDuration(block.meta.endedAt - block.meta.startedAt);
-    right.textContent = `${duration} · ${formatBlockTime(block.meta.endedAt)}`;
-  }
-  right.style.paddingRight = `${MENU_COLUMN_WIDTH}px`;
-  header.appendChild(right);
   return header;
 }
 
@@ -393,7 +596,7 @@ function buildWaitingBanner(snapshot: BlockChromeSnapshot): HTMLElement {
   const msg = document.createElement("span");
   msg.textContent =
     snapshot.context.waitingMessage ??
-    "Waiting for you — approve the pending change";
+    "Waiting for you — the agent needs your input";
   banner.appendChild(msg);
 
   const spacer = document.createElement("span");
@@ -415,103 +618,80 @@ function buildWaitingBanner(snapshot: BlockChromeSnapshot): HTMLElement {
   return banner;
 }
 
-function buildMenuButton(
+/** Inline hover actions: copy · share · re-run · ⋮ (Radix menu for the rest). */
+function buildActionCluster(
   block: BlockChromeEntry,
   snapshot: BlockChromeSnapshot,
+  hasCommand: boolean,
+  isActive: boolean,
 ): HTMLElement {
   const wrap = document.createElement("div");
-  wrap.className = "tethra-block-menu-wrap tethra-block-overlay-menu";
+  wrap.className = isActive
+    ? "tethra-block-actions-cluster is-active"
+    : "tethra-block-actions-cluster";
 
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "tethra-block-menu-btn";
-  btn.title = "Block actions";
-  btn.textContent = "⋮";
-  btn.addEventListener("click", (event) => {
+  function iconBtn(label: string, glyph: string, run: () => void): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tethra-block-action-btn";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.textContent = glyph;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      run();
+    });
+    return btn;
+  }
+
+  if (hasCommand) {
+    wrap.appendChild(
+      iconBtn("Copy command", "⧉", () => {
+        void writeClipboardText(block.commandText || "");
+      }),
+    );
+    wrap.appendChild(
+      iconBtn("Share block", "↗", () => {
+        void writeClipboardText(
+          [block.commandText, block.outputText].filter(Boolean).join("\n\n"),
+        );
+      }),
+    );
+    wrap.appendChild(
+      iconBtn("Re-run", "↻", () => {
+        if (!block.commandText) return;
+        armShellInjectGate();
+        snapshot.onRerun?.(block.commandText);
+      }),
+    );
+  }
+
+  const more = iconBtn("More", "⋯", () => {
+    const rect = more.getBoundingClientRect();
+    requestBlockMenu({
+      anchorX: rect.right,
+      anchorY: rect.bottom,
+      block,
+      snapshot,
+    });
+  });
+  // pointerdown: fires before outside-dismiss / xterm capture races.
+  more.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showBlockMenu(event, block, snapshot);
+    const rect = more.getBoundingClientRect();
+    requestBlockMenu({
+      anchorX: rect.right,
+      anchorY: rect.bottom,
+      block,
+      snapshot,
+    });
   });
-  wrap.appendChild(btn);
+  wrap.appendChild(more);
+
   return wrap;
 }
 
-function showBlockMenu(
-  event: MouseEvent,
-  block: BlockChromeEntry,
-  snapshot: BlockChromeSnapshot,
-): void {
-  document.querySelector("[data-tethra-block-menu]")?.remove();
-  const menu = document.createElement("div");
-  menu.dataset.tethraBlockMenu = "1";
-  menu.className = "tethra-block-menu tethra-block-menu-panel";
-  menu.style.left = `${event.clientX}px`;
-  menu.style.top = `${event.clientY}px`;
-
-  const items: Array<{
-    label: string;
-    primary?: boolean;
-    run: () => void;
-  }> = [
-    {
-      label: "Copy command",
-      primary: true,
-      run: () => void writeClipboardText(block.commandText || ""),
-    },
-    {
-      label: "Copy output",
-      run: () => void writeClipboardText(block.outputText || ""),
-    },
-    {
-      label: "Share block",
-      run: () =>
-        void writeClipboardText(
-          [block.commandText, block.outputText].filter(Boolean).join("\n\n"),
-        ),
-    },
-    {
-      label: "Re-run",
-      run: () => {
-        if (block.commandText) {
-          armShellInjectGate();
-          snapshot.onRerun?.(block.commandText);
-        }
-      },
-    },
-  ];
-  if (snapshot.context.isAgentSession && snapshot.context.onJumpToAgent) {
-    items.push({
-      label: "Jump to agent",
-      run: () => snapshot.context.onJumpToAgent?.(),
-    });
-  }
-
-  for (const item of items) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = item.label;
-    if (item.primary) btn.className = "is-active";
-    btn.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      menu.remove();
-      item.run();
-    });
-    menu.appendChild(btn);
-  }
-
-  const dismiss = () => {
-    menu.remove();
-    window.removeEventListener("mousedown", onDown, true);
-    window.removeEventListener("keydown", onKey, true);
-  };
-  const onDown = (ev: MouseEvent) => {
-    if (!menu.contains(ev.target as Node)) dismiss();
-  };
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === "Escape") dismiss();
-  };
-  document.body.appendChild(menu);
-  window.addEventListener("mousedown", onDown, true);
-  window.addEventListener("keydown", onKey, true);
-}
+// Keep color constants referenced so tree-shaking doesn't drop the module export use.
+void BLOCK_COLORS;

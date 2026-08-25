@@ -58,13 +58,27 @@ interface BlockTracker {
   context: SessionBlockContext;
   onRerun?: (command: string) => void;
   nextId: number;
+  /** When true, leave the live PS1 uncovered (input-box mirror failed). */
+  uncoverLivePrompt: boolean;
 }
 
 export type BlockChromeEntry = {
   id: string;
   kind: "active" | "ok" | "failed";
+  /**
+   * Active block whose command has not started running yet (no OSC 133;C).
+   * The user is composing in the input box — the overlay must not echo the
+   * typed text into a header, only blank the raw PS1 row.
+   */
+  composing?: boolean;
   /** OSC 133;A prompt row — header anchors here. */
   promptLine: number;
+  /**
+   * OSC 133;B command row when known. The styled header covers
+   * [promptLine, commandLine] so the raw PS1 never shows beside the
+   * Warp command line.
+   */
+  commandLine: number;
   endLine: number;
   commandText: string;
   outputText: string;
@@ -77,6 +91,8 @@ export type BlockChromeSnapshot = {
   blocks: BlockChromeEntry[];
   context: SessionBlockContext;
   onRerun?: (command: string) => void;
+  /** Active live prompt should not be covered (mirror fallback). */
+  uncoverLivePrompt: boolean;
 };
 
 const trackers = new Map<string, BlockTracker>();
@@ -91,6 +107,7 @@ function ensure(sessionId: string): BlockTracker {
       finished: [],
       context: {},
       nextId: 0,
+      uncoverLivePrompt: false,
     };
     trackers.set(sessionId, tracker);
   }
@@ -114,6 +131,168 @@ function syncChrome(sessionId: string): void {
 function markerLine(marker: IMarker | undefined): number | undefined {
   if (!marker || marker.isDisposed) return undefined;
   return marker.line;
+}
+
+/** Glyphs that commonly terminate a PS1 before the typed command. */
+const PS1_END_CHARS = "$#%>❯➢➤›»⟩〉➜⇒→▶↵";
+
+function ps1EndRe(): RegExp {
+  return new RegExp(`[${PS1_END_CHARS}]`);
+}
+
+function stripPs1Re(): RegExp {
+  return new RegExp(`^.*?[${PS1_END_CHARS}] ?`);
+}
+
+/** Leading prompt ornaments (powerline / starship / theme bullets). */
+function stripOrnaments(raw: string): string {
+  return raw.replace(/^[·•∙▲▶►▸☛➢✩★◆◇○●]\s*/u, "").trimStart();
+}
+
+/**
+ * Reject multi-token directory listings that lack shell metacharacters.
+ * Keeps `git status`, `ls -la`, pipelines, etc.
+ */
+function looksLikeDirectoryListing(text: string): boolean {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (tokens.length < 3) return false;
+  if (/[\|;&<>(){}]/.test(text)) return false;
+  if (tokens.some((t) => t.startsWith("-") || t.includes("/"))) return false;
+  return tokens.every((t) => /^[A-Za-z0-9._+-]+$/.test(t));
+}
+
+/**
+ * Strict prompt-row detector. Never treat "any line containing #" as a PS1 —
+ * that hid remote output under opaque covers when markers drifted.
+ */
+function looksLikePromptLine(raw: string): boolean {
+  const t = raw.trimEnd();
+  if (!t) return false;
+  // Classic bash/debian: root@ubuntu:~#  /  user@host:~/path$
+  if (/^[\w.-]+@[\w.-]+:[^\s]*[#\$](?:\s|$)/.test(t)) return true;
+  // user@host … ❯ / user@host %
+  if (/^[\w.-]+@[\w.-]+.*[$#%>❯➢➤›»⟩〉➜⇒→▶](?:\s|$)/.test(t)) return true;
+  // Ornament / path-only themes: "~ ❯", "▲ ~", "~ %"
+  const line = stripOrnaments(t);
+  if (/^~(?:\/\S*)?(?:\s+[$#%>❯➢➤›»⟩〉➜⇒→▶]|\s*$|\s+\S)/.test(line)) {
+    // Require a prompt glyph OR short idle path — not "Applications Movies…"
+    if (ps1EndRe().test(t)) return true;
+    if (/^~(?:\/\S*)?$/.test(line.trim())) return true;
+    if (/^~(?:\/\S*)?\s+\S/.test(line) && line.split(/\s+/).length <= 6) {
+      return true;
+    }
+  }
+  // Prompt glyph near end of the prefix (idle or "❯ cmd")
+  if (/[$#%>❯➢➤›»⟩〉➜⇒→▶]\s*\S*$/.test(t) && t.length < 200) {
+    // Exclude pure output that happens to include ">" (rare); require
+    // the glyph in the first 80 chars (PS1 zone).
+    const head = t.slice(0, 80);
+    if (ps1EndRe().test(head)) return true;
+  }
+  return false;
+}
+
+/** @deprecated use looksLikePromptLine — kept as alias for call sites. */
+function lineHasPs1(raw: string): boolean {
+  return looksLikePromptLine(raw);
+}
+
+/**
+ * Strip a common PS1 prefix. Handles root@host:~# , user@host$ , ornament paths.
+ */
+function stripPs1(raw: string): string {
+  let line = stripOrnaments(raw);
+  line = stripOrnaments(line);
+
+  // Classic user@host:path#|$  (Debian/Ubuntu root shells)
+  const classic = line.match(/^[\w.-]+@[\w.-]+:[^\s]*[#\$]\s*(.*)$/);
+  if (classic) return (classic[1] ?? "").trim();
+
+  // user@host … glyph cmd
+  const userHost = line.match(
+    /^[\w.-]+@[\w.-]+\s+[^\n]*?[$#%>❯➢➤›»⟩〉➜⇒→▶]\s*(.*)$/,
+  );
+  if (userHost) return (userHost[1] ?? "").trim();
+
+  if (ps1EndRe().test(line)) {
+    // Only strip through a glyph in the PS1 zone (first 80 chars).
+    const head = line.slice(0, 80);
+    const tail = line.slice(80);
+    if (ps1EndRe().test(head)) {
+      const after = head.replace(stripPs1Re(), "") + tail;
+      const pathPref = after.match(/^~(?:\/\S*)? (.*)$/);
+      if (pathPref) return (pathPref[1] ?? "").trim();
+      return after.trim();
+    }
+  }
+
+  const pathPref = line.match(/^~(?:\/\S*)? (.*)$/);
+  if (pathPref) return (pathPref[1] ?? "").trim();
+
+  const homeCmd = raw.match(/~(?:\/\S*)?\s+(\S.*)$/);
+  if (homeCmd && !looksLikeDirectoryListing(homeCmd[1] ?? "")) {
+    return (homeCmd[1] ?? "").trim();
+  }
+
+  return line.trim();
+}
+
+function isPlausibleCommandText(stripped: string): boolean {
+  const t = stripped.trim();
+  if (!t) return false;
+  if (t.length > 160) return false;
+  if (t.includes("\n")) return false;
+  if (t === "~" || t === "." || t === "..") return false;
+  if (looksLikeDirectoryListing(t)) return false;
+  return true;
+}
+
+/**
+ * Command text from the prompt/command marker line only —
+ * never from the output region.
+ */
+function extractCommandLine(
+  terminal: Terminal,
+  command: IMarker | undefined,
+  prompt: IMarker | undefined,
+): string {
+  const lineNo = markerLine(command) ?? markerLine(prompt);
+  if (lineNo == null) return "";
+  const raw = terminal.buffer.active.getLine(lineNo)?.translateToString(true) ?? "";
+  // Defense: markers that drifted onto output rows have no PS1.
+  if (!lineHasPs1(raw)) return "";
+  const stripped = stripPs1(raw).trim();
+  return isPlausibleCommandText(stripped) ? stripped : "";
+}
+
+/**
+ * Walk up from the cursor to find the PS1 row that holds the command.
+ * At OSC 133;C (preexec) the command is almost always on the previous line.
+ * Never accept a bare output row (e.g. a single "test" dir from ls) even when
+ * it sits next to the cursor — that made remote headers show ❯ test.
+ */
+function findCommandAboveCursor(
+  terminal: Terminal,
+): { line: number; commandText: string } | null {
+  const buf = terminal.buffer.active;
+  const cursor = buf.baseY + buf.cursorY;
+  for (let y = cursor; y >= Math.max(0, cursor - 6); y--) {
+    const raw = buf.getLine(y)?.translateToString(true) ?? "";
+    if (!raw.trim()) continue;
+    if (!looksLikePromptLine(raw)) continue;
+    const stripped = stripPs1(raw).trim();
+    if (!isPlausibleCommandText(stripped)) continue;
+    return { line: y, commandText: stripped };
+  }
+  return null;
+}
+
+function markerAtLine(terminal: Terminal, absLine: number): IMarker | undefined {
+  const cursor = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
+  const offset = absLine - cursor;
+  // xterm ignores extreme offsets; clamp to a small window.
+  if (offset < -100 || offset > 10) return undefined;
+  return terminal.registerMarker(offset) ?? undefined;
 }
 
 export function subscribeBlockChanges(
@@ -145,6 +324,52 @@ export function setBlockSessionContext(
   syncChrome(sessionId);
 }
 
+/** PromptPanel sets this when the shell-line mirror is unreliable. */
+export function setUncoverLivePrompt(
+  sessionId: string,
+  uncover: boolean,
+): void {
+  const tracker = ensure(sessionId);
+  if (tracker.uncoverLivePrompt === uncover) return;
+  tracker.uncoverLivePrompt = uncover;
+  syncChrome(sessionId);
+}
+
+export function getUncoverLivePrompt(sessionId: string): boolean {
+  return trackers.get(sessionId)?.uncoverLivePrompt ?? false;
+}
+
+/**
+ * Read the shell's current input line (after PS1 through end of line).
+ * Used to mirror completions / history into the bottom input box.
+ */
+export function readActiveShellInputLine(sessionId: string): string | null {
+  const tracker = trackers.get(sessionId);
+  const terminal = getTerminalInstance(sessionId);
+  if (!tracker?.active || !terminal) return null;
+  if (terminal.buffer.active.type === "alternate") return null;
+
+  const commandLine =
+    markerLine(tracker.active.command) ?? markerLine(tracker.active.prompt);
+  if (commandLine == null) return null;
+
+  const buf = terminal.buffer.active;
+  const cursorAbs = buf.baseY + buf.cursorY;
+  // Prefer the cursor's row when it's on/after the command marker.
+  const lineNo = cursorAbs >= commandLine ? cursorAbs : commandLine;
+  const raw = buf.getLine(lineNo)?.translateToString(true) ?? "";
+  const stripped = stripPs1(raw).trimEnd();
+  // Strip failed on a fancy/idle PS1 — don't mirror the prompt chrome.
+  if (!stripped) return "";
+  if (stripped === raw.trimEnd()) {
+    // No delimiter matched. Only accept if it looks like typed input
+    // (has a command-ish token), not "~ ❯" / path crumbs alone.
+    if (!/[a-zA-Z0-9./_-]/.test(stripped)) return "";
+    if (/^~(?:\/\S*)?$/.test(stripped.trim())) return "";
+  }
+  return stripped;
+}
+
 export function getBlockChromeSnapshot(
   sessionId: string,
 ): BlockChromeSnapshot | undefined {
@@ -152,18 +377,28 @@ export function getBlockChromeSnapshot(
   if (!tracker) return undefined;
 
   const blocks: BlockChromeEntry[] = [];
+  const seenPromptLines = new Set<number>();
 
   for (const block of tracker.finished) {
+    const commandText = block.commandText.trim();
+    // Bare Enter / empty commands never get chrome.
+    if (!isPlausibleCommandText(commandText)) continue;
+
     const promptLine = markerLine(block.prompt);
+    const commandLine = markerLine(block.command) ?? promptLine;
     const endLine = markerLine(block.end);
     if (promptLine == null || endLine == null) continue;
+    if (seenPromptLines.has(promptLine)) continue;
+    seenPromptLines.add(promptLine);
+
     blocks.push({
       id: block.id,
       kind:
         block.exitCode !== null && block.exitCode !== 0 ? "failed" : "ok",
       promptLine,
+      commandLine: Math.max(promptLine, commandLine ?? promptLine),
       endLine,
-      commandText: block.commandText,
+      commandText,
       outputText: block.outputText,
       exitCode: block.exitCode,
       meta: block.meta,
@@ -172,23 +407,47 @@ export function getBlockChromeSnapshot(
   }
 
   if (tracker.active) {
-    const promptLine = markerLine(tracker.active.prompt);
-    const commandLine = markerLine(tracker.active.command);
+    const promptMarkerLine = markerLine(tracker.active.prompt);
+    const commandMarkerLine = markerLine(tracker.active.command);
+    const terminal = getTerminalInstance(sessionId);
+    // Live block always tracks the cursor row — A/B markers often sit on an
+    // earlier empty prompt line, which painted orphan "~ · 0s" headers.
+    const cursorLine = terminal
+      ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+      : undefined;
+    const promptLine = cursorLine ?? promptMarkerLine;
+    const commandLine = cursorLine ?? commandMarkerLine ?? promptLine;
     if (promptLine != null && commandLine != null) {
-      const terminal = getTerminalInstance(sessionId);
-      const endLine = terminal
-        ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY
-        : commandLine;
+      // Composing (no OSC 133;C yet): the input box is the visible editor —
+      // NEVER echo the in-progress typing into a styled header (it showed
+      // the command twice: box + fake header). Once running, prefer the
+      // command captured at outputStart; fall back to the PS1 row.
+      const composing = !tracker.open.outputStart;
+      const liveCmd = composing
+        ? ""
+        : ((tracker.open.commandText ?? "").trim() ||
+          (terminal
+            ? (() => {
+                const raw =
+                  terminal.buffer.active
+                    .getLine(promptLine)
+                    ?.translateToString(true) ?? "";
+                const stripped = stripPs1(raw).trim();
+                return isPlausibleCommandText(stripped) ? stripped : "";
+              })()
+            : ""));
       blocks.push({
         id: "active",
         kind: "active",
+        composing,
         promptLine,
-        endLine: Math.max(promptLine, endLine),
-        commandText: tracker.open.commandText ?? "",
+        commandLine: Math.max(promptLine, commandLine),
+        endLine: Math.max(promptLine, cursorLine ?? commandLine),
+        commandText: liveCmd,
         outputText: "",
         exitCode: null,
         meta: tracker.active.meta,
-        lineCount: Math.max(1, endLine - promptLine + 1),
+        lineCount: Math.max(1, (cursorLine ?? commandLine) - promptLine + 1),
       });
     }
   }
@@ -197,6 +456,7 @@ export function getBlockChromeSnapshot(
     blocks,
     context: tracker.context,
     onRerun: tracker.onRerun,
+    uncoverLivePrompt: tracker.uncoverLivePrompt,
   };
 }
 
@@ -237,25 +497,26 @@ function applyPhase(
 ): void {
   switch (phase) {
     case "promptStart": {
-      // Bind to the prompt row. If the cursor already advanced to an empty
-      // following line (block event arrived after the command newline), mark
-      // the previous line instead of leaving a constant off-by-one.
-      let offset = 0;
-      const buf = terminal.buffer.active;
-      const absY = buf.baseY + buf.cursorY;
-      const line = buf.getLine(absY);
-      const text = line?.translateToString(true).trim() ?? "";
-      if (!text && absY > 0) offset = -1;
-      const marker = terminal.registerMarker(offset);
+      // Always mark the cursor row. The old "empty line → offset -1" heuristic
+      // landed on the previous output row, so the real PS1 stayed uncovered.
+      const marker = terminal.registerMarker(0);
       if (!marker) return;
+      const meta: BlockMeta = {
+        cwd: getTerminalCwd(sessionId),
+        gitBranch: getTerminalGitBranch(sessionId),
+        startedAt: Date.now(),
+      };
       tracker.open.promptStart = marker;
+      tracker.open.meta = meta;
+      // Provisional active: cover PS1 from the first OSC 133;A.
+      tracker.active = { prompt: marker, command: marker, meta };
       break;
     }
     case "commandStart": {
       const marker = terminal.registerMarker(0);
       if (!marker) return;
       const prompt = tracker.open.promptStart ?? marker;
-      const meta: BlockMeta = {
+      const meta: BlockMeta = tracker.open.meta ?? {
         cwd: getTerminalCwd(sessionId),
         gitBranch: getTerminalGitBranch(sessionId),
         startedAt: Date.now(),
@@ -269,26 +530,44 @@ function applyPhase(
       break;
     }
     case "outputStart": {
-      const marker = terminal.registerMarker(0);
-      if (!marker) return;
-      // Prefer text on the prompt/command line (bash fires B at prompt start,
-      // before the user types — so the command lives on that line by C time).
-      let commandText = "";
-      const promptLine = tracker.open.commandStart ?? tracker.open.promptStart;
-      if (promptLine && !promptLine.isDisposed) {
-        const line = terminal.buffer.active.getLine(promptLine.line);
-        const raw = line?.translateToString(true) ?? "";
-        // Strip a common user@host:path$ / ❯ prefix if present.
-        commandText = raw.replace(/^.*?[$#%>] ?/, "").trim();
+      const cursorMarker = terminal.registerMarker(0);
+      if (!cursorMarker) return;
+      // Prefer scanning the live buffer — more reliable than A/B markers
+      // which often land before PS1 is painted.
+      const found = findCommandAboveCursor(terminal);
+      let commandText = found?.commandText ?? "";
+      let prompt = tracker.open.promptStart;
+      let command = tracker.open.commandStart;
+
+      if (found) {
+        const rebound = markerAtLine(terminal, found.line);
+        if (rebound) {
+          // Replace drifted A/B markers with the real PS1 row.
+          if (prompt && prompt !== rebound) prompt.dispose();
+          if (command && command !== prompt && command !== rebound) {
+            command.dispose();
+          }
+          prompt = rebound;
+          command = rebound;
+          tracker.open.promptStart = rebound;
+          tracker.open.commandStart = rebound;
+          if (tracker.active) {
+            tracker.active = {
+              prompt: rebound,
+              command: rebound,
+              meta: tracker.active.meta,
+            };
+          }
+        }
       }
       if (!commandText) {
-        commandText = textBetween(
+        commandText = extractCommandLine(
           terminal,
           tracker.open.commandStart,
-          marker,
+          tracker.open.promptStart,
         );
       }
-      tracker.open.outputStart = marker;
+      tracker.open.outputStart = cursorMarker;
       tracker.open.commandText = commandText;
       break;
     }
@@ -298,10 +577,51 @@ function applyPhase(
       const command = tracker.open.commandStart ?? end;
       const prompt = tracker.open.promptStart ?? command;
       const outputStart = tracker.open.outputStart;
-      const commandText =
-        tracker.open.commandText ??
-        textBetween(terminal, tracker.open.commandStart, outputStart ?? end);
+      // Prefer text captured at outputStart — re-reading markers after the
+      // cursor advanced can land on the first output row (styled dup bug).
+      let commandText = (tracker.open.commandText ?? "").trim();
+      if (!commandText) {
+        const found = findCommandAboveCursor(terminal);
+        commandText = found?.commandText ?? "";
+      }
+      if (!commandText) {
+        commandText = extractCommandLine(terminal, command, prompt).trim();
+      }
       const outputText = textBetween(terminal, outputStart, end);
+
+      // Remote latency: markers sometimes land on the first output row, so
+      // commandText equals that row (e.g. ls → "test"). Prefer the PS1 row.
+      const outFirst = outputText.trim().split("\n")[0]?.trim() ?? "";
+      if (
+        commandText &&
+        outFirst === commandText &&
+        !/[\s|;&<>]/.test(commandText)
+      ) {
+        const fromPs1 = extractCommandLine(terminal, prompt, prompt);
+        if (fromPs1 && fromPs1 !== commandText) {
+          commandText = fromPs1;
+        } else {
+          const found = findCommandAboveCursor(terminal);
+          if (found && found.commandText !== commandText) {
+            commandText = found.commandText;
+          } else {
+            commandText = "";
+          }
+        }
+      }
+
+      tracker.active = undefined;
+
+      if (!commandText || !isPlausibleCommandText(commandText)) {
+        // Bare Enter — no block, no header.
+        prompt.dispose();
+        if (command !== prompt) command.dispose();
+        end.dispose();
+        outputStart?.dispose();
+        tracker.open = {};
+        break;
+      }
+
       const lineCount = Math.max(1, end.line - prompt.line + 1);
       const meta: BlockMeta = {
         ...tracker.open.meta,
@@ -322,7 +642,6 @@ function applyPhase(
         meta,
         lineCount,
       });
-      tracker.active = undefined;
       while (tracker.finished.length > 80) {
         disposeFinished(tracker.finished.shift());
       }
@@ -344,6 +663,8 @@ function textBetween(
   const from = start.line;
   const to = end.line;
   if (from < 0 || to < 0 || to < from) return "";
+  // Output starts on the line *after* the command when they share a marker
+  // boundary; include from outputStart as registered.
   const lines: string[] = [];
   for (let y = from; y <= to; y++) {
     const line = terminal.buffer.active.getLine(y);
@@ -372,6 +693,22 @@ export function disposeBlockTracker(sessionId: string): void {
   disposeBlockOverlay(sessionId);
 }
 
+/** Agent CLIs whose bells legitimately mean "the agent needs you". */
+const AGENT_COMMAND_RE =
+  /^(claude|codex|gemini|agy|opencode|aider)(\s|$)/;
+
+/**
+ * True when the session's currently-running command is a known agent CLI.
+ * Used to gate BEL-based attention: a shell's tab-completion bell must never
+ * raise the "Waiting for you" banner — only a real agent's bell may.
+ */
+export function sessionRunsAgentCommand(sessionId: string): boolean {
+  const tracker = trackers.get(sessionId);
+  if (!tracker?.active) return false;
+  const cmd = (tracker.open.commandText ?? "").trim();
+  return AGENT_COMMAND_RE.test(cmd);
+}
+
 export function lastBlockCommand(sessionId: string): string | undefined {
   const tracker = trackers.get(sessionId);
   if (!tracker) return undefined;
@@ -385,5 +722,6 @@ export function lastBlockCommand(sessionId: string): string | undefined {
 export function blockCount(sessionId: string): number {
   const tracker = trackers.get(sessionId);
   if (!tracker) return 0;
-  return tracker.finished.length + (tracker.active ? 1 : 0);
+  const finished = tracker.finished.filter((b) => b.commandText.trim()).length;
+  return finished + (tracker.active ? 1 : 0);
 }

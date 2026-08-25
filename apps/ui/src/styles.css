@@ -197,53 +197,48 @@
   }
 }
 
-/* M12 — OSC 133 block chrome via viewport overlay (session-reference.html) */
+/* M12 — OSC 133 block chrome via viewport overlay (Warp anatomy) */
 .tethra-block-overlay-root {
   z-index: 2;
   pointer-events: none;
 }
 
-.tethra-block-overlay-frame,
 .tethra-block-overlay-header,
-.tethra-block-overlay-waiting {
+.tethra-block-overlay-waiting,
+.tethra-block-overlay-tint,
+.tethra-block-actions-cluster,
+.tethra-block-chrome-group {
   position: absolute;
   box-sizing: border-box;
 }
 
-.tethra-block-overlay-frame {
+.tethra-block-chrome-group {
+  pointer-events: auto;
+  z-index: 2;
+}
+
+.tethra-block-chrome-group:hover .tethra-block-actions-cluster,
+.tethra-block-actions-cluster:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Opaque blank over raw PS1 rows (live prompt while composing in the input
+   box, and bash completion prompt-redraw rows). No content, just paint. */
+.tethra-block-overlay-blank {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--color-base, #0d0d0d);
   pointer-events: none;
-  border-radius: 10px;
   z-index: 1;
 }
 
-.tethra-block-overlay-active {
-  border: 0;
-  background: rgba(61, 142, 240, 0.03);
-  /* Outline sits outside the box so glyphs stay clear of the stroke. */
-  outline: 1px solid rgba(61, 142, 240, 0.55);
-  outline-offset: 4px;
-}
-
-.tethra-block-overlay-ok,
-.tethra-block-overlay-failed {
-  border: 0;
-  background: transparent;
-}
-
-.tethra-block-overlay-rail {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  border-radius: 2px;
-}
-
-.tethra-block-overlay-menu {
-  position: absolute;
-  width: 24px;
-  pointer-events: auto;
-  z-index: 3;
+/* Active block: elevated tint only — no border / outline. */
+.tethra-block-overlay-tint {
+  pointer-events: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  z-index: 0;
 }
 
 .tethra-block-overlay-waiting {
@@ -253,9 +248,10 @@
 
 .tethra-block-overlay-header {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 10px;
-  padding: 0 14px 0 12px;
+  padding: 0 108px 0 12px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--color-fg-subtle);
@@ -266,8 +262,15 @@
   z-index: 1;
 }
 
-.tethra-block-header-path {
+.tethra-block-header-meta-line {
   flex-shrink: 0;
+  color: var(--color-fg-subtle);
+  font-size: 10.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42%;
 }
 
 .tethra-block-header-cmd {
@@ -275,13 +278,13 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1 1 auto;
   overflow: hidden;
 }
 
 .tethra-block-header-prompt {
   flex-shrink: 0;
   font-weight: 600;
+  font-size: 12.5px;
 }
 
 .tethra-block-header-prompt.is-ok {
@@ -307,45 +310,52 @@
 }
 
 .tethra-block-overlay-spacer {
-  flex: 0 0 8px;
-  min-width: 8px;
+  flex: 0 0 0;
+  min-width: 0;
 }
 
-.tethra-block-branch {
-  flex-shrink: 0;
-  color: #8bb8ff;
-}
-
-.tethra-block-header-meta {
-  flex-shrink: 0;
-  color: var(--color-fg-subtle);
-}
-
-.tethra-block-exit {
-  color: var(--color-danger);
-}
-
-.tethra-block-menu-wrap {
+/* Warp-style hover action cluster — top-right of block header. */
+.tethra-block-actions-cluster {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border-radius: 6px;
+  background: #0d0d0d;
+  opacity: 0;
   pointer-events: auto;
+  z-index: 4;
+  transition: opacity 120ms ease;
 }
 
-.tethra-block-menu-btn {
+.tethra-block-actions-cluster.is-active {
+  opacity: 0.55;
+}
+
+.tethra-block-chrome-group:hover .tethra-block-actions-cluster,
+.tethra-block-actions-cluster.is-active:hover,
+.tethra-block-actions-cluster:focus-within {
+  opacity: 1;
+}
+
+.tethra-block-action-btn {
   appearance: none;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  border: 1px solid var(--color-line-strong);
-  background: var(--color-elevated);
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--color-fg-muted);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
 
-.tethra-block-menu-btn:hover {
+.tethra-block-action-btn:hover {
   color: var(--color-fg);
+  background: var(--color-hover);
 }
 
 .tethra-block-waiting {
