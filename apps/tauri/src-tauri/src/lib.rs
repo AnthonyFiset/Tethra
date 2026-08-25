@@ -1234,7 +1234,16 @@ async fn open_terminal(
         .lock()
         .await
         .insert(session_id, opened.handle);
-    tunnel::auto_start_for_session(&app, &state, session_id, host_id).await;
+    // Tunnels must not block first paint — spawn beside the live PTY.
+    {
+        let app2 = app.clone();
+        let host_id2 = host_id;
+        tauri::async_runtime::spawn(async move {
+            // Re-borrow AppState via app — use the same helper with cloned handles.
+            // auto_start_for_session needs State; call through a thin wrapper.
+            tunnel::auto_start_for_session_spawned(app2, session_id, host_id2).await;
+        });
+    }
     tauri::async_runtime::spawn(output_pump::forward_output(session_id, opened.output, app));
     Ok(OpenTerminalResultDto {
         session_id: session_id.to_string(),

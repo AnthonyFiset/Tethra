@@ -364,26 +364,65 @@ export function fitTerminal(sessionId: string): void {
   scheduleBlockOverlaySync(sessionId);
 }
 
+/** Serialize PTY writes + OSC 133 marker flushes per session.
+ * Block events must apply only after preceding `terminal.write` bytes land;
+ * flushing markers while a write is in flight parked them on the wrong row
+ * (raw PS1 leaks, ls-output mistaken for commandText). */
+const terminalOpTail = new Map<string, Promise<void>>();
+
+function enqueueTerminalOp(
+  sessionId: string,
+  op: () => Promise<void>,
+): void {
+  const prev = terminalOpTail.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(op, op);
+  terminalOpTail.set(sessionId, next);
+  void next.finally(() => {
+    if (terminalOpTail.get(sessionId) === next) {
+      terminalOpTail.delete(sessionId);
+    }
+  });
+}
+
 export function writeTerminal(
   sessionId: string,
   data: number[] | Uint8Array,
 ): void {
   const record = terminals.get(sessionId);
   if (!record) return;
-  // Bind any pending OSC 133 markers to the cursor BEFORE these bytes move it.
-  // (Block events can arrive between writes; flushing only in the write
-  // callback left markers one line late.)
-  flushBlockPhases(sessionId, record.terminal);
   const raw = data instanceof Uint8Array ? data : Uint8Array.from(data);
-  const bytes = record.syncFilter.push(raw);
-  if (bytes.length === 0) {
-    refreshActiveBlock(sessionId, record.terminal);
-    scheduleBlockOverlaySync(sessionId);
-    return;
-  }
-  record.terminal.write(bytes, () => {
-    flushBlockPhases(sessionId, record.terminal);
-    refreshActiveBlock(sessionId, record.terminal);
+  enqueueTerminalOp(sessionId, () => {
+    const current = terminals.get(sessionId);
+    if (!current) return Promise.resolve();
+    const bytes = current.syncFilter.push(raw);
+    if (bytes.length === 0) {
+      refreshActiveBlock(sessionId, current.terminal);
+      scheduleBlockOverlaySync(sessionId);
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        refreshActiveBlock(sessionId, current.terminal);
+        scheduleBlockOverlaySync(sessionId);
+        resolve();
+      };
+      current.terminal.write(bytes, done);
+      // Safety: never stall the OSC marker queue if xterm skips the callback.
+      window.setTimeout(done, 500);
+    });
+  });
+}
+
+/** Apply queued OSC 133 phases after all prior writes for this session. */
+export function scheduleFlushBlockPhases(sessionId: string): void {
+  enqueueTerminalOp(sessionId, async () => {
+    const term = getTerminalInstance(sessionId);
+    if (!term) return;
+    flushBlockPhases(sessionId, term);
+    refreshActiveBlock(sessionId, term);
     scheduleBlockOverlaySync(sessionId);
   });
 }
@@ -617,6 +656,7 @@ export function disposeTerminal(sessionId: string): void {
   inputSuppressedUntil.delete(sessionId);
   inputHandlers.delete(sessionId);
   lastSelections.delete(sessionId);
+  terminalOpTail.delete(sessionId);
   disposeBlockTracker(sessionId);
   record.syncFilter.reset();
   for (const disposable of record.disposables) {

@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import type { HostSummaryDto } from "../lib/ipc";
 import { setBlockSessionContext } from "../terminal/blocks";
 import { PromptPanel } from "./PromptPanel";
-import { SessionContextBar } from "./SessionContextBar";
 import { TerminalView } from "../terminal/TerminalView";
 
 interface SessionViewProps {
@@ -82,11 +81,6 @@ export function SessionView({
 
   return (
     <div className="flex size-full min-h-0 flex-col">
-      <SessionContextBar
-        cwd={cwd}
-        gitBranch={gitBranch}
-        meta={metaParts.length > 0 ? metaParts.join(" · ") : undefined}
-      />
       <div className="relative min-h-0 flex-1 overflow-visible">
         <TerminalView
           sessionId={sessionId}
@@ -104,8 +98,21 @@ export function SessionView({
           onAssist={onAssist}
           chrome="session"
         />
+        {!connected ? (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-base/70">
+            <p className="font-mono text-[13px] text-fg-muted">
+              Connecting to {host?.label ?? host?.hostname ?? "host"}…
+            </p>
+          </div>
+        ) : null}
       </div>
-      <PromptPanel sessionId={sessionId} />
+      <PromptPanel
+        sessionId={sessionId}
+        active={active && connected && (visible ?? true)}
+        cwd={cwd}
+        gitBranch={gitBranch}
+        meta={metaParts.length > 0 ? metaParts.join(" · ") : undefined}
+      />
     </div>
   );
 }

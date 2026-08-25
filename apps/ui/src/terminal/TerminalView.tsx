@@ -70,6 +70,8 @@ export function TerminalView({
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   useEffect(() => {
@@ -80,7 +82,7 @@ export function TerminalView({
     attachTerminal(sessionId, container);
     let fitTimer: number | undefined;
     const observer = new ResizeObserver(() => {
-      if (!visible) return;
+      if (!visibleRef.current) return;
       window.clearTimeout(fitTimer);
       fitTimer = window.setTimeout(() => {
         fitTerminal(sessionId);
@@ -99,7 +101,26 @@ export function TerminalView({
       window.clearTimeout(fitTimer);
       setBlockOverlayHost(sessionId, null, null);
     };
-  }, [sessionId, visible]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const overlay = overlayRef.current;
+    const terminal = getTerminalInstance(sessionId);
+    if (terminal && overlay) {
+      setBlockOverlayHost(sessionId, overlay, terminal);
+      scheduleBlockOverlaySync(sessionId);
+    }
+    requestAnimationFrame(() => {
+      fitTerminal(sessionId);
+      try {
+        terminal?.refresh(0, (terminal.rows || 1) - 1);
+      } catch {
+        // ignore
+      }
+      scheduleBlockOverlaySync(sessionId);
+    });
+  }, [visible, sessionId]);
 
   useEffect(() => {
     if (active && visible) {
@@ -193,7 +214,6 @@ export function TerminalView({
       <div
         ref={overlayRef}
         className="tethra-block-overlay-root pointer-events-none absolute inset-0 overflow-visible"
-        aria-hidden="true"
       />
 
       <TerminalFindBar
