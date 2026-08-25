@@ -357,17 +357,33 @@ export function readActiveShellInputLine(sessionId: string): string | null {
   const cursorAbs = buf.baseY + buf.cursorY;
   // Prefer the cursor's row when it's on/after the command marker.
   const lineNo = cursorAbs >= commandLine ? cursorAbs : commandLine;
-  const raw = buf.getLine(lineNo)?.translateToString(true) ?? "";
-  const stripped = stripPs1(raw).trimEnd();
+  const bufLine = buf.getLine(lineNo);
+  if (!bufLine) return null;
+
+  // Trailing spaces are real input ("cd " before Tab) — read the untrimmed
+  // row and keep everything up to the cursor column. translateToString(true)
+  // ate the trailing space, which made Space look dead in the input box.
+  const padded = bufLine.translateToString(false);
+  const trimmedLen = padded.trimEnd().length;
+  const upto =
+    lineNo === cursorAbs
+      ? Math.max(trimmedLen, Math.min(buf.cursorX, padded.length))
+      : trimmedLen;
+  const raw = padded.slice(0, upto);
+  const head = raw.trimEnd();
+  const trailing = raw.slice(head.length);
+
+  const stripped = stripPs1(head);
   // Strip failed on a fancy/idle PS1 — don't mirror the prompt chrome.
+  // (Also drops the PS1's own trailing space on an empty prompt.)
   if (!stripped) return "";
-  if (stripped === raw.trimEnd()) {
+  if (stripped === head) {
     // No delimiter matched. Only accept if it looks like typed input
     // (has a command-ish token), not "~ ❯" / path crumbs alone.
     if (!/[a-zA-Z0-9./_-]/.test(stripped)) return "";
     if (/^~(?:\/\S*)?$/.test(stripped.trim())) return "";
   }
-  return stripped;
+  return stripped + trailing;
 }
 
 export function getBlockChromeSnapshot(

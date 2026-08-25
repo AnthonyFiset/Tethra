@@ -100,7 +100,10 @@ export function TitleBar({
   const showTabs = tabs.length > 0;
 
   return (
-    <header className="titlebar flex h-10 shrink-0 items-center gap-2 border-b border-elevated bg-rail px-3.5">
+    <header
+      data-tauri-drag-region
+      className="titlebar flex h-10 shrink-0 items-center gap-2 border-b border-elevated bg-rail px-3.5"
+    >
       {showTabs && (
         <Logo size={16} className="ml-1 hidden shrink-0 sm:block" />
       )}
@@ -118,10 +121,7 @@ export function TitleBar({
         />
       )}
 
-      <div
-        data-tauri-drag-region
-        className={cn("hidden h-full min-w-2 flex-1", !showTabs && "block")}
-      />
+      <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
 
       {!showTabs && (
         <button
@@ -140,10 +140,7 @@ export function TitleBar({
         </button>
       )}
 
-      <div
-        data-tauri-drag-region
-        className={cn("hidden h-full min-w-2 flex-1", showTabs && "block")}
-      />
+      <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
 
       <div className="relative z-10 ml-auto flex shrink-0 items-center gap-2">
         {showTabs && activeTunnelCount > 0 && (
