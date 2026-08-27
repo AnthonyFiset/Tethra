@@ -287,10 +287,17 @@ function pickExclusiveCoverLine(
   };
 
   // 1) Exact command match on an unused prompt row nearest the marker.
+  // The CURSOR row always belongs to the live prompt: a finished block
+  // matching it (user retyping a previous command) painted its header over
+  // the text being typed — the box appeared to "type into the terminal".
+  const cursorAbs = buf.baseY + buf.cursorY;
   if (cmd) {
     const prefer = block.promptLine;
     const matches = promptRows.filter(
-      (r) => !usedRows.has(r.y) && (r.cmd === cmd || r.cmd.startsWith(`${cmd} `)),
+      (r) =>
+        !usedRows.has(r.y) &&
+        (isActive || r.y !== cursorAbs) &&
+        (r.cmd === cmd || r.cmd.startsWith(`${cmd} `)),
     );
     matches.sort(
       (a, b) => Math.abs(a.y - prefer) - Math.abs(b.y - prefer),
@@ -326,6 +333,7 @@ function pickExclusiveCoverLine(
   if (cmd) {
     for (const y of [block.commandLine, block.promptLine]) {
       if (y < viewportStart || y > viewportEnd || usedRows.has(y)) continue;
+      if (!isActive && y === cursorAbs) continue;
       const raw = buf.getLine(y)?.translateToString(true) ?? "";
       if (!lineLooksLikePrompt(raw)) continue;
       const stripped = stripPs1Local(raw).trim();

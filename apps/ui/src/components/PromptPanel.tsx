@@ -99,6 +99,8 @@ export function PromptPanel({
    */
   const [pending, setPending] = useState("");
   const pendingBase = useRef("");
+  /** Consecutive refreshes where the shell line contradicted the prediction. */
+  const pendingMismatches = useRef(0);
   const mirrorRef = useRef("");
   const [interactive, setInteractive] = useState(false);
   /** A command is executing (OSC 133 C..D) — keys belong to it. */
@@ -166,10 +168,15 @@ export function PromptPanel({
     }
     // Reconcile prediction: echoed characters consume the predicted prefix;
     // anything the shell echoed differently (completion, control) drops the
-    // remaining prediction — the shell's line is always the truth.
+    // remaining prediction — the shell's line is always the truth. A SINGLE
+    // mismatched refresh is not proof though: shell/tmux redraws transiently
+    // rewrite the row mid-echo, and dropping instantly made typed characters
+    // vanish-then-reappear (the "glitches while typing" report). Keep the
+    // prediction for one grace refresh before surrendering.
     setPending((chars) => {
       if (!chars) {
         pendingBase.current = line;
+        pendingMismatches.current = 0;
         return chars;
       }
       const base = pendingBase.current;
@@ -177,10 +184,16 @@ export function PromptPanel({
         const echoed = line.slice(base.length);
         if (chars.startsWith(echoed)) {
           pendingBase.current = line;
+          pendingMismatches.current = 0;
           return chars.slice(echoed.length);
         }
       }
+      if (pendingMismatches.current < 1) {
+        pendingMismatches.current += 1;
+        return chars;
+      }
       pendingBase.current = line;
+      pendingMismatches.current = 0;
       return "";
     });
     mirrorRef.current = line;

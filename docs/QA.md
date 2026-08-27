@@ -67,6 +67,11 @@ Mandatory replay assertions (each caught a real shipped bug):
    cell = screenRect.height / term.rows.
 3. Run the audit BOTH mid-stream (during the running command) and at the
    end — the mid-apt state is where covers historically died.
+4. **Retype a previously-run command** (a finished block's exact text):
+   the chrome on the CURSOR row must be the active header showing a bare
+   `❯` — never the typed text, never a finished block's header. (Finished
+   blocks text-matching the live row painted the user's in-progress typing
+   into the terminal.)
 `window.__tethraTermDebug(sid)` exposes `mirror` and `blockState`
 (markers disposed? open phases?) for diagnosing failures.
 

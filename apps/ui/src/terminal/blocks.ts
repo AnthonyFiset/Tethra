@@ -422,16 +422,28 @@ export function getBlockChromeSnapshot(
 
   const blocks: BlockChromeEntry[] = [];
   const seenPromptLines = new Set<number>();
+  let disposedSeq = 0;
 
   for (const block of tracker.finished) {
     const commandText = block.commandText.trim();
     // Bare Enter / empty commands never get chrome.
     if (!isPlausibleCommandText(commandText)) continue;
 
-    const promptLine = markerLine(block.prompt);
-    const commandLine = markerLine(block.command) ?? promptLine;
-    const endLine = markerLine(block.end);
-    if (promptLine == null || endLine == null) continue;
+    let promptLine = markerLine(block.prompt);
+    let commandLine = markerLine(block.command) ?? promptLine;
+    let endLine = markerLine(block.end);
+    if (promptLine == null || endLine == null) {
+      // Markers die mid-session: `clear` disposes them, and scroll-region
+      // output (apt/dpkg progress bars) deletes lines under them. Keep the
+      // block — the overlay can still anchor its header by exact command
+      // text match on a visible PS1 row. Unique negative sentinels keep
+      // dedup/sort/bounds harmless (apt blocks lost their headers while ls
+      // kept them — the "inconsistent" report).
+      const sentinel = -100000 - disposedSeq++;
+      promptLine = sentinel;
+      commandLine = sentinel;
+      endLine = sentinel;
+    }
     if (seenPromptLines.has(promptLine)) continue;
     seenPromptLines.add(promptLine);
 
