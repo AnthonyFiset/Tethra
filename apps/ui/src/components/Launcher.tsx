@@ -11,6 +11,7 @@ import {
   tagGroupColors,
 } from "../lib/tagColors";
 import { ErrorBanner } from "./ui/Field";
+import { Dialog } from "./ui/Dialog";
 
 export type HostDraft = {
   label: string;
@@ -20,6 +21,10 @@ export type HostDraft = {
 };
 
 interface LauncherProps {
+  /** Home filter: full overview, hosts-only, or projects-only (rail nav). */
+  section?: "all" | "hosts" | "projects";
+  /** Create a group = apply a tag to the selected hosts. */
+  onCreateGroup?: (name: string, hostIds: string[]) => void;
   hosts: HostSummaryDto[];
   projects: ProjectSummaryDto[];
   runningSessions: RunningSessionSummaryDto[];
@@ -50,6 +55,8 @@ interface LauncherProps {
 type SortMode = "recent" | "name";
 
 export function Launcher({
+  section = "all",
+  onCreateGroup,
   hosts,
   projects,
   runningSessions,
@@ -74,6 +81,9 @@ export function Launcher({
 }: LauncherProps): React.JSX.Element {
   const [quick, setQuick] = useState("");
   const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const showProjects = section !== "hosts";
+  const showHosts = section !== "projects";
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement>(null);
@@ -177,6 +187,7 @@ export function Launcher({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {showHosts && (
       <div className="shrink-0 px-7 pt-[22px]">
         <form onSubmit={submitQuick} className="flex gap-2.5">
           <div
@@ -205,6 +216,7 @@ export function Launcher({
           </button>
         </form>
       </div>
+      )}
 
       {error && (
         <div className="shrink-0 px-7 pt-3">
@@ -212,7 +224,7 @@ export function Launcher({
         </div>
       )}
 
-      {!emptyVault && (
+      {!emptyVault && showHosts && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 px-7 pt-4">
           {activeTags.map((tag) => (
             <button
@@ -315,6 +327,7 @@ export function Launcher({
           </section>
         ) : (
           <>
+            {showProjects && (
             <section className="flex flex-col gap-2.5">
               <span className="text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
                 Projects
@@ -342,8 +355,9 @@ export function Launcher({
                 </button>
               </div>
             </section>
+            )}
 
-            {groups.length > 0 && (
+            {showHosts && (
               <section className="flex flex-col gap-2.5">
                 <span className="text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
                   Groups
@@ -374,7 +388,7 @@ export function Launcher({
                   ))}
                   <button
                     type="button"
-                    onClick={onAddHost}
+                    onClick={() => setGroupDialogOpen(true)}
                     className="flex cursor-pointer items-center justify-center gap-2 rounded-panel border border-dashed border-line-strong px-[15px] py-[13px] text-[12px] text-fg-subtle transition-colors hover:border-fg-subtle hover:text-fg-muted"
                   >
                     <Plus size={12} strokeWidth={2} />
@@ -384,6 +398,7 @@ export function Launcher({
               </section>
             )}
 
+            {showHosts && (
             <section className="flex flex-col gap-2.5">
               <span className="text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
                 Hosts
@@ -412,10 +427,135 @@ export function Launcher({
                 </button>
               </div>
             </section>
+            )}
           </>
         )}
       </div>
+
+      {onCreateGroup && (
+        <NewGroupDialog
+          open={groupDialogOpen}
+          hosts={hosts}
+          existingTags={allTags}
+          onClose={() => setGroupDialogOpen(false)}
+          onCreate={(name, hostIds) => {
+            onCreateGroup(name, hostIds);
+            setGroupDialogOpen(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function NewGroupDialog({
+  open,
+  hosts,
+  existingTags,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  hosts: HostSummaryDto[];
+  existingTags: string[];
+  onClose: () => void;
+  onCreate: (name: string, hostIds: string[]) => void;
+}): React.JSX.Element {
+  const [name, setName] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setSelected(new Set());
+    }
+  }, [open]);
+
+  const trimmed = name.trim();
+  const duplicate = existingTags.includes(trimmed);
+  const canCreate = trimmed.length > 0 && !duplicate && selected.size > 0;
+
+  function toggleHost(id: string): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="New group"
+    >
+      <div className="flex flex-col gap-4">
+        <p className="m-0 text-micro text-fg-muted">
+          Groups organize hosts by tag — a host can be in several groups, and
+          the group cards filter the host grid.
+        </p>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-micro font-medium text-fg-muted">Group name</span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="prod"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            className="h-9 rounded-md border border-line-strong bg-surface px-3 font-mono text-[13px] text-fg outline-none placeholder:text-fg-subtle focus:border-accent"
+          />
+          {duplicate && (
+            <span className="text-micro text-warning">
+              A group named “{trimmed}” already exists.
+            </span>
+          )}
+        </label>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-micro font-medium text-fg-muted">
+            Hosts in this group
+          </span>
+          <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto rounded-md border border-line bg-surface p-1">
+            {hosts.map((host) => (
+              <label
+                key={host.id}
+                className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 transition-colors hover:bg-hover"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(host.id)}
+                  onChange={() => toggleHost(host.id)}
+                />
+                <span className="text-[12.5px] text-fg">{host.label}</span>
+                <span className="font-mono text-[11px] text-fg-subtle">
+                  {host.username}@{host.hostname}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="cursor-pointer rounded-md border border-line bg-elevated px-3 py-1.5 text-ui text-fg hover:bg-hover"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!canCreate}
+            onClick={() => onCreate(trimmed, [...selected])}
+            className="cursor-pointer rounded-md bg-accent px-3 py-1.5 text-ui font-medium text-base hover:bg-accent-hover disabled:opacity-40"
+          >
+            Create group
+          </button>
+        </div>
+      </div>
+    </Dialog>
   );
 }
 

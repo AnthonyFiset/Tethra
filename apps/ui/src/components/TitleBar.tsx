@@ -2,12 +2,14 @@ import { useCallback, useState } from "react";
 import {
   AppWindow,
   Columns2,
+  House,
   Info,
   KeyRound,
   LayoutGrid,
   Lock,
   Maximize2,
   MoreHorizontal,
+  PanelLeft,
   RefreshCw,
   Rows2,
   Search,
@@ -25,7 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "./ui/DropdownMenu";
-import { TabBar, type TabDescriptor } from "./TabBar";
+import type { TabDescriptor } from "./TabBar";
 import { Tooltip } from "./ui/Tooltip";
 
 interface TitleBarProps {
@@ -58,6 +60,9 @@ interface TitleBarProps {
   onAbout?: () => void;
   onLock: () => void;
   onGoLauncher?: () => void;
+  /** Sidebar fully shown/hidden (Warp-style) — no icon-collapse. */
+  railHidden?: boolean;
+  onToggleRail?: () => void;
 }
 
 export function TitleBar({
@@ -89,6 +94,8 @@ export function TitleBar({
   onAbout,
   onLock,
   onGoLauncher,
+  railHidden = false,
+  onToggleRail,
 }: TitleBarProps): React.JSX.Element {
   const chrome = useChrome();
   const mod = modKeyLabel(chrome);
@@ -97,53 +104,69 @@ export function TitleBar({
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   void closeMenu;
 
-  const showTabs = tabs.length > 0;
+  // Sessions render in the sidebar list now; these tab props are accepted
+  // for compatibility but the titlebar no longer draws a tab strip.
+  void tabs;
+  void activeTabId;
+  void onSelectTab;
+  void onCloseTab;
+  void onCloseOtherTabs;
+  void onMoveTabToNewWindow;
+  void onNewTab;
 
   return (
     <header
       data-tauri-drag-region
       className="titlebar flex h-10 shrink-0 items-center gap-2 border-b border-elevated bg-rail px-3.5"
     >
-      {showTabs && (
-        <Logo size={16} className="ml-1 hidden shrink-0 sm:block" />
-      )}
-
-      {showTabs && onSelectTab && onCloseTab && (
-        <TabBar
-          variant="titlebar"
-          tabs={tabs}
-          activeId={inWorkspace ? activeTabId : undefined}
-          onSelect={onSelectTab}
-          onClose={onCloseTab}
-          onCloseOthers={onCloseOtherTabs}
-          onMoveToNewWindow={onMoveTabToNewWindow}
-          onNewTab={onNewTab}
-        />
-      )}
+      {/* Left: sidebar toggle + home (Warp-style). Sessions live in the
+          sidebar list now — no tab strip in the titlebar. */}
+      <div className="relative z-10 flex shrink-0 items-center gap-0.5">
+        {onToggleRail && (
+          <Tooltip
+            content={`${railHidden ? "Show" : "Hide"} sidebar  ${mod}B`}
+            side="bottom"
+          >
+            <IconButton
+              label={railHidden ? "Show sidebar" : "Hide sidebar"}
+              onClick={onToggleRail}
+            >
+              <PanelLeft size={15} />
+            </IconButton>
+          </Tooltip>
+        )}
+        {inWorkspace && onGoLauncher ? (
+          <Tooltip content="Home" side="bottom">
+            <IconButton label="Home" onClick={onGoLauncher}>
+              <House size={15} />
+            </IconButton>
+          </Tooltip>
+        ) : (
+          <Logo size={16} className="ml-1 hidden shrink-0 sm:block" />
+        )}
+      </div>
 
       <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
 
-      {!showTabs && (
-        <button
-          type="button"
-          onClick={onOpenPalette}
-          className={cn(
-            "relative z-10 mx-auto flex h-[26px] w-full max-w-[300px] cursor-pointer items-center gap-2 rounded-md border border-line bg-surface px-2.5",
-            "text-[12px] text-fg-subtle transition-colors hover:border-line-strong hover:bg-hover hover:text-fg-muted",
-          )}
-        >
-          <Search size={13} />
-          <span className="flex-1 truncate text-left">Search hosts and commands</span>
-          <kbd className="rounded border border-line px-1 py-px font-sans text-[10px] text-fg-subtle">
-            {mod}K
-          </kbd>
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={onOpenPalette}
+        className={cn(
+          "relative z-10 flex h-[26px] w-full max-w-[300px] cursor-pointer items-center gap-2 rounded-md border border-line bg-surface px-2.5",
+          "text-[12px] text-fg-subtle transition-colors hover:border-line-strong hover:bg-hover hover:text-fg-muted",
+        )}
+      >
+        <Search size={13} />
+        <span className="flex-1 truncate text-left">Search hosts and commands</span>
+        <kbd className="rounded border border-line px-1 py-px font-sans text-[10px] text-fg-subtle">
+          {mod}K
+        </kbd>
+      </button>
 
       <div data-tauri-drag-region className="h-full min-w-2 flex-1" />
 
       <div className="relative z-10 ml-auto flex shrink-0 items-center gap-2">
-        {showTabs && activeTunnelCount > 0 && (
+        {inWorkspace && activeTunnelCount > 0 && (
           <span className="hidden items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-[11px] text-[#8bb8ff] sm:flex">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M8 3v9a4 4 0 0 0 8 0V3M4 21h16" />

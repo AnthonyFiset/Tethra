@@ -244,6 +244,15 @@ export function PromptPanel({
     requestAnimationFrame(() => refreshMirror());
   }
 
+  // Leaving the session (home view hides the pane): release focus so the
+  // hidden pane never traps it behind aria-hidden.
+  useEffect(() => {
+    if (active) return;
+    if (document.activeElement === areaRef.current) {
+      areaRef.current?.blur();
+    }
+  }, [active]);
+
   // Default focus: bottom input owns the keyboard unless alt-screen is up.
   useEffect(() => {
     if (!active || interactive) return;

@@ -173,6 +173,14 @@ export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
 }
 
+/** Replace a host's tags only — never touches auth or connection settings. */
+export function setHostTags(
+  id: string,
+  tags: string[],
+): Promise<HostSummaryDto> {
+  return invoke<HostSummaryDto>("set_host_tags", { id, tags });
+}
+
 export function listIdentities(): Promise<IdentitySummaryDto[]> {
   return invoke<IdentitySummaryDto[]>("identity_list");
 }

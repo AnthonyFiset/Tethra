@@ -1,12 +1,15 @@
 import {
   ChevronDown,
   Folder,
+  FolderGit2,
   KeyRound,
   Lightbulb,
   Lock,
+  Plus,
   Settings,
   TerminalSquare,
   Upload,
+  X,
 } from "lucide-react";
 import type {
   HostSummaryDto,
@@ -19,7 +22,13 @@ import { attentionDotClass } from "../lib/sessionAttention";
 import { Logo } from "./Logo";
 import { Tooltip } from "./ui/Tooltip";
 
-export type RailNavId = "hosts" | "tunnels" | "identities" | "files" | "assist";
+export type RailNavId =
+  | "projects"
+  | "hosts"
+  | "tunnels"
+  | "identities"
+  | "files"
+  | "assist";
 
 /** Unified RUNNING row: open live tabs and/or detached vault sessions. */
 export type RailRunningItem = {
@@ -39,6 +48,12 @@ const NAV: {
   icon: React.ReactNode;
   iconActiveClass?: string;
 }[] = [
+  {
+    id: "projects",
+    label: "Projects",
+    icon: <FolderGit2 size={15} strokeWidth={2} />,
+    iconActiveClass: "text-[#8bb8ff]",
+  },
   {
     id: "hosts",
     label: "Hosts",
@@ -72,19 +87,30 @@ const NAV: {
 ];
 
 interface LeftRailProps {
+  /**
+   * "nav" — full navigation rail (home views).
+   * "sessions" — session-view sidebar: ONLY the open/running session list
+   * plus new-session and Settings (Warp-style; toggled from the titlebar).
+   */
+  variant?: "nav" | "sessions";
   collapsed: boolean;
   vaultStatus: VaultStatusDto;
   syncStatus?: SyncStatusDto | null;
   hostCount: number;
+  projectCount?: number;
   activeTunnelCount: number;
   runningItems: RailRunningItem[];
   hosts: HostSummaryDto[];
-  activeNav: RailNavId;
+  activeNav: RailNavId | null;
+  /** Session id of the currently focused tab (sessions variant highlight). */
+  activeSessionId?: string | null;
   onNav: (nav: RailNavId) => void;
   onGoHome: () => void;
   onOpenVault: () => void;
   onSettings: () => void;
   onOpenRunning: (item: RailRunningItem) => void;
+  onCloseSession?: (openSessionId: string) => void;
+  onNewSession?: () => void;
 }
 
 function vaultStateLine(
@@ -104,21 +130,116 @@ function vaultStateLine(
 }
 
 export function LeftRail({
+  variant = "nav",
   collapsed,
   vaultStatus,
   syncStatus,
   hostCount,
+  projectCount,
   activeTunnelCount,
   runningItems,
   hosts,
   activeNav,
+  activeSessionId,
   onNav,
   onGoHome,
   onOpenVault,
   onSettings,
   onOpenRunning,
+  onCloseSession,
+  onNewSession,
 }: LeftRailProps): React.JSX.Element {
   const vaultLine = vaultStateLine(vaultStatus, syncStatus);
+
+  if (variant === "sessions") {
+    return (
+      <aside className="flex w-rail shrink-0 flex-col border-r border-elevated bg-rail px-2.5 py-3">
+        <div className="flex shrink-0 items-center px-2.5 pb-1.5 text-[10px] font-semibold tracking-[0.09em] text-fg-subtle uppercase">
+          Sessions
+          <span className="flex-1" />
+          <span>{runningItems.length}</span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {runningItems.map((item) => {
+            const host = hosts.find((h) => h.id === item.hostId);
+            const tint = host?.color ?? "#3d8ef0";
+            const state = item.attentionState ?? "running";
+            const isActive =
+              item.openSessionId != null &&
+              item.openSessionId === activeSessionId;
+            return (
+              <div
+                key={item.key}
+                className={cn(
+                  "group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors",
+                  isActive
+                    ? "bg-hover text-fg"
+                    : "text-fg-muted hover:bg-hover hover:text-fg",
+                )}
+              >
+                <button
+                  type="button"
+                  aria-label={item.label}
+                  onClick={() => onOpenRunning(item)}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left text-[12px]"
+                >
+                  <span className="grid size-5 shrink-0 place-items-center rounded-md bg-elevated">
+                    <TerminalSquare
+                      size={11}
+                      strokeWidth={2.4}
+                      style={{ color: tint }}
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                </button>
+                <span
+                  className={cn(
+                    "size-[7px] shrink-0 rounded-full group-hover:hidden",
+                    attentionDotClass(state),
+                  )}
+                />
+                {item.openSessionId && onCloseSession ? (
+                  <button
+                    type="button"
+                    aria-label={`Close ${item.label}`}
+                    onClick={() => onCloseSession(item.openSessionId!)}
+                    className="hidden size-4 shrink-0 cursor-pointer place-items-center rounded text-fg-subtle group-hover:grid hover:text-fg"
+                  >
+                    <X size={11} strokeWidth={2.5} />
+                  </button>
+                ) : (
+                  <span className="hidden size-4 shrink-0 group-hover:block" />
+                )}
+              </div>
+            );
+          })}
+          {onNewSession && (
+            <button
+              type="button"
+              onClick={onNewSession}
+              className="mt-1 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+            >
+              <span className="grid size-5 shrink-0 place-items-center rounded-md border border-dashed border-line-strong">
+                <Plus size={11} strokeWidth={2.4} />
+              </span>
+              New session
+            </button>
+          )}
+        </div>
+        <div className="mt-auto">
+          <button
+            type="button"
+            aria-label="Settings"
+            onClick={onSettings}
+            className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+          >
+            <Settings size={15} strokeWidth={2} />
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside
@@ -184,9 +305,11 @@ export function LeftRail({
           const badge =
             item.id === "hosts"
               ? hostCount
-              : item.id === "tunnels" && activeTunnelCount > 0
-                ? activeTunnelCount
-                : null;
+              : item.id === "projects" && (projectCount ?? 0) > 0
+                ? projectCount
+                : item.id === "tunnels" && activeTunnelCount > 0
+                  ? activeTunnelCount
+                  : null;
 
           const button = (
             <button

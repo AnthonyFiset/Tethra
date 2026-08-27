@@ -835,6 +835,18 @@ export function deleteHost(id: string): Promise<void> {
   return Promise.resolve();
 }
 
+export function setHostTags(
+  id: string,
+  tags: string[],
+): Promise<HostSummaryDto> {
+  const idx = state.hosts.findIndex((h) => h.id === id);
+  if (idx < 0) return Promise.reject(new Error("Host not found"));
+  const cleaned = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+  const next = { ...state.hosts[idx]!, tags: cleaned };
+  state.hosts[idx] = next;
+  return Promise.resolve({ ...next, tunnels: [...next.tunnels] });
+}
+
 // --- Identities ---
 
 export function listIdentities(): Promise<IdentitySummaryDto[]> {

@@ -6,19 +6,22 @@
  * UI legible instead of looking like a stack of floating web cards.
  */
 @theme {
+  /* Contrast pass (Anthony, Aug 2026): surfaces lifted a step and text
+     brightened so cards/labels read clearly on #0d0d0d without losing the
+     dark modern look. */
   --color-base: #0d0d0d;
-  --color-rail: #101010;
-  --color-surface: #141414;
-  --color-elevated: #1b1b1b;
-  --color-hover: #222222;
-  --color-active: #2a2a2a;
+  --color-rail: #111113;
+  --color-surface: #17181a;
+  --color-elevated: #1f2023;
+  --color-hover: #26272b;
+  --color-active: #2e2f34;
 
-  --color-line: #262626;
-  --color-line-strong: #363636;
+  --color-line: #2c2d31;
+  --color-line-strong: #3f4046;
 
-  --color-fg: #e8e8e8;
-  --color-fg-muted: #a1a1a1;
-  --color-fg-subtle: #6b6b6b;
+  --color-fg: #ededee;
+  --color-fg-muted: #b4b6bb;
+  --color-fg-subtle: #8b8d93;
 
   --color-accent: #3d8ef0;
   --color-accent-hover: #5aa0f5;

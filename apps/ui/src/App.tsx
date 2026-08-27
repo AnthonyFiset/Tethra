@@ -59,6 +59,7 @@ import {
   killMuxSession,
   listAgents,
   listHosts,
+  setHostTags,
   listProjects,
   listRunningSessions,
   localHome,
@@ -336,6 +337,12 @@ function Workspace({
     () =>
       !window.matchMedia(`(min-width: ${SURFACE_NAV_EXPAND_MIN_PX}px)`).matches,
   );
+  /** Warp-style: sidebar is fully shown or fully hidden (⌘B / titlebar). */
+  const [railHidden, setRailHidden] = useState(false);
+  /** Home filter: overview, hosts-only, or projects-only. */
+  const [launcherSection, setLauncherSection] = useState<
+    "all" | "hosts" | "projects"
+  >("all");
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistKeysEpoch, setAssistKeysEpoch] = useState(0);
   const [muxHint, setMuxHint] = useState<{
@@ -542,7 +549,8 @@ function Workspace({
 
   function handleRailNav(nav: RailNavId): void {
     setRailNav(nav);
-    if (nav === "hosts") {
+    if (nav === "hosts" || nav === "projects") {
+      setLauncherSection(nav);
       closeSurface();
       goLauncher();
       return;
@@ -664,7 +672,8 @@ function Workspace({
   );
 
   function toggleRail(): void {
-    setRailCollapsed((value) => !value);
+    // Warp-style: ⌘B / titlebar button fully shows or hides the sidebar.
+    setRailHidden((value) => !value);
   }
 
   async function attachOutput(
@@ -2324,14 +2333,6 @@ function Workspace({
     );
   }
 
-  const sessionFocused =
-    inWorkspace &&
-    Boolean(
-      activeTab &&
-        (activeTab.kind === "terminal" || activeTab.kind === "local"),
-    );
-  const effectiveRailCollapsed = railCollapsed || sessionFocused;
-
   return (
     <div className="flex size-full flex-col bg-base">
       <TitleBar
@@ -2380,43 +2381,75 @@ function Workspace({
         onChangePassword={() => openSurface("vault")}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
-        onGoLauncher={goLauncher}
+        onGoLauncher={() => {
+          setLauncherSection("all");
+          goLauncher();
+        }}
+        railHidden={railHidden}
+        onToggleRail={() => setRailHidden((v) => !v)}
       />
 
       <UpdateBanner />
 
       <div className="flex min-h-0 flex-1">
-        <LeftRail
-          collapsed={effectiveRailCollapsed}
-          vaultStatus={status}
-          syncStatus={syncInfo}
-          hostCount={hosts.length}
-          activeTunnelCount={activeTunnelCount}
-          runningItems={railRunningItems}
-          hosts={hosts}
-          activeNav={
-            activeSurface === "identities"
-              ? "identities"
-              : activeSurface === "assist"
-                ? "assist"
-                : railNav
-          }
-          onNav={handleRailNav}
-          onGoHome={() => {
-            closeSurface();
-            goLauncher();
-          }}
-          onOpenVault={() => openSurface("vault")}
-          onSettings={() => openSettings("general")}
-          onOpenRunning={(item) => {
-            if (item.openSessionId) {
-              selectTab(item.openSessionId);
-              return;
+        {!railHidden && (
+          <LeftRail
+            variant={inWorkspace ? "sessions" : "nav"}
+            collapsed={inWorkspace ? false : railCollapsed}
+            vaultStatus={status}
+            syncStatus={syncInfo}
+            hostCount={hosts.length}
+            projectCount={projects.length}
+            activeTunnelCount={activeTunnelCount}
+            runningItems={railRunningItems}
+            hosts={hosts}
+            activeSessionId={activeId}
+            activeNav={
+              activeSurface === "identities"
+                ? "identities"
+                : activeSurface === "assist"
+                  ? "assist"
+                  : inWorkspace || activeSurface
+                    ? null
+                    : railNav === "tunnels" || railNav === "files"
+                      ? railNav
+                      : launcherSection === "hosts"
+                        ? "hosts"
+                        : launcherSection === "projects"
+                          ? "projects"
+                          : null
             }
-            const session = runningSessions.find((s) => s.id === item.runningId);
-            if (session) void reattachSession(session);
-          }}
-        />
+            onNav={handleRailNav}
+            onGoHome={() => {
+              setLauncherSection("all");
+              closeSurface();
+              goLauncher();
+            }}
+            onOpenVault={() => openSurface("vault")}
+            onSettings={() => openSettings("general")}
+            onOpenRunning={(item) => {
+              if (item.openSessionId) {
+                selectTab(item.openSessionId);
+                return;
+              }
+              const session = runningSessions.find((s) => s.id === item.runningId);
+              if (session) void reattachSession(session);
+            }}
+            onCloseSession={(sessionId) => void closeTab(sessionId)}
+            onNewSession={() => {
+              const active = activeId
+                ? tabsRef.current.find((tab) => tab.sessionId === activeId)
+                : undefined;
+              const hostId = active?.hostId;
+              const host =
+                hostId && hostId !== "local"
+                  ? hosts.find((entry) => entry.id === hostId)
+                  : hosts[0];
+              if (host) void connect(host, { forceNew: true });
+              else void openLocal();
+            }}
+          />
+        )}
 
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSurface === "vault" ? (
@@ -2621,6 +2654,7 @@ function Workspace({
 
               {!inWorkspace ? (
                 <Launcher
+                  section={launcherSection}
                   hosts={hosts}
                   projects={projects}
                   runningSessions={runningSessions}
@@ -2648,6 +2682,20 @@ function Workspace({
                   onImport={() => setImportOpen(true)}
                   onLocal={() => void openLocal()}
                   onQuickConnect={handleQuickConnect}
+                  onCreateGroup={(name, hostIds) => {
+                    void (async () => {
+                      try {
+                        for (const id of hostIds) {
+                          const host = hosts.find((h) => h.id === id);
+                          if (!host || host.tags.includes(name)) continue;
+                          await setHostTags(id, [...host.tags, name]);
+                        }
+                        setHosts(await listHosts());
+                      } catch (reason) {
+                        setError(String(reason));
+                      }
+                    })();
+                  }}
                   agentLabel={(id) => agentDisplayName(agents, id)}
                 />
               ) : tabs.length === 0 || !effectiveLayout ? (

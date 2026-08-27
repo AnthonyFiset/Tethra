@@ -472,6 +472,31 @@ impl VaultRepository {
         Ok(summary)
     }
 
+    /// Replace a host's tags only — safe partial update for group management
+    /// (never touches auth, tunnels, or connection settings).
+    pub async fn set_host_tags(&self, id: Uuid, tags: Vec<String>) -> Result<HostSummary> {
+        let (mut record, row) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Host {
+            return Err(Error::InvalidArgument("item is not a host".into()));
+        }
+        let mut cleaned: Vec<String> = tags
+            .into_iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        cleaned.dedup();
+        record.tags = cleaned;
+        let next = row.version + 1;
+        put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
+        let host = Host::from(record);
+        let (has_password, auth_kind, sync_secret) = self.identity_meta(host.identity_id).await?;
+        let mut summary = HostSummary::from(&host);
+        summary.has_password = has_password;
+        summary.auth_kind = auth_kind;
+        summary.sync_secret = sync_secret;
+        Ok(summary)
+    }
+
     pub async fn delete_host(&self, id: Uuid) -> Result<()> {
         let (record, row) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
         if let Some(identity_id) = record.identity_id {

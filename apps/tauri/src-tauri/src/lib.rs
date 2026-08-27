@@ -1160,6 +1160,23 @@ async fn identity_delete(
 }
 
 #[tauri::command]
+async fn set_host_tags(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    tags: Vec<String>,
+) -> Result<HostSummaryDto, String> {
+    let host_id = parse_uuid(&id, "host")?;
+    let summary = state
+        .repo
+        .set_host_tags(host_id, tags)
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(HostSummaryDto::from(&summary))
+}
+
+#[tauri::command]
 async fn delete_host(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let host_id = parse_uuid(&id, "host")?;
     state
@@ -1768,6 +1785,7 @@ pub fn run() {
             import_ssh_config,
             create_host,
             update_host,
+            set_host_tags,
             delete_host,
             identity_list,
             identity_pick_key_file,
