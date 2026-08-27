@@ -235,7 +235,7 @@ esac"#,
 /// `session-created` hook). Attaching to a session whose stamp is older —
 /// or missing entirely — replaces it: the shell inside predates the OSC
 /// passthrough emitter and can never produce block marks again.
-pub const TMUX_INTEGRATION_VERSION: &str = "2";
+pub const TMUX_INTEGRATION_VERSION: &str = "3";
 
 pub fn ssh_persistent_wrapper_command(mux_session: &str) -> String {
     let inner = ssh_default_wrapper_command();

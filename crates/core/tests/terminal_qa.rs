@@ -19,6 +19,7 @@ use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use ssh_client_core::model::{Host, PtySize};
+use ssh_client_core::terminal::TMUX_INTEGRATION_VERSION;
 use ssh_client_core::ssh::{
     HostStore, InMemoryHostStore, PtyHandle, SessionManager, StaticAuthProvider,
 };
@@ -247,7 +248,7 @@ async fn mux_session_survives_reconnect_with_state() {
     let iv = env
         .exec(&format!("tmux -L tethra show-options -qv -t {name} @tethra_iv"))
         .await;
-    assert_eq!(iv.trim(), "2", "session not version-stamped: {iv:?}");
+    assert_eq!(iv.trim(), TMUX_INTEGRATION_VERSION, "session not version-stamped: {iv:?}");
 
     pty2.close().await;
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
@@ -282,7 +283,7 @@ async fn stale_unversioned_session_is_replaced_on_attach() {
     let after = env
         .exec(&format!("tmux -L tethra show-options -qv -t {name} @tethra_iv"))
         .await;
-    assert_eq!(after.trim(), "2", "replacement session not stamped");
+    assert_eq!(after.trim(), TMUX_INTEGRATION_VERSION, "replacement session not stamped");
 
     pty.close().await;
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
