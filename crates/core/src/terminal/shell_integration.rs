@@ -202,6 +202,12 @@ esac"#,
 /// in it — survives app restarts and disconnects. Falls back to the plain
 /// wrapper when tmux is missing. Shell integration still applies because the
 /// tmux session's initial command is the wrapper itself.
+/// Integration generation stamped on every tmux session we create (via the
+/// `session-created` hook). Attaching to a session whose stamp is older —
+/// or missing entirely — replaces it: the shell inside predates the OSC
+/// passthrough emitter and can never produce block marks again.
+pub const TMUX_INTEGRATION_VERSION: &str = "2";
+
 pub fn ssh_persistent_wrapper_command(mux_session: &str) -> String {
     let inner = ssh_default_wrapper_command();
     let inner_b64 = base64_encode(inner.as_bytes());
@@ -229,13 +235,30 @@ setw -g monitor-bell on
 set -g visual-bell off
 set -g bell-action any
 TETHRA_TMUX_EOF
-  tmux -L tethra -f "$_tc" start-server 2>/dev/null || true
+  # Session boot script: stamp the integration version from INSIDE the first
+  # pane (deterministic on every tmux version — no hooks), then start the
+  # integrated shell.
+  _ts=$(mktemp "${{TMPDIR:-/tmp}}/tethra-boot.XXXXXX") || exit 1
+  {{
+    printf '%s\n' 'tmux -L tethra set @tethra_iv {iv} 2>/dev/null || true'
+    printf 'exec sh "%s"\n' "$_tw"
+  }} > "$_ts"
   # Server may predate this conf (agent sessions share the socket) — apply
-  # the invisibility settings idempotently every attach: no status bar, no
+  # the invisibility settings idempotently on every attach: no status bar, no
   # alternate screen (tmux draws inline like a plain shell), passthrough on
-  # so OSC 133/7 marks reach the app.
+  # so OSC 133/7 marks reach the app. Fails harmlessly when no server runs —
+  # then `new-session -f` below boots the server WITH this conf.
   tmux -L tethra set -g status off \; set -g allow-passthrough on \; set -sg escape-time 0 \; set -g focus-events on \; set -ga terminal-overrides ',*:smcup@:rmcup@' \; set -g history-limit 100000 2>/dev/null || true
-  exec tmux -L tethra new-session -A -s '{name}' -- sh "$_tw"
+  # Sessions from builds that predate the OSC passthrough emitter can never
+  # show block chrome again — replace them once; stamped sessions are kept.
+  if tmux -L tethra has-session -t '{name}' 2>/dev/null; then
+    _iv=$(tmux -L tethra show-options -qv -t '{name}' @tethra_iv 2>/dev/null)
+    case "$_iv" in
+      {iv}) ;;
+      *) tmux -L tethra kill-session -t '{name}' 2>/dev/null || true ;;
+    esac
+  fi
+  exec tmux -L tethra -f "$_tc" new-session -A -s '{name}' -- sh "$_ts"
 fi
 exec sh "$_tw"
 "#,
@@ -243,6 +266,7 @@ exec sh "$_tw"
         inner_b64 = inner_b64,
         inner_escaped = inner_escaped,
         name = mux_session,
+        iv = TMUX_INTEGRATION_VERSION,
     )
 }
 
@@ -326,4 +350,24 @@ mod tests {
     assert!(BASH_INTEGRATION.contains("Ptmux;"));
     assert!(ZSH_INTEGRATION.contains("Ptmux;"));
   }
+
+    #[test]
+    fn persistent_wrapper_is_invisible_and_versioned() {
+        let cmd = ssh_persistent_wrapper_command("tethra-test1");
+        // Invisible tmux: no status bar, no alt screen, passthrough on —
+        // applied both via conf and idempotently on every attach.
+        assert!(cmd.contains("set -g status off"));
+        assert!(cmd.contains("allow-passthrough on"));
+        assert!(cmd.contains("smcup@:rmcup@"));
+        // Every created session stamps itself from inside its first pane.
+        assert!(cmd.contains(&format!("@tethra_iv {TMUX_INTEGRATION_VERSION}")));
+        // Attaching to a pre-passthrough session replaces it.
+        assert!(cmd.contains("kill-session -t 'tethra-test1'"));
+        assert!(cmd.contains(&format!("{TMUX_INTEGRATION_VERSION}) ;;")));
+        // Client attached from shell birth so first-prompt marks arrive, and
+        // the conf boots the server when none is running (fresh host).
+        assert!(cmd.contains("-f \"$_tc\" new-session -A -s 'tethra-test1'"));
+        // No tmux on host → plain wrapper fallback.
+        assert!(cmd.contains("exec sh \"$_tw\""));
+    }
 }

@@ -13,3 +13,24 @@ services:
     ports:
       - "2222:2222"
     restart: "no"
+
+  # Persistent-terminal QA target: same image + tmux/bash/git, bash login
+  # shell — the closest local stand-in for an Ubuntu VPS.
+  openssh-tmux:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.tmux
+    container_name: ssh-client-openssh-tmux
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+      - PASSWORD_ACCESS=true
+      - SUDO_ACCESS=false
+    volumes:
+      - ./docker/init-shell.sh:/custom-cont-init.d/10-shell.sh:ro
+    ports:
+      - "2223:2222"
+    restart: "no"

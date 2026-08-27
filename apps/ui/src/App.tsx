@@ -1401,6 +1401,16 @@ function Workspace({
         ),
       );
       activateSession(sessionId);
+      // Reattach (restore/reconnect): the shell's prompt marks fired before
+      // we were attached, so block chrome would sit empty until the next
+      // command. Nudge a fresh prompt once the redraw has landed.
+      if (opts?.muxName) {
+        window.setTimeout(() => {
+          void sendTerminalInput(sessionId, new Uint8Array([0x0d]), {
+            force: true,
+          }).catch(() => undefined);
+        }, 600);
+      }
       // Probes stay off the critical path.
       void maybeShowToolsHint(sessionId, host.id, []);
       console.info(
