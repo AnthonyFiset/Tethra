@@ -475,6 +475,60 @@ function emitTerminal(sessionId: string, event: TerminalEvent): void {
   for (const listener of terminalListeners) listener(sessionId, event);
 }
 
+// --- QA replay hooks (mock harness only) -------------------------------
+// Lets the Playwright harness stream REAL captured terminal bytes (from
+// crates/core/tests/terminal_qa.rs) into the live renderer.
+let lastTerminalSession = "";
+let feedBuf = "";
+let feedIdx = 0;
+if (typeof window !== "undefined") {
+  const w = window as unknown as Record<string, unknown>;
+  w.__tethraFeedB64 = (b64: string) => {
+    if (!lastTerminalSession) return false;
+    emitTerminal(lastTerminalSession, {
+      kind: "data",
+      data: b64,
+      dropped: false,
+    });
+    // Mirror the Rust backend: parse OSC 133 marks out of the byte stream
+    // and emit the corresponding block events (A/B/C/D → phases). Keeps a
+    // carry buffer so marks split across chunks still parse.
+    feedBuf += atob(b64);
+    const window_ = feedBuf.slice(feedIdx);
+    const re = /\x1b\]133;([A-Za-z])((?:;[^\x07\x1b]*)?)(?:\x07|\x1b\\)/g;
+    const phases: Record<string, string> = {
+      A: "promptStart",
+      B: "commandStart",
+      C: "outputStart",
+      D: "commandEnd",
+    };
+    let match: RegExpExecArray | null;
+    let lastEnd = -1;
+    while ((match = re.exec(window_)) !== null) {
+      const phase = phases[match[1].toUpperCase()];
+      if (phase) {
+        const exit =
+          phase === "commandEnd" && match[2]
+            ? Number.parseInt(match[2].slice(1), 10)
+            : null;
+        emitTerminal(lastTerminalSession, {
+          kind: "block",
+          phase: phase as "promptStart" | "commandStart" | "outputStart" | "commandEnd",
+          exit_code: Number.isNaN(exit) ? null : exit,
+        });
+      }
+      lastEnd = re.lastIndex;
+    }
+    if (lastEnd >= 0) {
+      feedIdx += lastEnd;
+    } else if (window_.length > 4096) {
+      feedIdx += window_.length - 64;
+    }
+    return true;
+  };
+  w.__tethraLastSession = () => lastTerminalSession;
+}
+
 function tunnelStatusFromDef(
   sessionId: string,
   def: TunnelDefinitionDto,
@@ -1198,8 +1252,16 @@ export function openTerminal(
   _muxSession?: string,
 ): Promise<OpenTerminalResultDto> {
   const sessionId = uid("term");
+  lastTerminalSession = sessionId;
+  feedBuf = "";
+  feedIdx = 0;
   ensureSessionTunnels(sessionId, hostId);
-  queueMicrotask(() => emitMockSessionFixture(sessionId));
+  const skipFixture =
+    typeof window !== "undefined" &&
+    (window as unknown as Record<string, unknown>).__tethraSkipFixture === true;
+  if (!skipFixture) {
+    queueMicrotask(() => emitMockSessionFixture(sessionId));
+  }
   const host = state.hosts.find((h) => h.id === hostId);
   if (host) {
     host.lastConnectedAt = new Date().toISOString();

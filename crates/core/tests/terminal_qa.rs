@@ -27,6 +27,7 @@ use tokio::sync::mpsc::Receiver;
 
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 2223; // openssh-tmux service (tmux + bash)
+const UBUNTU_PORT: u16 = 2224; // ubuntu-sshd service (real apt/sudo/clear)
 const USER: &str = "testuser";
 const PASS: &str = "testpass";
 
@@ -46,7 +47,7 @@ fn ensure_sshd() {
         let up = Command::new("docker")
             .args(["compose", "-f"])
             .arg(compose_file())
-            .args(["up", "-d", "--build", "openssh-tmux"])
+            .args(["up", "-d", "--build", "openssh-tmux", "ubuntu-sshd"])
             .output()
             .expect("docker compose");
         assert!(
@@ -55,16 +56,19 @@ fn ensure_sshd() {
             String::from_utf8_lossy(&up.stderr)
         );
         let start = Instant::now();
-        let mut ready = false;
-        while start.elapsed() < Duration::from_secs(120) {
-            if std::net::TcpStream::connect((HOST, PORT)).is_ok() {
-                std::thread::sleep(Duration::from_secs(8));
-                ready = true;
-                break;
+        for port in [PORT, UBUNTU_PORT] {
+            let mut ready = false;
+            while start.elapsed() < Duration::from_secs(180) {
+                if std::net::TcpStream::connect((HOST, port)).is_ok() {
+                    ready = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500));
             }
-            std::thread::sleep(Duration::from_millis(500));
+            assert!(ready, "sshd not ready on {HOST}:{port}");
         }
-        assert!(ready, "sshd (tmux) not ready on {HOST}:{PORT}");
+        // linuxserver image needs settling time after the port opens.
+        std::thread::sleep(Duration::from_secs(8));
     });
 }
 
@@ -75,9 +79,17 @@ struct Env {
 
 impl Env {
     async fn setup() -> Self {
+        Self::setup_on(PORT).await
+    }
+
+    async fn setup_ubuntu() -> Self {
+        Self::setup_on(UBUNTU_PORT).await
+    }
+
+    async fn setup_on(port: u16) -> Self {
         ensure_sshd();
         let hosts = Arc::new(InMemoryHostStore::new());
-        let host = Host::new("terminal-qa", HOST, USER).with_port(PORT);
+        let host = Host::new("terminal-qa", HOST, USER).with_port(port);
         let host_id = hosts.insert(host).await;
         let mgr = SessionManager::with_defaults(
             hosts as Arc<dyn HostStore>,
@@ -107,6 +119,7 @@ struct Pty {
     handle: PtyHandle,
     rx: Receiver<bytes::Bytes>,
     all: String,
+    raw: Vec<u8>,
 }
 
 impl Pty {
@@ -123,6 +136,7 @@ impl Pty {
                         handle: opened.handle,
                         rx: opened.output,
                         all: String::new(),
+                        raw: Vec::new(),
                     };
                 }
                 Err(e) => {
@@ -152,12 +166,34 @@ impl Pty {
                 );
             }
             if let Ok(Some(chunk)) = tokio::time::timeout(remaining, self.rx.recv()).await {
-                self.all.push_str(&String::from_utf8_lossy(&chunk));
+                self.ingest(&chunk);
             } else {
                 panic!(
                     "PTY closed or timed out waiting for {needle:?}; transcript:\n{}",
                     self.all
                 );
+            }
+        }
+    }
+
+    fn ingest(&mut self, chunk: &[u8]) {
+        self.raw.extend_from_slice(chunk);
+        self.all.push_str(&String::from_utf8_lossy(chunk));
+    }
+
+    /// Pump output for a fixed window (used to let redraws/land marks settle).
+    async fn settle(&mut self, dur: Duration) {
+        let deadline = tokio::time::Instant::now() + dur;
+        loop {
+            let remaining = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .unwrap_or_default();
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, self.rx.recv()).await {
+                Ok(Some(chunk)) => self.ingest(&chunk),
+                _ => break,
             }
         }
     }
@@ -467,6 +503,101 @@ async fn keystroke_echo_latency_through_tmux() {
 
     // Clear the probe line so nothing runs.
     pty.send("\x15").await; // Ctrl-U
+    pty.close().await;
+    env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
+        .await;
+}
+
+/// THE flow the user actually runs on a VPS: real `sudo apt-get update`
+/// (carriage-return progress bars, scroll regions), then `clear`, then more
+/// typing. The shell must stay usable, the mark grammar must stay balanced
+/// (a stuck open C = "command running" forever = dead input box), and the
+/// raw byte stream is saved so the UI harness can replay it against the
+/// real renderer.
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn ubuntu_apt_update_clear_then_typing_works() {
+    let env = Env::setup_ubuntu().await;
+    let name = unique("apt");
+    let mut pty = Pty::open(&env, Some(&name)).await;
+    pty.wait_for(OSC_PROMPT_MARK, Duration::from_secs(30)).await;
+    pty.settle(Duration::from_millis(700)).await;
+
+    pty.send("sudo apt-get update\n").await;
+    pty.wait_for("Reading package lists", Duration::from_secs(90))
+        .await;
+    // Wait for the command to finish (its D mark) and the next prompt.
+    pty.settle(Duration::from_secs(3)).await;
+
+    pty.send("clear\n").await;
+    pty.settle(Duration::from_secs(2)).await;
+
+    // The bug report: after clear, typing appeared dead. Prove the shell
+    // still accepts and echoes input.
+    pty.send("echo after-$((11*3))\n").await;
+    pty.wait_for("after-33", Duration::from_secs(15)).await;
+    pty.settle(Duration::from_secs(1)).await;
+
+    let seq: String = mark_sequence(&pty.all).into_iter().collect();
+    println!("apt/clear mark sequence: {seq}");
+    let c = seq.matches('C').count();
+    let d = seq.matches('D').count();
+    assert_eq!(
+        c, d,
+        "unbalanced marks after apt+clear ({c} C vs {d} D) — a stuck open \
+         command keeps the input box in 'command running' mode. seq: {seq}"
+    );
+    assert!(
+        c >= 3,
+        "expected marks for apt, clear, echo — got {c}. seq: {seq}"
+    );
+    // The alternate screen must stay off even through apt's fancy output.
+    assert!(
+        !pty.all.contains(ALT_SCREEN_ENTER),
+        "alternate screen entered during apt"
+    );
+
+    // Persist the raw stream for UI replay (target/qa-transcripts/).
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/qa-transcripts");
+    std::fs::create_dir_all(&dir).expect("mkdir transcripts");
+    std::fs::write(dir.join("ubuntu-apt-clear.bin"), &pty.raw).expect("write transcript");
+    println!(
+        "saved {} bytes to target/qa-transcripts/ubuntu-apt-clear.bin",
+        pty.raw.len()
+    );
+
+    pty.close().await;
+    env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
+        .await;
+}
+
+/// Masked input (`read -s`, sudo password prompts): echo is off, nothing
+/// appears on screen — but keystrokes must still reach the shell and Enter
+/// must complete the read. This is the "it's not letting me type" class.
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn ubuntu_masked_input_still_receives_keys() {
+    let env = Env::setup_ubuntu().await;
+    let name = unique("mask");
+    let mut pty = Pty::open(&env, Some(&name)).await;
+    pty.wait_for(OSC_PROMPT_MARK, Duration::from_secs(30)).await;
+    pty.settle(Duration::from_millis(700)).await;
+
+    pty.send("read -s TETHRA_SECRET\n").await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    pty.send("hunter2\n").await;
+    pty.settle(Duration::from_secs(1)).await;
+    pty.send("echo got-$TETHRA_SECRET\n").await;
+    pty.wait_for("got-hunter2", Duration::from_secs(15)).await;
+
+    // The masked text must never be echoed while typed — its only appearance
+    // is inside the `got-hunter2` output line.
+    let occurrences = pty.all.matches("hunter2").count();
+    assert_eq!(
+        occurrences, 1,
+        "masked input appeared {occurrences}x — it was echoed while typed"
+    );
+
     pty.close().await;
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
         .await;

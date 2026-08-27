@@ -51,6 +51,33 @@ interface TerminalRecord {
 }
 
 const terminals = new Map<string, TerminalRecord>();
+
+// QA harness hook: read the live buffer state so Playwright can assert what
+// the renderer actually shows (viewport rows, cursor, scroll position).
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__tethraTermDebug = (
+    sessionId: string,
+  ) => {
+    const rec = terminals.get(sessionId);
+    if (!rec) return null;
+    const t = rec.terminal;
+    const buf = t.buffer.active;
+    const lines: string[] = [];
+    for (let y = buf.viewportY; y < buf.viewportY + t.rows; y++) {
+      lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+    }
+    return {
+      viewportY: buf.viewportY,
+      baseY: buf.baseY,
+      cursorY: buf.cursorY,
+      cursorX: buf.cursorX,
+      rows: t.rows,
+      cols: t.cols,
+      length: buf.length,
+      lines,
+    };
+  };
+}
 const encoder = new TextEncoder();
 /** Last non-empty selection per session (survives menu-bar focus/selection clear). */
 const lastSelections = new Map<string, string>();

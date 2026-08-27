@@ -1,0 +1,14 @@
+FROM ubuntu:24.04
+# Real Ubuntu target for terminal QA — the same stack as the user's VPS/VM:
+# bash login shell, real apt (scroll-region progress bars), sudo, tmux.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openssh-server tmux git sudo ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd
+RUN useradd -m -s /bin/bash testuser \
+    && echo 'testuser:testpass' | chpasswd \
+    && echo 'testuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/testuser \
+    && chmod 440 /etc/sudoers.d/testuser
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

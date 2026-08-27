@@ -423,20 +423,12 @@ function renderBlock(
       ? null
       : clampedFrame(terminal, root, coverLine, coverLine);
 
-  // Composing (typing in the input box, command not running yet): blank the
-  // PS1 row and render NOTHING else — no meta strip, no elapsed timer, no
-  // action cluster. The input box is the only visible editor.
-  if (isActive && block.composing) {
-    if (cover) {
-      const blank = document.createElement("div");
-      blank.className = "tethra-block-overlay-blank";
-      blank.style.top = `${cover.top}px`;
-      blank.style.height = `${cover.height}px`;
-      applyHorizontal(blank, cover.left, cover.width);
-      root.appendChild(blank);
-    }
-    return;
-  }
+  // Composing (typing in the input box, command not running yet): the block
+  // snapshot already reports an EMPTY commandText, so the styled header
+  // renders as a bare prompt row — no double echo of typed text. Rendering
+  // the header (instead of a pure blank cover, as before) means the live
+  // prompt is always visibly styled: after `clear` the screen shows one
+  // Warp-style prompt block instead of going completely black.
 
   // Warp: elevated tint on the cover row only — never span prompt→end
   // (that painted a veil over remote command output when markers drifted).
@@ -580,6 +572,16 @@ function buildHeader(block: BlockChromeEntry, isActive: boolean): HTMLElement {
     cmd.title = command;
     cmdWrap.appendChild(mark);
     cmdWrap.appendChild(cmd);
+    header.appendChild(cmdWrap);
+  } else if (isActive) {
+    // Bare live prompt (idle or composing in the input box): show the prompt
+    // glyph so the row reads as "ready" — never an empty black row.
+    const cmdWrap = document.createElement("span");
+    cmdWrap.className = "tethra-block-header-cmd";
+    const mark = document.createElement("span");
+    mark.className = "tethra-block-header-prompt is-active";
+    mark.textContent = "❯";
+    cmdWrap.appendChild(mark);
     header.appendChild(cmdWrap);
   }
 
