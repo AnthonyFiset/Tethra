@@ -10,25 +10,34 @@ pub const BASH_INTEGRATION: &str = r#"
 # Tethra shell integration (bash) — OSC 133 + OSC 7
 export COLORTERM="${COLORTERM:-truecolor}"
 __tethra_has_cmd=0
+# Inside tmux, wrap OSC in the passthrough envelope so marks reach the
+# outer terminal (needs tmux allow-passthrough on — our conf sets it).
+__tethra_osc() {
+  if [ -n "${TMUX:-}" ]; then
+    printf '\033Ptmux;\033\033]%s\007\033\\' "$1"
+  else
+    printf '\033]%s\007' "$1"
+  fi
+}
 __tethra_prompt_start() {
-  printf '\033]133;A\007'
-  printf '\033]133;B\007'
+  __tethra_osc '133;A'
+  __tethra_osc '133;B'
   local _host="${HOSTNAME:-}"
-  printf '\033]7;file://%s%s\007' "$_host" "$PWD"
+  __tethra_osc "7;file://${_host}${PWD}"
   local _branch
   _branch=$(command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null)
   if [ -n "$_branch" ]; then
-    printf '\033]133;G;%s\007' "$_branch"
+    __tethra_osc "133;G;${_branch}"
   fi
 }
 __tethra_preexec() {
   __tethra_has_cmd=1
-  printf '\033]133;C\007'
+  __tethra_osc '133;C'
 }
 __tethra_precmd() {
   local __ec=$?
   if [ "$__tethra_has_cmd" -eq 1 ]; then
-    printf '\033]133;D;%s\007' "$__ec"
+    __tethra_osc "133;D;${__ec}"
     __tethra_has_cmd=0
   fi
   __tethra_prompt_start
@@ -63,24 +72,31 @@ pub const ZSH_INTEGRATION: &str = r#"
 # Tethra shell integration (zsh) — OSC 133 + OSC 7
 export COLORTERM="${COLORTERM:-truecolor}"
 typeset -g __tethra_has_cmd=0
+__tethra_osc() {
+  if [[ -n "${TMUX:-}" ]]; then
+    printf '\033Ptmux;\033\033]%s\007\033\\' "$1"
+  else
+    printf '\033]%s\007' "$1"
+  fi
+}
 __tethra_prompt_start() {
-  printf '\033]133;A\007'
-  printf '\033]133;B\007'
-  printf '\033]7;file://%s%s\007' "${HOST:-}" "${PWD}"
+  __tethra_osc '133;A'
+  __tethra_osc '133;B'
+  __tethra_osc "7;file://${HOST:-}${PWD}"
   local _branch
   _branch=$(command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null)
   if [[ -n "$_branch" ]]; then
-    printf '\033]133;G;%s\007' "$_branch"
+    __tethra_osc "133;G;${_branch}"
   fi
 }
 __tethra_preexec() {
   __tethra_has_cmd=1
-  printf '\033]133;C\007'
+  __tethra_osc '133;C'
 }
 __tethra_precmd() {
   local __ec=$?
   if (( __tethra_has_cmd )); then
-    printf '\033]133;D;%s\007' "$__ec"
+    __tethra_osc "133;D;${__ec}"
     __tethra_has_cmd=0
   fi
   __tethra_prompt_start
@@ -199,6 +215,26 @@ else
   printf '%s' '{inner_escaped}' > "$_tw"
 fi
 if command -v tmux >/dev/null 2>&1; then
+  _tc=$(mktemp "${{TMPDIR:-/tmp}}/tethra-tmux.XXXXXX") || exit 1
+  cat > "$_tc" <<'TETHRA_TMUX_EOF'
+set -g status off
+set -g allow-passthrough on
+set -sg escape-time 0
+set -g focus-events on
+set -g default-terminal "tmux-256color"
+set -ga terminal-overrides ",*256col*:Tc"
+set -ga terminal-overrides ",*:smcup@:rmcup@"
+set -g history-limit 100000
+setw -g monitor-bell on
+set -g visual-bell off
+set -g bell-action any
+TETHRA_TMUX_EOF
+  tmux -L tethra -f "$_tc" start-server 2>/dev/null || true
+  # Server may predate this conf (agent sessions share the socket) — apply
+  # the invisibility settings idempotently every attach: no status bar, no
+  # alternate screen (tmux draws inline like a plain shell), passthrough on
+  # so OSC 133/7 marks reach the app.
+  tmux -L tethra set -g status off \; set -g allow-passthrough on \; set -sg escape-time 0 \; set -g focus-events on \; set -ga terminal-overrides ',*:smcup@:rmcup@' \; set -g history-limit 100000 2>/dev/null || true
   exec tmux -L tethra new-session -A -s '{name}' -- sh "$_tw"
 fi
 exec sh "$_tw"
@@ -282,8 +318,12 @@ mod tests {
         assert!(BASH_INTEGRATION.contains("133;A"));
         assert!(BASH_INTEGRATION.contains("133;D"));
         assert!(ZSH_INTEGRATION.contains("133;C"));
-    assert!(ZSH_INTEGRATION.contains("]7;file://"));
+    // OSC 7 cwd now goes through the tmux-passthrough emitter.
+    assert!(ZSH_INTEGRATION.contains("7;file://"));
     assert!(BASH_INTEGRATION.contains("133;G;"));
     assert!(ZSH_INTEGRATION.contains("133;G;"));
+    // Marks must survive tmux (passthrough envelope + emitter).
+    assert!(BASH_INTEGRATION.contains("Ptmux;"));
+    assert!(ZSH_INTEGRATION.contains("Ptmux;"));
   }
 }

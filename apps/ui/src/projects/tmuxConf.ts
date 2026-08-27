@@ -6,6 +6,10 @@ export const TETHRA_TMUX_CONF = [
   "set -g focus-events on",
   'set -g default-terminal "tmux-256color"',
   'set -ga terminal-overrides ",*256col*:Tc"',
+  // No alternate screen: tmux draws inline so the app's block chrome and
+  // input box keep working (outer terminal never enters fullscreen mode).
+  'set -ga terminal-overrides ",*:smcup@:rmcup@"',
+  "set -g history-limit 100000",
   // Detached attention: bell + silence → alert hooks write ~/.tethra/alerts/<session>.
   "setw -g monitor-bell on",
   "setw -g monitor-silence 30",

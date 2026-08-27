@@ -5,6 +5,7 @@ import { cn } from "../lib/cn";
 import {
   blockCount,
   readActiveShellInputLine,
+  sessionHasRunningCommand,
   setUncoverLivePrompt,
   subscribeBlockChanges,
 } from "../terminal/blocks";
@@ -100,6 +101,10 @@ export function PromptPanel({
   const pendingBase = useRef("");
   const mirrorRef = useRef("");
   const [interactive, setInteractive] = useState(false);
+  /** A command is executing (OSC 133 C..D) — keys belong to it. */
+  const [runningCmd, setRunningCmd] = useState(() =>
+    sessionHasRunningCommand(sessionId),
+  );
   /** Mirror failed → uncover live PS1; box is caret-only. */
   const [uncover, setUncover] = useState(false);
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -121,8 +126,10 @@ export function PromptPanel({
     mirrorMisses.current = 0;
     lastForwardWasEdit.current = false;
     setUncoverLivePrompt(sessionId, false);
+    setRunningCmd(sessionHasRunningCommand(sessionId));
     return subscribeBlockChanges(sessionId, () => {
       setBlocks(blockCount(sessionId));
+      setRunningCmd(sessionHasRunningCommand(sessionId));
     });
   }, [sessionId]);
 
@@ -133,12 +140,16 @@ export function PromptPanel({
       return;
     }
     const sync = () => {
+      // Alt-screen only happens for non-tmux flows now; tmux draws inline
+      // (smcup disabled), so running-command state carries the signal.
       setInteractive(terminal.buffer.active.type === "alternate");
     };
     sync();
     const sub = terminal.buffer.onBufferChange(() => sync());
     return () => sub.dispose();
   }, [sessionId]);
+
+  const busyWithApp = interactive || runningCmd;
 
   function refreshMirror(): void {
     if (uncoverRef.current) {
@@ -197,7 +208,7 @@ export function PromptPanel({
   // Keep mirror synced to shell output / cursor motion.
   useEffect(() => {
     const terminal = getTerminalInstance(sessionId);
-    if (!terminal || interactive) return;
+    if (!terminal || busyWithApp) return;
     const tick = () => refreshMirror();
     const d1 = terminal.onRender(() => tick());
     const d2 = terminal.onWriteParsed(() => tick());
@@ -209,7 +220,7 @@ export function PromptPanel({
       window.clearInterval(id);
     };
     // uncover/interactive toggle rebind
-  }, [sessionId, interactive, uncover]);
+  }, [sessionId, busyWithApp, uncover]);
 
   /** Optimistic echo for the box only — the shell's echo reconciles it. */
   function predictKey(event: KeyboardEvent): void {
@@ -255,16 +266,16 @@ export function PromptPanel({
 
   // Default focus: bottom input owns the keyboard unless alt-screen is up.
   useEffect(() => {
-    if (!active || interactive) return;
+    if (!active || busyWithApp) return;
     const id = window.requestAnimationFrame(() => {
       areaRef.current?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(id);
-  }, [active, interactive, sessionId]);
+  }, [active, busyWithApp, sessionId]);
 
   // Typing anywhere (outside real inputs) routes into the prompt box.
   useEffect(() => {
-    if (!active || interactive) return;
+    if (!active || busyWithApp) return;
 
     const isEditable = (node: EventTarget | null): boolean => {
       if (!(node instanceof HTMLElement)) return false;
@@ -316,15 +327,15 @@ export function PromptPanel({
       document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [active, interactive, sessionId, uncover]);
+  }, [active, busyWithApp, sessionId, uncover]);
 
   useEffect(() => {
-    if (!active || !interactive) return;
+    if (!active || !busyWithApp) return;
     focusTerminal(sessionId);
-  }, [active, interactive, sessionId]);
+  }, [active, busyWithApp, sessionId]);
 
-  const placeholder = interactive
-    ? "Interactive app running — keys go to the app"
+  const placeholder = busyWithApp
+    ? "Command running — keys go to it (Ctrl+C to stop)"
     : uncover
       ? "Keys go to the shell — type here"
       : "Message the session";
@@ -352,7 +363,7 @@ export function PromptPanel({
         ref={areaRef}
         value={uncover ? "" : mirror + pending}
         rows={1}
-        readOnly={interactive || uncover}
+        readOnly={busyWithApp || uncover}
         spellCheck={false}
         autoComplete="off"
         autoCorrect="off"
@@ -363,7 +374,7 @@ export function PromptPanel({
           // Controlled mirror — shell owns the line; ignore local edits.
         }}
         onKeyDown={(event) => {
-          if (interactive) return;
+          if (busyWithApp) return;
           const bytes = encodeKeyToPty(event.nativeEvent);
           if (!bytes) return;
           event.preventDefault();
@@ -378,12 +389,12 @@ export function PromptPanel({
         }}
         className={cn(
           "block w-full min-h-11 max-h-32 resize-y rounded-[10px] border border-line-strong bg-surface px-3 py-2.5 font-mono text-[13px] text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] outline-none placeholder:text-fg-subtle focus:border-accent",
-          (interactive || uncover) &&
+          (busyWithApp || uncover) &&
             "cursor-default text-fg-subtle focus:border-line-strong",
         )}
       />
       <div className="flex gap-3.5 px-1 pt-1.5 text-[11px] text-fg-subtle">
-        {interactive ? (
+        {busyWithApp ? (
           <span>Keys pass through to the terminal</span>
         ) : uncover ? (
           <span>Live keys → shell · prompt uncovered</span>

@@ -725,6 +725,17 @@ export function sessionRunsAgentCommand(sessionId: string): boolean {
   return AGENT_COMMAND_RE.test(cmd);
 }
 
+/**
+ * True while a command is executing in the session (OSC 133 C seen, no D
+ * yet). Replaces alt-screen sniffing for input routing: with tmux drawing
+ * inline (smcup disabled) the outer terminal never enters the alternate
+ * screen, so this is the reliable "keys belong to the running app" signal.
+ */
+export function sessionHasRunningCommand(sessionId: string): boolean {
+  const tracker = trackers.get(sessionId);
+  return Boolean(tracker?.active && tracker.open.outputStart);
+}
+
 export function lastBlockCommand(sessionId: string): string | undefined {
   const tracker = trackers.get(sessionId);
   if (!tracker) return undefined;
