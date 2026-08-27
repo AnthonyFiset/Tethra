@@ -1195,6 +1195,7 @@ export function openTerminal(
   hostId: string,
   _cols: number,
   _rows: number,
+  _muxSession?: string,
 ): Promise<OpenTerminalResultDto> {
   const sessionId = uid("term");
   ensureSessionTunnels(sessionId, hostId);

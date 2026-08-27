@@ -476,11 +476,13 @@ export function openTerminal(
   hostId: string,
   cols: number,
   rows: number,
+  muxSession?: string,
 ): Promise<OpenTerminalResultDto> {
   return invoke<OpenTerminalResultDto>("open_terminal", {
     hostId,
     cols,
     rows,
+    muxSession: muxSession ?? null,
   });
 }
 

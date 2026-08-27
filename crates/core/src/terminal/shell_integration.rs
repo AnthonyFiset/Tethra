@@ -181,6 +181,35 @@ esac"#,
     )
 }
 
+/// Persistent variant: run the default wrapper INSIDE a named tmux session
+/// (`tmux -L tethra new-session -A`), so the shell — and everything running
+/// in it — survives app restarts and disconnects. Falls back to the plain
+/// wrapper when tmux is missing. Shell integration still applies because the
+/// tmux session's initial command is the wrapper itself.
+pub fn ssh_persistent_wrapper_command(mux_session: &str) -> String {
+    let inner = ssh_default_wrapper_command();
+    let inner_b64 = base64_encode(inner.as_bytes());
+    let inner_escaped = shell_single_quote_escape(&inner);
+    format!(
+        r#"{path_bootstrap}
+_tw=$(mktemp "${{TMPDIR:-/tmp}}/tethra-wrap.XXXXXX") || exit 1
+if command -v base64 >/dev/null 2>&1; then
+  echo '{inner_b64}' | base64 -d > "$_tw"
+else
+  printf '%s' '{inner_escaped}' > "$_tw"
+fi
+if command -v tmux >/dev/null 2>&1; then
+  exec tmux -L tethra new-session -A -s '{name}' -- sh "$_tw"
+fi
+exec sh "$_tw"
+"#,
+        path_bootstrap = PATH_BOOTSTRAP,
+        inner_b64 = inner_b64,
+        inner_escaped = inner_escaped,
+        name = mux_session,
+    )
+}
+
 /// Bash-only wrapper (tests / explicit callers).
 pub fn ssh_bash_wrapper_command() -> String {
     let b64 = base64_encode(BASH_INTEGRATION.as_bytes());

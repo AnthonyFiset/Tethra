@@ -1233,7 +1233,21 @@ async fn open_terminal(
     host_id: String,
     cols: u32,
     rows: u32,
+    mux_session: Option<String>,
 ) -> Result<OpenTerminalResultDto, String> {
+    let mux_session = match mux_session.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => {
+            if name.len() > 64
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+            {
+                return Err("invalid session name".into());
+            }
+            Some(name.to_string())
+        }
+        _ => None,
+    };
     if !state
         .repo
         .vault()
@@ -1247,7 +1261,7 @@ async fn open_terminal(
     let session_id = Uuid::now_v7();
     let opened = state
         .manager
-        .open_pty(host_id, PtySize::new(cols, rows))
+        .open_pty_named(host_id, PtySize::new(cols, rows), mux_session.as_deref())
         .await
         .map_err(redacted_error)?;
 

@@ -252,6 +252,19 @@ impl SessionManager {
     /// usable PTY only when the remote accepts the command — exotic hosts can
     /// set `shell_integration: Disabled`).
     pub async fn open_pty(&self, host_id: Uuid, size: PtySize) -> Result<PtyOpenResult> {
+        self.open_pty_named(host_id, size, None).await
+    }
+
+    /// Open a PTY whose remote shell runs inside a named tmux session
+    /// (`tmux -L tethra new-session -A -s <name>`) so it survives app
+    /// restarts and disconnects. Falls back to a plain shell when tmux is
+    /// missing on the host.
+    pub async fn open_pty_named(
+        &self,
+        host_id: Uuid,
+        size: PtySize,
+        mux_session: Option<&str>,
+    ) -> Result<PtyOpenResult> {
         self.gate.approve(&Action::OpenPty { host_id }).await?;
 
         let host = self.hosts.get(host_id).await?;
@@ -287,6 +300,7 @@ impl SessionManager {
                         integrate,
                         agent_endpoint.is_some(),
                         agent_status,
+                        mux_session,
                     )
                     .await;
             }
@@ -300,6 +314,7 @@ impl SessionManager {
             integrate,
             agent_endpoint.is_some(),
             agent_status,
+            mux_session,
         )
         .await
     }
@@ -313,6 +328,7 @@ impl SessionManager {
         integrate: bool,
         want_agent: bool,
         agent_status: AgentForwardStatus,
+        mux_session: Option<&str>,
     ) -> Result<PtyOpenResult> {
         if want_agent {
             if let Err(err) = channel.agent_forward(true).await {
@@ -333,8 +349,16 @@ impl SessionManager {
             .await?;
 
         if integrate {
-            let wrapper = crate::terminal::ssh_default_wrapper_command();
+            let wrapper = match mux_session {
+                Some(name) => crate::terminal::ssh_persistent_wrapper_command(name),
+                None => crate::terminal::ssh_default_wrapper_command(),
+            };
             channel.exec(true, wrapper.as_str()).await?;
+        } else if let Some(name) = mux_session {
+            let cmd = format!(
+                "if command -v tmux >/dev/null 2>&1; then exec tmux -L tethra new-session -A -s '{name}'; fi; exec \"${{SHELL:-/bin/sh}}\" -l -i"
+            );
+            channel.exec(true, cmd.as_str()).await?;
         } else {
             channel.request_shell(true).await?;
         }

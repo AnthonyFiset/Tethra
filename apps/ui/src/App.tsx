@@ -162,6 +162,8 @@ interface Tab {
   title: string;
   kind: "terminal" | "local" | "sftp";
   connected: boolean;
+  /** Named tmux session on the host (persistence + restore + reconnect). */
+  muxName?: string;
   color?: string | null;
   remotePath?: string;
   localPath?: string;
@@ -341,6 +343,10 @@ function Workspace({
   const [railHidden, setRailHidden] = useState(
     () => localStorage.getItem("tethra.railHidden") === "1",
   );
+  /** Reconnect attempt counts per dropped session. */
+  const reconnectAttempts = useRef(new Map<string, number>());
+  /** Live hosts list for callbacks outside React render. */
+  const hostsRef = useRef<HostSummaryDto[]>([]);
   /** Home filter: overview, hosts-only, or projects-only. */
   const [launcherSection, setLauncherSection] = useState<
     "all" | "hosts" | "projects"
@@ -580,7 +586,7 @@ function Workspace({
     if (!status.unlocked || !restoredTabs.current) return;
     const entries = tabsRef.current
       .filter((t) => t.kind === "terminal" || t.kind === "local")
-      .map((t) => ({ hostId: t.hostId }));
+      .map((t) => ({ hostId: t.hostId, muxName: t.muxName ?? null }));
     localStorage.setItem("tethra.openTabs", JSON.stringify(entries));
   }, [tabs, status.unlocked]);
 
@@ -592,11 +598,11 @@ function Workspace({
       return;
     }
     restoredTabs.current = true;
-    let saved: { hostId: string }[] = [];
+    let saved: { hostId: string; muxName?: string | null }[] = [];
     try {
       saved = JSON.parse(
         localStorage.getItem("tethra.openTabs") ?? "[]",
-      ) as { hostId: string }[];
+      ) as { hostId: string; muxName?: string | null }[];
     } catch {
       return;
     }
@@ -608,7 +614,12 @@ function Workspace({
             await openLocal();
           } else {
             const host = hosts.find((h) => h.id === entry.hostId);
-            if (host) await connect(host);
+            if (host) {
+              await connect(host, {
+                forceNew: true,
+                muxName: entry.muxName ?? undefined,
+              });
+            }
           }
         } catch {
           // Failures surface through the normal error state; keep restoring.
@@ -719,6 +730,10 @@ function Workspace({
     () => tabs.find((tab) => tab.sessionId === activeId),
     [activeId, tabs],
   );
+
+  useEffect(() => {
+    hostsRef.current = hosts;
+  }, [hosts]);
 
   function toggleRail(): void {
     // Warp-style: ⌘B / titlebar button fully shows or hides the sidebar.
@@ -847,6 +862,40 @@ function Workspace({
           ),
         );
         writeTerminalMessage(sessionId, `\x1b[90m${closedMessage}\x1b[0m`);
+        // Auto-reconnect: a dropped connection (sleep, wifi change) on a
+        // named-mux tab reattaches to the same tmux session — up to 3 tries.
+        const droppedTab = tabsRef.current.find(
+          (t) => t.sessionId === sessionId,
+        );
+        if (
+          droppedTab?.kind === "terminal" &&
+          droppedTab.muxName &&
+          droppedTab.hostId !== "local"
+        ) {
+          const tries = reconnectAttempts.current.get(sessionId) ?? 0;
+          if (tries < 3) {
+            reconnectAttempts.current.set(sessionId, tries + 1);
+            const delay = 1500 * (tries + 1);
+            writeTerminalMessage(
+              sessionId,
+              `\x1b[90mreconnecting in ${Math.round(delay / 1000)}s…\x1b[0m`,
+            );
+            const hostId = droppedTab.hostId;
+            const muxName = droppedTab.muxName;
+            window.setTimeout(() => {
+              const still = tabsRef.current.find(
+                (t) => t.sessionId === sessionId,
+              );
+              if (!still || still.connected) return;
+              const hostEntry = hostsRef.current.find((h) => h.id === hostId);
+              if (!hostEntry) return;
+              // Replace the dead tab with a fresh attach to the same mux.
+              void closeTab(sessionId, { keepMux: true }).then(() =>
+                connect(hostEntry, { forceNew: true, muxName }),
+              );
+            }, delay);
+          }
+        }
       }
     };
 
@@ -1270,7 +1319,7 @@ function Workspace({
 
   async function connect(
     host: HostSummaryDto,
-    opts?: { forceNew?: boolean },
+    opts?: { forceNew?: boolean; muxName?: string },
   ): Promise<void> {
     // Focus an already-open terminal for this host unless the caller asks
     // for a new session (tab-strip +, modifier).
@@ -1294,6 +1343,10 @@ function Workspace({
     const t0 = performance.now();
     // Optimistic pane: show workspace + connecting tab before SSH returns.
     const pendingId = `pending-${crypto.randomUUID()}`;
+    // Stable per-tab tmux session: the shell lives on the host and survives
+    // app restarts; restore/reconnect reattach by this name.
+    const muxName =
+      opts?.muxName ?? `tethra-${crypto.randomUUID().slice(0, 8)}`;
     setTabs((current) => [
       ...current,
       {
@@ -1303,6 +1356,7 @@ function Workspace({
         kind: "terminal",
         connected: false,
         color: host.color,
+        muxName,
       },
     ]);
     activateSession(pendingId);
@@ -1313,7 +1367,7 @@ function Workspace({
     );
 
     try {
-      const opened = await openTerminal(host.id, 80, 24);
+      const opened = await openTerminal(host.id, 80, 24, muxName);
       const tOpen = performance.now();
       console.info(
         `[tethra-open] ${host.label} open_terminal ${(tOpen - t0).toFixed(0)}ms (ssh=${(tOpen - tPaint).toFixed(0)}ms)`,
@@ -1338,6 +1392,7 @@ function Workspace({
                 title: host.label,
                 kind: "terminal" as const,
                 connected: true,
+                muxName,
                 color: host.color,
                 agentForward: opened.agentForward,
                 agentForwardHint: opened.agentForwardHint ?? undefined,
@@ -1916,7 +1971,10 @@ function Workspace({
     }
   }
 
-  async function closeTab(sessionId: string): Promise<void> {
+  async function closeTab(
+    sessionId: string,
+    opts?: { keepMux?: boolean },
+  ): Promise<void> {
     setTunnelActiveBySession((current) => {
       if (!(sessionId in current)) return current;
       const next = { ...current };
@@ -1924,6 +1982,18 @@ function Workspace({
       return next;
     });
     const tab = tabs.find((entry) => entry.sessionId === sessionId);
+    // A deliberate close ends the shell: kill the tab's named tmux session
+    // (plain host tabs only — project/agent sessions detach and keep running).
+    if (
+      !opts?.keepMux &&
+      tab?.kind === "terminal" &&
+      tab.muxName &&
+      !tab.projectId &&
+      !ptyToRunning.current.get(sessionId)
+    ) {
+      void killMuxSession(tab.hostId, tab.muxName).catch(() => undefined);
+    }
+    reconnectAttempts.current.delete(sessionId);
     const index = tabs.findIndex((entry) => entry.sessionId === sessionId);
     const nextTabs = tabs.filter((entry) => entry.sessionId !== sessionId);
     setLayout((current) =>
