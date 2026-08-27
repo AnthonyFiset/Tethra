@@ -1301,11 +1301,16 @@ export function sendTerminalInput(
   _options?: { force?: boolean },
 ): Promise<void> {
   const text = new TextDecoder().decode(data);
-  emitTerminal(sessionId, { kind: "data", data: text, dropped: false });
+  // Terminal data events carry base64 (matches the Tauri backend).
+  emitTerminal(sessionId, {
+    kind: "data",
+    data: b64Terminal(text),
+    dropped: false,
+  });
   if (text.includes("\r") || text.includes("\n")) {
     emitTerminal(sessionId, {
       kind: "data",
-      data: "\r\nok\r\n$ ",
+      data: b64Terminal("\r\nok\r\n$ "),
       dropped: false,
     });
   }

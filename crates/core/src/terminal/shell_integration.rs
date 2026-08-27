@@ -30,7 +30,23 @@ __tethra_prompt_start() {
     __tethra_osc "133;G;${_branch}"
   fi
 }
+__tethra_at_prompt=0
+__tethra_ready=0
 __tethra_preexec() {
+  # bash fires DEBUG for EVERY simple command — including our own precmd,
+  # other PROMPT_COMMAND parts, completion, and shell startup. Only the
+  # FIRST command of a line the user actually ran may emit 133;C; anything
+  # else produces phantom blocks and flickering covers.
+  [ "$__tethra_ready" = 1 ] || return 0
+  [ -n "${COMP_LINE:-}" ] && return 0
+  [ "$__tethra_at_prompt" = 1 ] || return 0
+  case "$BASH_COMMAND" in
+    __tethra_precmd*) return 0 ;;
+  esac
+  case ";${__tethra_prompt_chain:-};" in
+    *";${BASH_COMMAND};"*) return 0 ;;
+  esac
+  __tethra_at_prompt=0
   __tethra_has_cmd=1
   __tethra_osc '133;C'
 }
@@ -41,15 +57,24 @@ __tethra_precmd() {
     __tethra_has_cmd=0
   fi
   __tethra_prompt_start
+  __tethra_at_prompt=1
+  __tethra_ready=1
+}
+# Idempotent hook install — callable again after user rc files run, in case
+# one of them replaced PROMPT_COMMAND or the DEBUG trap.
+__tethra_hook() {
+  case ";${PROMPT_COMMAND:-};" in
+    *";__tethra_precmd;"*) ;;
+    *)
+      __tethra_prompt_chain="${PROMPT_COMMAND:-}"
+      PROMPT_COMMAND="__tethra_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+      ;;
+  esac
+  trap '__tethra_preexec' DEBUG
 }
 if [ -z "${TETHRA_SHELL_INTEGRATION:-}" ]; then
   export TETHRA_SHELL_INTEGRATION=1
-  if [[ -n "${PROMPT_COMMAND:-}" ]]; then
-    PROMPT_COMMAND="__tethra_precmd;${PROMPT_COMMAND}"
-  else
-    PROMPT_COMMAND="__tethra_precmd"
-  fi
-  trap '__tethra_preexec' DEBUG
+  __tethra_hook
   # Warp-style Tab: cycle candidates inline (zsh menu-select feel) instead of
   # bash's default bell + reprint-the-list-on-every-press.
   if [ -n "${BASH_VERSION:-}" ]; then
@@ -63,7 +88,8 @@ if [ -z "${TETHRA_SHELL_INTEGRATION:-}" ]; then
     bind 'set colored-completion-prefix on' 2>/dev/null
     bind 'set visible-stats on' 2>/dev/null
   fi
-  __tethra_prompt_start
+  # No initial __tethra_prompt_start: PROMPT_COMMAND runs before the first
+  # prompt already — an extra call here double-emits A/B.
 fi
 "#;
 
@@ -106,7 +132,7 @@ if [[ -z "${TETHRA_SHELL_INTEGRATION:-}" ]]; then
   autoload -Uz add-zsh-hook 2>/dev/null || true
   add-zsh-hook precmd __tethra_precmd 2>/dev/null || precmd_functions+=(__tethra_precmd)
   add-zsh-hook preexec __tethra_preexec 2>/dev/null || preexec_functions+=(__tethra_preexec)
-  __tethra_prompt_start
+  # No initial __tethra_prompt_start: precmd runs before the first prompt.
 fi
 "#;
 
@@ -183,6 +209,9 @@ case "$_base" in
     if [ -f "$HOME/.bashrc" ]; then
       printf '\n[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' >> "$_t"
     fi
+    # A user rc file may have replaced PROMPT_COMMAND or the DEBUG trap —
+    # re-install our hooks last (idempotent).
+    printf '\ntype __tethra_hook >/dev/null 2>&1 && __tethra_hook\n' >> "$_t"
     exec "$_shell" --rcfile "$_t" -i
     ;;
   *)

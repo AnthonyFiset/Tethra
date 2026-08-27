@@ -951,6 +951,37 @@ function Workspace({
     injectShellText(activeTab.sessionId, command, { run: false });
   }
 
+  // Opening a PTY at the wrong size and resizing after attach forces a full
+  // tmux redraw that duplicates restored content into scrollback — open at
+  // the size the terminal pane actually uses.
+  function readLastPtySize(): { cols: number; rows: number } {
+    try {
+      const raw = localStorage.getItem("tethra.ptySize");
+      if (raw) {
+        const v = JSON.parse(raw) as { cols?: number; rows?: number };
+        if (
+          typeof v.cols === "number" &&
+          typeof v.rows === "number" &&
+          v.cols > 20 &&
+          v.rows > 5
+        ) {
+          return { cols: Math.min(v.cols, 500), rows: Math.min(v.rows, 200) };
+        }
+      }
+    } catch {
+      // storage unavailable — fall through
+    }
+    return { cols: 120, rows: 32 };
+  }
+
+  function saveLastPtySize(cols: number, rows: number): void {
+    try {
+      localStorage.setItem("tethra.ptySize", JSON.stringify({ cols, rows }));
+    } catch {
+      // storage unavailable — ignore
+    }
+  }
+
   function wireTerminal(sessionId: string): void {
     createTerminal(sessionId, {
       onInput: (data) => {
@@ -959,6 +990,7 @@ function Workspace({
         });
       },
       onResize: (cols, rows) => {
+        saveLastPtySize(cols, rows);
         void resizeTerminal(sessionId, cols, rows);
       },
       onCwd: (cwd) => {
@@ -1367,7 +1399,8 @@ function Workspace({
     );
 
     try {
-      const opened = await openTerminal(host.id, 80, 24, muxName);
+      const size = readLastPtySize();
+      const opened = await openTerminal(host.id, size.cols, size.rows, muxName);
       const tOpen = performance.now();
       console.info(
         `[tethra-open] ${host.label} open_terminal ${(tOpen - t0).toFixed(0)}ms (ssh=${(tOpen - tPaint).toFixed(0)}ms)`,

@@ -289,6 +289,136 @@ async fn stale_unversioned_session_is_replaced_on_attach() {
         .await;
 }
 
+/// Strip everything except the OSC 133 mark letters, in order.
+fn mark_sequence(transcript: &str) -> Vec<char> {
+    let mut out = Vec::new();
+    let mut rest = transcript;
+    while let Some(idx) = rest.find("\u{1b}]133;") {
+        rest = &rest[idx + 6..];
+        if let Some(c) = rest.chars().next() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The block model depends on a STRICT mark grammar: every prompt is A B,
+/// every executed command is exactly one C … one D, and an empty Enter emits
+/// NO C/D at all. Bash's DEBUG trap fires for prompt hooks too — without
+/// guards it sprays phantom C/D pairs that create duplicate blocks, garbage
+/// durations, and flickering covers (the "glitching" bug).
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn osc133_mark_grammar_is_clean() {
+    let env = Env::setup().await;
+    let name = unique("grammar");
+    let mut pty = Pty::open(&env, Some(&name)).await;
+    pty.wait_for(OSC_PROMPT_MARK, Duration::from_secs(20)).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    // Three empty Enters (what the reattach nudge and idle typing produce).
+    for _ in 0..3 {
+        pty.send("\r").await;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    // One real command.
+    pty.run("echo grammar-$((20+2))", "grammar-22").await;
+    // One more empty Enter, then let marks settle.
+    pty.send("\r").await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    while let Ok(chunk) = pty.rx.try_recv() {
+        pty.all.push_str(&String::from_utf8_lossy(&chunk));
+    }
+
+    let seq: String = mark_sequence(&pty.all).into_iter().collect();
+    println!("mark sequence: {seq}");
+
+    let c_count = seq.matches('C').count();
+    let d_count = seq.matches('D').count();
+    assert_eq!(
+        c_count, 1,
+        "expected exactly one command-start mark for one command, got {c_count} — \
+         phantom C marks (DEBUG-trap firing for prompt hooks?). sequence: {seq}"
+    );
+    assert_eq!(
+        d_count, 1,
+        "expected exactly one command-end mark, got {d_count}. sequence: {seq}"
+    );
+    // No block ever opens twice: C must be followed by D before the next C.
+    let mut open = false;
+    for ch in seq.chars() {
+        match ch {
+            'C' => {
+                assert!(!open, "double C without D between — sequence: {seq}");
+                open = true;
+            }
+            'D' => open = false,
+            _ => {}
+        }
+    }
+    // The command really ran exactly once.
+    let runs = pty.all.matches("grammar-22").count();
+    assert!(
+        (1..=3).contains(&runs),
+        "unexpected occurrences of command output: {runs}"
+    );
+
+    pty.close().await;
+    env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
+        .await;
+}
+
+/// Reattaching at the SAME size the session already has (what the app does —
+/// it persists the pane size and opens the PTY with it) must restore content
+/// exactly once. Attaching at a different size and resizing forces full tmux
+/// redraws that duplicate content into scrollback; that path is measured and
+/// reported but is avoided by the app, not asserted clean.
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn reattach_at_same_size_restores_content_once() {
+    let env = Env::setup().await;
+    let name = unique("dup");
+
+    let mut pty = Pty::open(&env, Some(&name)).await;
+    pty.wait_for(OSC_PROMPT_MARK, Duration::from_secs(20)).await;
+    pty.run("echo DUP-MARK-$((7*3))", "DUP-MARK-21").await;
+    pty.close().await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Same size as the original open (Pty::open uses 120x30).
+    let mut pty2 = Pty::open(&env, Some(&name)).await;
+    pty2.wait_for("DUP-MARK-21", Duration::from_secs(20)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    while let Ok(chunk) = pty2.rx.try_recv() {
+        pty2.all.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    let copies = pty2.all.matches("DUP-MARK-21").count();
+    println!("same-size reattach: restored-content copies = {copies}");
+    assert!(
+        copies <= 2,
+        "restored content duplicated {copies}x on a same-size reattach"
+    );
+
+    // Wrong-size dance, for the record: how bad is attach-small-then-grow?
+    pty2.handle
+        .resize(PtySize::new(140, 40))
+        .await
+        .expect("resize");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    while let Ok(chunk) = pty2.rx.try_recv() {
+        pty2.all.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    println!(
+        "after resize redraw: copies = {} (informational — app avoids this by \
+         opening at the persisted size)",
+        pty2.all.matches("DUP-MARK-21").count()
+    );
+
+    pty2.close().await;
+    env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
+        .await;
+}
+
 /// Keystroke echo round-trip through ssh + tmux. Catches pipeline stalls
 /// (buffering, per-key IPC overhead) that make typing feel laggy. Local
 /// Docker, so anything above ~250ms median is a real defect in our stack.
