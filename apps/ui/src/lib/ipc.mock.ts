@@ -84,6 +84,7 @@ export interface HostMutation {
   shellIntegration?: boolean;
   tunnels?: TunnelDefinitionDto[];
   forwardAgent?: boolean;
+  useDefaultKeys?: boolean;
 }
 
 export interface ProjectMutation {
@@ -211,6 +212,7 @@ const state: {
       shellIntegration: true,
       tunnels: [TUNNEL_DB],
       forwardAgent: true,
+      useDefaultKeys: false,
       lastConnectedAt: "2026-08-20T18:00:00Z",
     },
     {
@@ -228,6 +230,7 @@ const state: {
       shellIntegration: true,
       tunnels: [TUNNEL_REMOTE],
       forwardAgent: false,
+      useDefaultKeys: false,
       lastConnectedAt: "2026-08-22T12:00:00Z",
     },
     {
@@ -245,6 +248,7 @@ const state: {
       shellIntegration: false,
       tunnels: [],
       forwardAgent: false,
+      useDefaultKeys: false,
       lastConnectedAt: null,
     },
     {
@@ -262,6 +266,7 @@ const state: {
       shellIntegration: true,
       tunnels: [],
       forwardAgent: false,
+      useDefaultKeys: false,
       lastConnectedAt: "2026-08-10T09:00:00Z",
     },
     {
@@ -279,6 +284,7 @@ const state: {
       shellIntegration: true,
       tunnels: [],
       forwardAgent: false,
+      useDefaultKeys: false,
       lastConnectedAt: "2026-08-23T08:00:00Z",
     },
     {
@@ -296,6 +302,7 @@ const state: {
       shellIntegration: true,
       tunnels: [],
       forwardAgent: false,
+      useDefaultKeys: false,
       lastConnectedAt: "2026-08-01T12:00:00Z",
     },
   ] as HostSummaryDto[],
@@ -768,6 +775,7 @@ export function importSshConfig(aliases: string[]): Promise<HostSummaryDto[]> {
     shellIntegration: true,
     tunnels: [],
     forwardAgent: false,
+    useDefaultKeys: false,
     lastConnectedAt: null,
   }));
   state.hosts.push(...created);
@@ -794,6 +802,7 @@ export function createHost(host: HostMutation): Promise<HostSummaryDto> {
     shellIntegration: host.shellIntegration ?? true,
     tunnels: host.tunnels ?? [],
     forwardAgent: host.forwardAgent ?? false,
+    useDefaultKeys: host.useDefaultKeys ?? false,
     lastConnectedAt: null,
   };
   state.hosts.push(created);
@@ -820,6 +829,7 @@ export function updateHost(
     shellIntegration: host.shellIntegration ?? prev.shellIntegration,
     tunnels: host.tunnels ?? prev.tunnels,
     forwardAgent: host.forwardAgent ?? prev.forwardAgent,
+    useDefaultKeys: host.useDefaultKeys ?? prev.useDefaultKeys,
     authKind: host.password
       ? "password"
       : host.identityId

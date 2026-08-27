@@ -30,6 +30,10 @@ pub struct Host {
     /// Opt-in SSH agent forwarding (`ssh -A`). Default off.
     #[serde(default)]
     pub forward_agent: bool,
+    /// Authenticate with the machine's default SSH keys (~/.ssh/id_*) —
+    /// for servers that already trust this machine. No secret stored.
+    #[serde(default)]
+    pub use_default_keys: bool,
     /// Last successful terminal open (UTC). Used for Arrange-by Recent.
     #[serde(default)]
     pub last_connected_at: Option<DateTime<Utc>>,
@@ -56,6 +60,7 @@ impl Host {
             shell_integration: ShellIntegration::Auto,
             tunnels: Vec::new(),
             forward_agent: false,
+            use_default_keys: false,
             last_connected_at: None,
         }
     }

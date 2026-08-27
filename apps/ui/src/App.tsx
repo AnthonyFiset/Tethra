@@ -338,7 +338,9 @@ function Workspace({
       !window.matchMedia(`(min-width: ${SURFACE_NAV_EXPAND_MIN_PX}px)`).matches,
   );
   /** Warp-style: sidebar is fully shown or fully hidden (⌘B / titlebar). */
-  const [railHidden, setRailHidden] = useState(false);
+  const [railHidden, setRailHidden] = useState(
+    () => localStorage.getItem("tethra.railHidden") === "1",
+  );
   /** Home filter: overview, hosts-only, or projects-only. */
   const [launcherSection, setLauncherSection] = useState<
     "all" | "hosts" | "projects"
@@ -569,6 +571,53 @@ function Workspace({
     }
   }
 
+  // --- Session restore across app restarts -------------------------------
+  // tmux keeps the remote side alive; persist which tabs were open so a
+  // relaunch reattaches them automatically after unlock.
+  const restoredTabs = useRef(false);
+
+  useEffect(() => {
+    if (!status.unlocked || !restoredTabs.current) return;
+    const entries = tabsRef.current
+      .filter((t) => t.kind === "terminal" || t.kind === "local")
+      .map((t) => ({ hostId: t.hostId }));
+    localStorage.setItem("tethra.openTabs", JSON.stringify(entries));
+  }, [tabs, status.unlocked]);
+
+  useEffect(() => {
+    if (restoredTabs.current) return;
+    if (!status.unlocked || hosts.length === 0) return;
+    if (tabsRef.current.length > 0) {
+      restoredTabs.current = true;
+      return;
+    }
+    restoredTabs.current = true;
+    let saved: { hostId: string }[] = [];
+    try {
+      saved = JSON.parse(
+        localStorage.getItem("tethra.openTabs") ?? "[]",
+      ) as { hostId: string }[];
+    } catch {
+      return;
+    }
+    if (saved.length === 0) return;
+    void (async () => {
+      for (const entry of saved) {
+        try {
+          if (entry.hostId === "local") {
+            await openLocal();
+          } else {
+            const host = hosts.find((h) => h.id === entry.hostId);
+            if (host) await connect(host);
+          }
+        } catch {
+          // Failures surface through the normal error state; keep restoring.
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status.unlocked, hosts]);
+
   function adoptTransfer(transfer: WorkspaceTransfer): void {
     setTabs((current) => {
       const byId = new Map(current.map((tab) => [tab.sessionId, tab]));
@@ -673,7 +722,10 @@ function Workspace({
 
   function toggleRail(): void {
     // Warp-style: ⌘B / titlebar button fully shows or hides the sidebar.
-    setRailHidden((value) => !value);
+    setRailHidden((value) => {
+      localStorage.setItem("tethra.railHidden", value ? "0" : "1");
+      return !value;
+    });
   }
 
   async function attachOutput(
@@ -2066,6 +2118,21 @@ function Workspace({
         event.preventDefault();
         toggleRail();
       }
+      {
+        // ⌘1…⌘9 jump straight to the nth session.
+        const digit = Number.parseInt(event.key, 10);
+        if (digit >= 1 && digit <= 9) {
+          const sessionTabs = tabsRef.current.filter(
+            (entry) => entry.kind === "terminal" || entry.kind === "local",
+          );
+          const target = sessionTabs[digit - 1];
+          if (target) {
+            event.preventDefault();
+            selectTab(target.sessionId);
+            return;
+          }
+        }
+      }
       if (event.key.toLowerCase() === "f" && status.unlocked) {
         const tab = tabsRef.current.find(
           (entry) => entry.sessionId === activeIdRef.current,
@@ -2224,7 +2291,10 @@ function Workspace({
       if (runningId) openRunningIds.add(runningId);
       items.push({
         key: `open:${tab.sessionId}`,
-        label: project?.name ?? host?.label ?? tab.title,
+        label:
+          project && host
+            ? `${project.name} · ${host.label}`
+            : (project?.name ?? host?.label ?? tab.title),
         hostId: tab.hostId,
         openSessionId: tab.sessionId,
         runningId,
@@ -2386,7 +2456,7 @@ function Workspace({
           goLauncher();
         }}
         railHidden={railHidden}
-        onToggleRail={() => setRailHidden((v) => !v)}
+        onToggleRail={toggleRail}
       />
 
       <UpdateBanner />

@@ -98,6 +98,8 @@ export interface HostMutation {
   tunnels?: TunnelDefinitionDto[];
   /** Opt-in SSH agent forwarding. Default off. */
   forwardAgent?: boolean;
+  /** Connect with the machine's default SSH keys (~/.ssh/id_*). */
+  useDefaultKeys?: boolean;
 }
 
 export function vaultStatus(): Promise<VaultStatusDto> {

@@ -561,6 +561,7 @@ mod tests {
             false,
             false,
             &HostRecord {
+                use_default_keys: false,
                 id: item_id,
                 label: "lab".into(),
                 hostname: "127.0.0.1".into(),

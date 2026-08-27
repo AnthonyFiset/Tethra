@@ -44,6 +44,8 @@ pub struct HostSummary {
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
     pub forward_agent: bool,
+    /// Host authenticates with the machine's default SSH keys (~/.ssh/id_*).
+    pub use_default_keys: bool,
     /// Last successful terminal open (UTC).
     pub last_connected_at: Option<chrono::DateTime<Utc>>,
 }
@@ -69,6 +71,7 @@ impl From<&Host> for HostSummary {
             shell_integration: host.shell_integration,
             tunnels: host.tunnels.clone(),
             forward_agent: host.forward_agent,
+            use_default_keys: host.use_default_keys,
             last_connected_at: host.last_connected_at,
         }
     }
@@ -90,6 +93,8 @@ pub struct CreateHostRequest {
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
     pub forward_agent: bool,
+    /// Authenticate with the machine's default SSH keys (no stored secret).
+    pub use_default_keys: bool,
 }
 
 /// Non-secret identity metadata for UI / IPC.
@@ -247,6 +252,7 @@ impl VaultRepository {
         host.shell_integration = request.shell_integration;
         host.tunnels = request.tunnels;
         host.forward_agent = request.forward_agent;
+        host.use_default_keys = request.use_default_keys;
 
         if let Some(identity_id) = request.identity_id {
             let (identity, _) = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -408,6 +414,7 @@ impl VaultRepository {
         record.shell_integration = request.shell_integration;
         record.tunnels = request.tunnels;
         record.forward_agent = request.forward_agent;
+        record.use_default_keys = request.use_default_keys;
 
         if let Some(identity_id) = request.identity_id {
             let _ = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -1290,6 +1297,9 @@ impl HostStore for VaultRepository {
 #[async_trait]
 impl AuthProvider for VaultRepository {
     async fn credentials_for(&self, host: &Host) -> Result<AuthMaterial> {
+        if host.identity_id.is_none() && host.use_default_keys {
+            return Ok(AuthMaterial::DefaultKeys);
+        }
         let identity_id = host
             .identity_id
             .ok_or_else(|| Error::InvalidArgument("host has no identity".into()))?;
@@ -1342,6 +1352,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "lab".into(),
                 hostname: "127.0.0.1".into(),
                 port: 2222,
@@ -1377,6 +1388,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let host = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "box".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -1422,6 +1434,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let host = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "box".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -1513,6 +1526,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "lab".into(),
                 hostname: "127.0.0.1".into(),
                 port: 2222,
@@ -1554,6 +1568,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "old".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -1573,6 +1588,7 @@ mod tests {
             .update_host(
                 created.id,
                 CreateHostRequest {
+                    use_default_keys: false,
                     label: "new".into(),
                     hostname: "10.0.0.2".into(),
                     port: 2222,
@@ -1605,6 +1621,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let existing = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "target".into(),
                 hostname: "old.example.com".into(),
                 port: 22,
@@ -1695,6 +1712,7 @@ ZPzL/y8ftsnYTWVDR71ZAAAAEHRlc3RAdGV0aHJhLmxvY2FsAQIDBA==
 
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "tethra-vm".into(),
                 hostname: "1.2.3.4".into(),
                 port: 22,

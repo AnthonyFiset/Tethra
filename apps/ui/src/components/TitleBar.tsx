@@ -20,7 +20,6 @@ import {
 import { cn } from "../lib/cn";
 import { useChrome } from "../lib/ChromeContext";
 import { modKeyLabel, shiftModLabel } from "../lib/chrome";
-import { Logo } from "./Logo";
 import { IconButton } from "./ui/Button";
 import {
   DropdownMenu,
@@ -135,14 +134,12 @@ export function TitleBar({
             </IconButton>
           </Tooltip>
         )}
-        {inWorkspace && onGoLauncher ? (
+        {inWorkspace && onGoLauncher && (
           <Tooltip content="Home" side="bottom">
             <IconButton label="Home" onClick={onGoLauncher}>
               <House size={15} />
             </IconButton>
           </Tooltip>
-        ) : (
-          <Logo size={16} className="ml-1 hidden shrink-0 sm:block" />
         )}
       </div>
 

@@ -139,8 +139,17 @@ export function VaultGate({
   return (
     <div
       data-tauri-drag-region="deep"
-      className="grid size-full place-items-center bg-base p-6"
+      className="relative grid size-full place-items-center overflow-hidden bg-base p-6"
     >
+      {/* Quiet ambient depth behind the card — modern without noise. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(600px 420px at 50% 32%, rgba(61,142,240,0.07), transparent 70%)",
+        }}
+      />
       <form
         onSubmit={(event) => {
           if (mode !== "join") {
@@ -150,16 +159,18 @@ export function VaultGate({
           event.preventDefault();
           void join(false);
         }}
-        className="flex w-full max-w-sm flex-col gap-4 rounded-panel border border-line bg-surface p-6"
+        className="relative flex w-full max-w-sm flex-col gap-4 rounded-[14px] border border-line bg-surface/95 p-7 shadow-[0_24px_70px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.03)]"
       >
-        <Logo variant="lockup" size={26} />
-
-        <div>
-          <span className="mb-1.5 block text-micro font-semibold tracking-[0.1em] text-fg-subtle uppercase">
-            Encrypted vault
-          </span>
-          <h1 className="m-0 text-lg font-semibold text-fg">{title}</h1>
-          <p className="mt-1.5 mb-0 text-ui text-fg-muted">{subtitle}</p>
+        <div className="flex flex-col items-center gap-3 pt-1 pb-1 text-center">
+          <div className="grid size-12 place-items-center rounded-[14px] border border-line bg-elevated shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
+            <Logo size={24} />
+          </div>
+          <div>
+            <h1 className="m-0 text-[17px] font-semibold text-fg">{title}</h1>
+            <p className="mx-auto mt-1.5 mb-0 max-w-[19rem] text-micro text-fg-muted">
+              {subtitle}
+            </p>
+          </div>
         </div>
 
         {error && <ErrorBanner>{error}</ErrorBanner>}

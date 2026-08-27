@@ -89,6 +89,8 @@ struct HostSummaryDto {
     tunnels: Vec<tunnel::TunnelDefinitionDto>,
     /// Opt-in SSH agent forwarding (`ssh -A`).
     forward_agent: bool,
+    /// Authenticate with the machine's default SSH keys (~/.ssh/id_*).
+    use_default_keys: bool,
     /// ISO-8601 UTC of last successful terminal open, when known.
     last_connected_at: Option<String>,
 }
@@ -115,6 +117,7 @@ impl From<&CoreHostSummary> for HostSummaryDto {
                 .map(tunnel::TunnelDefinitionDto::from)
                 .collect(),
             forward_agent: host.forward_agent,
+            use_default_keys: host.use_default_keys,
             last_connected_at: host.last_connected_at.map(|ts| ts.to_rfc3339()),
         }
     }
@@ -479,6 +482,9 @@ struct HostMutation {
     tunnels: Option<Vec<tunnel::TunnelDefinitionDto>>,
     #[serde(default)]
     forward_agent: Option<bool>,
+    /// Authenticate with the machine's default SSH keys (no stored secret).
+    #[serde(default)]
+    use_default_keys: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -958,6 +964,7 @@ async fn create_host(
     let created = state
         .repo
         .create_host(CreateHostRequest {
+            use_default_keys: host.use_default_keys.unwrap_or(false),
             label: host.label,
             hostname: host.hostname,
             port: host.port,
@@ -1008,6 +1015,7 @@ async fn update_host(
         .update_host(
             host_id,
             CreateHostRequest {
+                use_default_keys: host.use_default_keys.unwrap_or(false),
                 label: host.label,
                 hostname: host.hostname,
                 port: host.port,
@@ -1747,6 +1755,15 @@ pub fn run() {
             {
                 webview_chrome::harden_webview(&webview);
             }
+            // macOS convention: the red close button hides the window; the app
+            // (and its SSH sessions) keeps running until Quit (⌘Q / menu).
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             vault_status,
@@ -1838,8 +1855,20 @@ pub fn run() {
             updater::update_check,
             updater::update_install,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Tauri application");
+        .build(tauri::generate_context!())
+        .expect("failed to build Tauri application")
+        .run(|app, event| {
+            // Dock icon click (macOS) re-shows the hidden main window.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
@@ -1912,6 +1941,7 @@ mod tests {
     #[test]
     fn host_dto_never_embeds_password() {
         let dto = HostSummaryDto {
+            use_default_keys: false,
             id: "id".into(),
             label: "lab".into(),
             hostname: "127.0.0.1".into(),

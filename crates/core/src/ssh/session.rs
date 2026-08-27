@@ -524,6 +524,9 @@ impl SessionManager {
                     .await?
                     .success()
             }
+            AuthMaterial::DefaultKeys => {
+                authenticate_with_default_keys(&mut session, &host.username).await?
+            }
         };
 
         if !ok {
@@ -532,6 +535,54 @@ impl SessionManager {
 
         Ok(session)
     }
+}
+
+/// Try the machine's default SSH keys (~/.ssh/id_*) in order — for servers
+/// that already trust this machine. Encrypted keys are skipped (import those
+/// as vault identities instead). Returns whether any key authenticated.
+pub(crate) async fn authenticate_with_default_keys<H>(
+    session: &mut russh::client::Handle<H>,
+    username: &str,
+) -> Result<bool>
+where
+    H: russh::client::Handler,
+    crate::Error: From<<H as russh::client::Handler>::Error>,
+{
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| {
+            Error::InvalidKey("no home directory to look for default SSH keys".into())
+        })?;
+    let mut tried_any = false;
+    for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
+        let path = home.join(".ssh").join(name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(key_pair) = load_private_key(&SecretBytes::new(bytes), None) else {
+            continue;
+        };
+        tried_any = true;
+        let hash = session.best_supported_rsa_hash().await?.flatten();
+        let ok = session
+            .authenticate_publickey(
+                username.to_string(),
+                PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash),
+            )
+            .await?
+            .success();
+        if ok {
+            return Ok(true);
+        }
+    }
+    if !tried_any {
+        return Err(Error::InvalidKey(
+            "no usable default key in ~/.ssh (id_ed25519 / id_ecdsa / id_rsa) — \
+add one, or attach a key or password to this host"
+                .into(),
+        ));
+    }
+    Ok(false)
 }
 
 fn pty_modes() -> [(Pty, u32); 7] {

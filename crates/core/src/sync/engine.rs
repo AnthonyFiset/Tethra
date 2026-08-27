@@ -375,6 +375,7 @@ mod tests {
         let repo_a = VaultRepository::new(Arc::clone(&device_a));
         let created = repo_a
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "lab".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -428,6 +429,7 @@ mod tests {
             .update_host(
                 created.id,
                 CreateHostRequest {
+                    use_default_keys: false,
                     label: "lab".into(),
                     hostname: "10.0.0.1".into(),
                     port: 22,
@@ -468,6 +470,7 @@ mod tests {
         let repo_a = VaultRepository::new(Arc::clone(&device_a));
         let created = repo_a
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "lab".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -548,6 +551,7 @@ mod tests {
         assert!(identity.sync_secret);
         let created = repo_a
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "tethra-vm".into(),
                 hostname: "10.0.0.9".into(),
                 port: 22,
