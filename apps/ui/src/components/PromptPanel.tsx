@@ -4,6 +4,7 @@ import { sendTerminalInput } from "../lib/ipc";
 import { cn } from "../lib/cn";
 import {
   blockCount,
+  noteSubmittedCommand,
   readActiveShellInputLine,
   sessionHasRunningCommand,
   setUncoverLivePrompt,
@@ -98,6 +99,8 @@ export function PromptPanel({
    * characters arrive they consume the predicted prefix.
    */
   const [pending, setPending] = useState("");
+  /** Source of truth for the un-echoed prediction (state mirrors it). */
+  const pendingRef = useRef("");
   const pendingBase = useRef("");
   /** Consecutive refreshes where the shell line contradicted the prediction. */
   const pendingMismatches = useRef(0);
@@ -121,6 +124,7 @@ export function PromptPanel({
     setBlocks(blockCount(sessionId));
     setMirror("");
     mirrorRef.current = "";
+    pendingRef.current = "";
     setPending("");
     pendingBase.current = "";
     setUncover(false);
@@ -162,6 +166,7 @@ export function PromptPanel({
     if (line == null) {
       mirrorRef.current = "";
       setMirror("");
+      pendingRef.current = "";
       setPending("");
       pendingBase.current = "";
       return;
@@ -171,31 +176,36 @@ export function PromptPanel({
     // remaining prediction — the shell's line is always the truth. A SINGLE
     // mismatched refresh is not proof though: shell/tmux redraws transiently
     // rewrite the row mid-echo, and dropping instantly made typed characters
-    // vanish-then-reappear (the "glitches while typing" report). Keep the
-    // prediction for one grace refresh before surrendering.
-    setPending((chars) => {
-      if (!chars) {
-        pendingBase.current = line;
-        pendingMismatches.current = 0;
-        return chars;
-      }
-      const base = pendingBase.current;
-      if (line.startsWith(base)) {
-        const echoed = line.slice(base.length);
-        if (chars.startsWith(echoed)) {
-          pendingBase.current = line;
-          pendingMismatches.current = 0;
-          return chars.slice(echoed.length);
-        }
-      }
-      if (pendingMismatches.current < 1) {
-        pendingMismatches.current += 1;
-        return chars;
-      }
+    // vanish-then-reappear. On a grace-kept mismatch NEITHER pending NOR the
+    // mirror may update — advancing the mirror while keeping the prediction
+    // displayed the echoed text twice ("sudo apt updateate").
+    const chars = pendingRef.current;
+    const base = pendingBase.current;
+    let nextPending = chars;
+    let acceptLine = true;
+    if (!chars) {
       pendingBase.current = line;
       pendingMismatches.current = 0;
-      return "";
-    });
+    } else if (
+      line.startsWith(base) &&
+      chars.startsWith(line.slice(base.length))
+    ) {
+      const echoed = line.slice(base.length);
+      pendingBase.current = line;
+      pendingMismatches.current = 0;
+      nextPending = chars.slice(echoed.length);
+    } else if (pendingMismatches.current < 1) {
+      // Transient contradiction — freeze the whole view for one refresh.
+      pendingMismatches.current += 1;
+      acceptLine = false;
+    } else {
+      pendingBase.current = line;
+      pendingMismatches.current = 0;
+      nextPending = "";
+    }
+    if (!acceptLine) return;
+    pendingRef.current = nextPending;
+    setPending(nextPending);
     mirrorRef.current = line;
     setMirror(line);
     if (forwardedSinceMirror.current > 0) {
@@ -241,14 +251,20 @@ export function PromptPanel({
       return;
     }
     if (event.key.length === 1) {
-      setPending((p) => {
-        if (!p) pendingBase.current = mirrorRef.current;
-        return p + event.key;
-      });
+      if (!pendingRef.current) pendingBase.current = mirrorRef.current;
+      pendingRef.current += event.key;
+      setPending(pendingRef.current);
     } else if (event.key === "Backspace") {
-      setPending((p) => (p ? p.slice(0, -1) : p));
+      pendingRef.current = pendingRef.current.slice(0, -1);
+      setPending(pendingRef.current);
     } else {
+      if (event.key === "Enter") {
+        // We own the editor: record the exact submitted line so the next
+        // command block is labeled from truth, not from racy row scanning.
+        noteSubmittedCommand(sessionId, mirrorRef.current + pendingRef.current);
+      }
       // Tab / Enter / arrows / Escape — the shell rewrites the line.
+      pendingRef.current = "";
       setPending("");
       pendingBase.current = mirrorRef.current;
     }

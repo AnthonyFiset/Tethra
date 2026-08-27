@@ -20,6 +20,9 @@ import {
 import {
   debugBlockState,
   disposeBlockTracker,
+  getPhaseLog,
+  noteSubmittedCommand,
+  recordOpLog,
   flushBlockPhases,
   readActiveShellInputLine,
   refreshActiveBlock,
@@ -83,8 +86,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
       lines,
       mirror: readActiveShellInputLine(sessionId),
       blockState: debugBlockState(sessionId),
+      phaseLog: getPhaseLog(),
     };
   };
+  (window as unknown as Record<string, unknown>).__tethraNoteCmd = (
+    sessionId: string,
+    cmd: string,
+  ) => noteSubmittedCommand(sessionId, cmd);
 }
 const encoder = new TextEncoder();
 /** Last non-empty selection per session (survives menu-bar focus/selection clear). */
@@ -440,6 +448,12 @@ export function writeTerminal(
       const done = () => {
         if (settled) return;
         settled = true;
+        if (import.meta.env.DEV) {
+          const tail = new TextDecoder()
+            .decode(bytes.slice(-40))
+            .replace(/\u001b/g, "~");
+          recordOpLog("W", `${bytes.length}b tail=${JSON.stringify(tail)}`);
+        }
         refreshActiveBlock(sessionId, current.terminal);
         scheduleBlockOverlaySync(sessionId);
         resolve();

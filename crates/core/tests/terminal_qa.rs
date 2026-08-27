@@ -602,3 +602,52 @@ async fn ubuntu_masked_input_still_receives_keys() {
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
         .await;
 }
+
+/// Full apt run with REAL downloads — apt's progress bar uses a scroll
+/// region that deletes lines under xterm markers, which is where block
+/// headers historically died. The transcript is saved for the UI replay,
+/// whose assertion is the user-visible requirement: every command in the
+/// history shows its header (ls AND apt — "consistency").
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn ubuntu_apt_full_download_transcript() {
+    let env = Env::setup_ubuntu().await;
+    let name = unique("aptfull");
+    let mut pty = Pty::open(&env, Some(&name)).await;
+    pty.wait_for(OSC_PROMPT_MARK, Duration::from_secs(30)).await;
+    pty.settle(Duration::from_millis(700)).await;
+
+    pty.send("ls -a\n").await;
+    pty.wait_for(".bashrc", Duration::from_secs(15)).await;
+    pty.settle(Duration::from_millis(500)).await;
+
+    // Force real downloads so apt draws its scroll-region progress bar.
+    pty.send("sudo rm -rf /var/lib/apt/lists/*\n").await;
+    pty.settle(Duration::from_secs(2)).await;
+    pty.send("sudo apt-get update\n").await;
+    pty.wait_for("Reading package lists", Duration::from_secs(180))
+        .await;
+    pty.settle(Duration::from_secs(3)).await;
+
+    pty.send("echo tail-$((6*7))\n").await;
+    pty.wait_for("tail-42", Duration::from_secs(15)).await;
+    pty.settle(Duration::from_secs(1)).await;
+
+    let seq: String = mark_sequence(&pty.all).into_iter().collect();
+    println!("apt-full mark sequence: {seq}");
+    let c = seq.matches('C').count();
+    let d = seq.matches('D').count();
+    assert_eq!(c, d, "unbalanced marks ({c} C vs {d} D): {seq}");
+
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/qa-transcripts");
+    std::fs::create_dir_all(&dir).expect("mkdir transcripts");
+    std::fs::write(dir.join("ubuntu-apt-full.bin"), &pty.raw).expect("write transcript");
+    println!(
+        "saved {} bytes to target/qa-transcripts/ubuntu-apt-full.bin",
+        pty.raw.len()
+    );
+
+    pty.close().await;
+    env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
+        .await;
+}

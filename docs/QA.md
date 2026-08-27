@@ -67,7 +67,15 @@ Mandatory replay assertions (each caught a real shipped bug):
    cell = screenRect.height / term.rows.
 3. Run the audit BOTH mid-stream (during the running command) and at the
    end — the mid-apt state is where covers historically died.
-4. **Retype a previously-run command** (a finished block's exact text):
+4. **Header consistency (the user's #1 complaint)**: after replaying
+   `qa-apt-full.b64` (preload the submitted commands via
+   `__tethraNoteCmd(sid, cmd)` — that simulates the input box), EVERY
+   finished command must show a header with ITS OWN text: `ls -a`, the
+   sudo rm, `sudo apt-get update`, the echo. Feed at full speed (no
+   delays) — burst timing is what broke attribution (whole-queue phase
+   flush), and short plain commands ("sudo apt update", "npm run build")
+   were once discarded by the directory-listing heuristic.
+5. **Retype a previously-run command** (a finished block's exact text):
    the chrome on the CURSOR row must be the active header showing a bare
    `❯` — never the typed text, never a finished block's header. (Finished
    blocks text-matching the live row painted the user's in-progress typing

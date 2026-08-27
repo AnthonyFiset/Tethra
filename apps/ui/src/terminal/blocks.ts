@@ -22,6 +22,8 @@ interface FinishedBlock {
   prompt: IMarker;
   command: IMarker;
   end: IMarker;
+  /** commandText came from the input box — authoritative, skip heuristics. */
+  fromInput?: boolean;
   commandText: string;
   outputText: string;
   exitCode: number | null;
@@ -49,6 +51,8 @@ interface BlockTracker {
     commandStart?: IMarker;
     outputStart?: IMarker;
     commandText?: string;
+    /** commandText came from the input box (authoritative, skip dup guards). */
+    commandFromInput?: boolean;
     outputText?: string;
     meta?: BlockMeta;
   };
@@ -155,7 +159,10 @@ function stripOrnaments(raw: string): string {
  */
 function looksLikeDirectoryListing(text: string): boolean {
   const tokens = text.split(/\s+/).filter(Boolean);
-  if (tokens.length < 3) return false;
+  // 3-4 plain tokens are overwhelmingly COMMANDS ("sudo apt update",
+  // "npm run build", "git status -sb") — this guard silently deleted their
+  // blocks for months. Only long runs of bare names look like ls output.
+  if (tokens.length < 5) return false;
   if (/[\|;&<>(){}]/.test(text)) return false;
   if (tokens.some((t) => t.startsWith("-") || t.includes("/"))) return false;
   return tokens.every((t) => /^[A-Za-z0-9._+-]+$/.test(t));
@@ -271,6 +278,71 @@ function extractCommandLine(
  * Never accept a bare output row (e.g. a single "test" dir from ls) even when
  * it sits next to the cursor — that made remote headers show ❯ test.
  */
+/**
+ * The command line the user submitted (Enter in the input box / live keys).
+ * We OWN the editor, so this is the truth for the next command block —
+ * buffer scanning at C-time raced tmux redraws and misattributed blocks
+ * (every apt block labeled "ls -a" in the field).
+ */
+const submittedCommands = new Map<string, Array<{ text: string; at: number }>>();
+
+export function noteSubmittedCommand(sessionId: string, text: string): void {
+  const t = text.trim();
+  if (!t) return;
+  const queue = submittedCommands.get(sessionId) ?? [];
+  queue.push({ text: t, at: Date.now() });
+  // Bound the queue — a submission is consumed by the very next 133;C.
+  while (queue.length > 8) queue.shift();
+  submittedCommands.set(sessionId, queue);
+}
+
+function takeSubmittedCommand(sessionId: string): string | null {
+  const queue = submittedCommands.get(sessionId);
+  while (queue && queue.length > 0) {
+    const entry = queue.shift();
+    if (!entry) break;
+    // Stale submissions (Enter pressed long ago in another context) must
+    // not label an unrelated block.
+    if (Date.now() - entry.at <= 30_000) return entry.text;
+  }
+  return null;
+}
+
+/** QA introspection: what the phase handlers saw at application time. */
+const phaseLog: Array<Record<string, unknown>> = [];
+function recordPhaseLog(
+  terminal: Terminal,
+  phase: string,
+  found: { line: number; commandText: string } | null,
+): void {
+  const buf = terminal.buffer.active;
+  const cursorAbs = buf.baseY + buf.cursorY;
+  const rows: string[] = [];
+  for (let y = Math.max(0, cursorAbs - 6); y <= cursorAbs; y++) {
+    rows.push(
+      `${y}:${(buf.getLine(y)?.translateToString(true) ?? "").slice(0, 45)}`,
+    );
+  }
+  phaseLog.push({
+    phase,
+    cursorAbs,
+    baseY: buf.baseY,
+    found: found ? { line: found.line, cmd: found.commandText } : null,
+    rows,
+  });
+  if (phaseLog.length > 40) phaseLog.shift();
+}
+
+export function getPhaseLog(): Array<Record<string, unknown>> {
+  return phaseLog;
+}
+
+/** QA: interleaving probe — registry logs each write completion here. */
+export function recordOpLog(kind: string, detail: string): void {
+  phaseLog.push({ phase: kind, detail });
+  if (phaseLog.length > 40) phaseLog.shift();
+}
+
 function findCommandAboveCursor(
   terminal: Terminal,
 ): { line: number; commandText: string } | null {
@@ -290,9 +362,32 @@ function findCommandAboveCursor(
 function markerAtLine(terminal: Terminal, absLine: number): IMarker | undefined {
   const cursor = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
   const offset = absLine - cursor;
-  // xterm ignores extreme offsets; clamp to a small window.
-  if (offset < -100 || offset > 10) return undefined;
+  // Long-output commands (apt) put their PS1 row far above the cursor.
+  if (offset < -4000 || offset > 10) return undefined;
   return terminal.registerMarker(offset) ?? undefined;
+}
+
+/**
+ * First prompt-shaped row at or above `fromLine`. Between a command's end
+ * and its PS1 row lie only output rows, so — once output has settled — this
+ * is the command's own row. Used at commandEnd, where the buffer is
+ * complete; scanning at C raced in-flight redraw bytes.
+ */
+function findFirstPromptRowAbove(
+  terminal: Terminal,
+  fromLine: number,
+  maxUp = 2000,
+): { line: number; commandText: string } | null {
+  const buf = terminal.buffer.active;
+  for (let y = fromLine; y >= Math.max(0, fromLine - maxUp); y--) {
+    const raw = buf.getLine(y)?.translateToString(true) ?? "";
+    if (!raw.trim()) continue;
+    if (!looksLikePromptLine(raw)) continue;
+    const stripped = stripPs1(raw).trim();
+    if (!isPlausibleCommandText(stripped)) continue;
+    return { line: y, commandText: stripped };
+  }
+  return null;
 }
 
 export function subscribeBlockChanges(
@@ -360,6 +455,12 @@ export function debugBlockState(sessionId: string): Record<string, unknown> {
     openOutput: markerLine(tracker?.open.outputStart),
     finished: tracker?.finished.length,
     pending: tracker?.pending.length,
+    finishedDetail: tracker?.finished.map((b) => ({
+      cmd: b.commandText,
+      promptLine: markerLine(b.prompt) ?? null,
+      endLine: markerLine(b.end) ?? null,
+      exit: b.exitCode,
+    })),
   };
 }
 
@@ -426,8 +527,10 @@ export function getBlockChromeSnapshot(
 
   for (const block of tracker.finished) {
     const commandText = block.commandText.trim();
-    // Bare Enter / empty commands never get chrome.
-    if (!isPlausibleCommandText(commandText)) continue;
+    // Bare Enter / empty commands never get chrome. Input-box commands are
+    // exact — heuristics (the directory-listing guard) must not veto them.
+    if (!commandText) continue;
+    if (!block.fromInput && !isPlausibleCommandText(commandText)) continue;
 
     let promptLine = markerLine(block.prompt);
     let commandLine = markerLine(block.command) ?? promptLine;
@@ -530,10 +633,14 @@ export function flushBlockPhases(
 ): void {
   const tracker = trackers.get(sessionId);
   if (!tracker || tracker.pending.length === 0) return;
-  const batch = tracker.pending.splice(0, tracker.pending.length);
-  for (const item of batch) {
-    applyPhase(sessionId, terminal, tracker, item.phase, item.exitCode);
-  }
+  // Exactly ONE phase per flush op. Each op is enqueued right after the
+  // data write that precedes its mark; the backend emits one flush per
+  // phase, so counts pair 1:1. Draining the whole queue here applied later
+  // phases against an EARLIER buffer state — under bursty output (apt,
+  // restore replays) every block got attributed to the oldest prompt row.
+  const item = tracker.pending.shift();
+  if (!item) return;
+  applyPhase(sessionId, terminal, tracker, item.phase, item.exitCode);
   syncChrome(sessionId);
 }
 
@@ -591,11 +698,27 @@ function applyPhase(
       // Prefer scanning the live buffer — more reliable than A/B markers
       // which often land before PS1 is painted.
       const found = findCommandAboveCursor(terminal);
-      let commandText = found?.commandText ?? "";
+      recordPhaseLog(terminal, "C", found);
+      // The submitted line from the input box outranks buffer scanning —
+      // the scan races tmux redraws (bytes still in flight at phase time)
+      // and grabbed OLD prompt rows, labeling apt blocks "ls".
+      const submitted = takeSubmittedCommand(sessionId);
+      let commandText = submitted ?? found?.commandText ?? "";
+      if (submitted) {
+        tracker.open.commandFromInput = true;
+      }
       let prompt = tracker.open.promptStart;
       let command = tracker.open.commandStart;
 
-      if (found) {
+      // Rebinding to a scanned row is only safe when that row actually shows
+      // THIS command — with in-flight redraw bytes the scan can return an
+      // older prompt row, and rebinding there mislabeled/misplaced blocks.
+      const foundMatchesCommand =
+        found != null &&
+        (submitted == null ||
+          found.commandText === submitted ||
+          found.commandText.startsWith(`${submitted} `));
+      if (found && foundMatchesCommand) {
         const rebound = markerAtLine(terminal, found.line);
         if (rebound) {
           // Replace drifted A/B markers with the real PS1 row.
@@ -630,12 +753,32 @@ function applyPhase(
     case "commandEnd": {
       const end = terminal.registerMarker(0);
       if (!end) return;
-      const command = tracker.open.commandStart ?? end;
-      const prompt = tracker.open.promptStart ?? command;
+      let command = tracker.open.commandStart ?? end;
+      let prompt = tracker.open.promptStart ?? command;
       const outputStart = tracker.open.outputStart;
       // Prefer text captured at outputStart — re-reading markers after the
       // cursor advanced can land on the first output row (styled dup bug).
       let commandText = (tracker.open.commandText ?? "").trim();
+      if (!tracker.open.commandFromInput) {
+        // The C-time scan raced in-flight redraw bytes and could return an
+        // OLDER prompt row (apt blocks labeled "ls"). Now the output has
+        // settled: the first prompt row above the end IS this command's row —
+        // re-derive text and re-anchor markers from it.
+        const settled = findFirstPromptRowAbove(terminal, end.line - 1);
+        recordPhaseLog(terminal, `D@${end.line}`, settled);
+        if (settled) {
+          commandText = settled.commandText;
+          const rebound = markerAtLine(terminal, settled.line);
+          if (rebound) {
+            if (prompt !== rebound && prompt !== end) prompt.dispose();
+            if (command !== rebound && command !== prompt && command !== end) {
+              command.dispose();
+            }
+            prompt = rebound;
+            command = rebound;
+          }
+        }
+      }
       if (!commandText) {
         const found = findCommandAboveCursor(terminal);
         commandText = found?.commandText ?? "";
@@ -647,8 +790,11 @@ function applyPhase(
 
       // Remote latency: markers sometimes land on the first output row, so
       // commandText equals that row (e.g. ls → "test"). Prefer the PS1 row.
+      // Skip entirely when the text came from the input box — it is exact,
+      // and this guard would blank it (e.g. `ls` listing a file named "ls").
       const outFirst = outputText.trim().split("\n")[0]?.trim() ?? "";
       if (
+        !tracker.open.commandFromInput &&
         commandText &&
         outFirst === commandText &&
         !/[\s|;&<>]/.test(commandText)
@@ -667,8 +813,18 @@ function applyPhase(
       }
 
       tracker.active = undefined;
+      recordOpLog(
+        "Dend",
+        `cmd=${JSON.stringify(commandText)} fromInput=${Boolean(
+          tracker.open.commandFromInput,
+        )} plausible=${isPlausibleCommandText(commandText)}`,
+      );
 
-      if (!commandText || !isPlausibleCommandText(commandText)) {
+      const fromInput = Boolean(tracker.open.commandFromInput);
+      if (
+        !commandText ||
+        (!fromInput && !isPlausibleCommandText(commandText))
+      ) {
         // Bare Enter — no block, no header.
         prompt.dispose();
         if (command !== prompt) command.dispose();
@@ -692,6 +848,7 @@ function applyPhase(
         prompt,
         command,
         end,
+        fromInput,
         commandText,
         outputText,
         exitCode,
