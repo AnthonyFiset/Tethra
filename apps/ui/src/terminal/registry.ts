@@ -17,7 +17,13 @@ import {
   getTerminalLineHeight,
   getTerminalScrollback,
 } from "../lib/prefs";
-import { disposeBlockTracker, flushBlockPhases, refreshActiveBlock } from "./blocks";
+import {
+  debugBlockState,
+  disposeBlockTracker,
+  flushBlockPhases,
+  readActiveShellInputLine,
+  refreshActiveBlock,
+} from "./blocks";
 import { scheduleBlockOverlaySync } from "./blockOverlay";
 import {
   SCROLLBACK_LINE_CAP,
@@ -75,6 +81,8 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
       cols: t.cols,
       length: buf.length,
       lines,
+      mirror: readActiveShellInputLine(sessionId),
+      blockState: debugBlockState(sessionId),
     };
   };
 }

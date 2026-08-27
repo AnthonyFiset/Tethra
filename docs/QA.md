@@ -56,6 +56,20 @@ input box (`textarea[placeholder]`, NOT xterm's helper textarea).
 Note: xterm's WebGL canvas screenshots BLACK in headless captures — assert
 on buffer/DOM state, never on screenshot pixels of the terminal area.
 
+Mandatory replay assertions (each caught a real shipped bug):
+1. **Typing mirrors after `clear`**: type in `textarea[placeholder]`; its
+   value must show the typed text (clear DISPOSES block markers — the
+   mirror must fall back to the cursor row).
+2. **No uncovered raw PS1 rows**: for every viewport row matching
+   `^[\w.-]+@[\w.-]+:[^\s]*[#$](\s|$)`, a `.tethra-block-chrome-group` or
+   `.tethra-block-overlay-blank` must cover its midpoint. Row pixel math:
+   base off `.xterm-screen`'s rect (the overlay root sits ~8px above it),
+   cell = screenRect.height / term.rows.
+3. Run the audit BOTH mid-stream (during the running command) and at the
+   end — the mid-apt state is where covers historically died.
+`window.__tethraTermDebug(sid)` exposes `mirror` and `blockState`
+(markers disposed? open phases?) for diagnosing failures.
+
 ## 2. UI harness (automated, every UI change)
 
 ```bash

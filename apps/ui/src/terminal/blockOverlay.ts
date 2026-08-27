@@ -214,16 +214,17 @@ function syncBlockOverlay(sessionId: string): void {
     renderBlock(root, terminal, block, snapshot, coverLine);
   }
 
-  // While composing in the input box, bash tab-completion redraws the prompt
-  // (candidates print, PS1 reprints below). Those redraw rows — and any bare
-  // idle PS1 rows near the cursor — leak raw "root@host:~#" text between the
-  // styled blocks. Blank every unused STRICT prompt row near the cursor.
-  // Output rows are safe: only user@host / ornament-~ prompt shapes qualify.
+  // Raw "root@host:~#" rows leak between styled blocks whenever their
+  // covers die: bash tab-completion reprints the PS1, tmux redraws restore
+  // old prompt lines, and `clear` DISPOSES block markers so finished
+  // blocks' chrome vanishes mid-session (the "shows all the details"
+  // glitch during apt). Blank every unused STRICT prompt row across the
+  // whole viewport, composing or running — output rows are safe: only
+  // user@host / ornament-~ prompt shapes qualify.
   const activeBlock = snapshot.blocks.find((b) => b.kind === "active");
-  if (activeBlock?.composing && !snapshot.uncoverLivePrompt) {
-    const cursorRow = buf.baseY + buf.cursorY;
-    const from = Math.max(viewportStart, cursorRow - 24);
-    for (let y = from; y <= Math.min(cursorRow, viewportEnd); y++) {
+  if (activeBlock && !snapshot.uncoverLivePrompt) {
+    const from = viewportStart;
+    for (let y = from; y <= viewportEnd; y++) {
       if (usedRows.has(y)) continue;
       const raw = buf.getLine(y)?.translateToString(true) ?? "";
       if (!raw.trim()) continue;

@@ -343,6 +343,26 @@ export function getUncoverLivePrompt(sessionId: string): boolean {
  * Read the shell's current input line (after PS1 through end of line).
  * Used to mirror completions / history into the bottom input box.
  */
+/** QA harness introspection — which mirror guard is active, marker rows. */
+export function debugBlockState(sessionId: string): Record<string, unknown> {
+  const tracker = trackers.get(sessionId);
+  const terminal = getTerminalInstance(sessionId);
+  return {
+    hasTracker: Boolean(tracker),
+    hasActive: Boolean(tracker?.active),
+    bufferType: terminal?.buffer.active.type,
+    promptLine: markerLine(tracker?.active?.prompt),
+    commandLine: markerLine(tracker?.active?.command),
+    promptDisposed: tracker?.active?.prompt.isDisposed,
+    commandDisposed: tracker?.active?.command.isDisposed,
+    openPrompt: markerLine(tracker?.open.promptStart),
+    openCommand: markerLine(tracker?.open.commandStart),
+    openOutput: markerLine(tracker?.open.outputStart),
+    finished: tracker?.finished.length,
+    pending: tracker?.pending.length,
+  };
+}
+
 export function readActiveShellInputLine(sessionId: string): string | null {
   const tracker = trackers.get(sessionId);
   const terminal = getTerminalInstance(sessionId);
@@ -351,12 +371,20 @@ export function readActiveShellInputLine(sessionId: string): string | null {
 
   const commandLine =
     markerLine(tracker.active.command) ?? markerLine(tracker.active.prompt);
-  if (commandLine == null) return null;
 
   const buf = terminal.buffer.active;
   const cursorAbs = buf.baseY + buf.cursorY;
-  // Prefer the cursor's row when it's on/after the command marker.
-  const lineNo = cursorAbs >= commandLine ? cursorAbs : commandLine;
+  // Prefer the cursor's row when it's on/after the command marker. `clear`
+  // disposes the active block's markers — the live prompt is wherever the
+  // cursor is, so fall back to it instead of going dead until the next
+  // prompt (typing looked broken after clear: keys reached the shell but
+  // the input box mirrored nothing).
+  const lineNo =
+    commandLine == null
+      ? cursorAbs
+      : cursorAbs >= commandLine
+        ? cursorAbs
+        : commandLine;
   const bufLine = buf.getLine(lineNo);
   if (!bufLine) return null;
 

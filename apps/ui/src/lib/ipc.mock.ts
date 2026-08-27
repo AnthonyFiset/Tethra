@@ -485,16 +485,11 @@ if (typeof window !== "undefined") {
   const w = window as unknown as Record<string, unknown>;
   w.__tethraFeedB64 = (b64: string) => {
     if (!lastTerminalSession) return false;
-    emitTerminal(lastTerminalSession, {
-      kind: "data",
-      data: b64,
-      dropped: false,
-    });
-    // Mirror the Rust backend: parse OSC 133 marks out of the byte stream
-    // and emit the corresponding block events (A/B/C/D → phases). Keeps a
-    // carry buffer so marks split across chunks still parse.
+    // Mirror the Rust backend (output_pump.rs) EXACTLY: split the byte
+    // stream at each OSC 133 mark — emit the data segment up to the mark,
+    // then the block event, then continue. A carry buffer handles marks
+    // split across chunks.
     feedBuf += atob(b64);
-    const window_ = feedBuf.slice(feedIdx);
     const re = /\x1b\]133;([A-Za-z])((?:;[^\x07\x1b]*)?)(?:\x07|\x1b\\)/g;
     const phases: Record<string, string> = {
       A: "promptStart",
@@ -502,9 +497,19 @@ if (typeof window !== "undefined") {
       C: "outputStart",
       D: "commandEnd",
     };
+    const pending = feedBuf.slice(feedIdx);
+    let cursor = 0;
     let match: RegExpExecArray | null;
-    let lastEnd = -1;
-    while ((match = re.exec(window_)) !== null) {
+    while ((match = re.exec(pending)) !== null) {
+      const segment = pending.slice(cursor, re.lastIndex);
+      if (segment) {
+        emitTerminal(lastTerminalSession, {
+          kind: "data",
+          data: btoa(segment),
+          dropped: false,
+        });
+      }
+      cursor = re.lastIndex;
       const phase = phases[match[1].toUpperCase()];
       if (phase) {
         const exit =
@@ -513,17 +518,32 @@ if (typeof window !== "undefined") {
             : null;
         emitTerminal(lastTerminalSession, {
           kind: "block",
-          phase: phase as "promptStart" | "commandStart" | "outputStart" | "commandEnd",
-          exit_code: Number.isNaN(exit) ? null : exit,
+          phase: phase as
+            | "promptStart"
+            | "commandStart"
+            | "outputStart"
+            | "commandEnd",
+          exit_code: exit != null && Number.isNaN(exit) ? null : exit,
         });
       }
-      lastEnd = re.lastIndex;
     }
-    if (lastEnd >= 0) {
-      feedIdx += lastEnd;
-    } else if (window_.length > 4096) {
-      feedIdx += window_.length - 64;
+    // Emit the tail unless it could be a split mark (keep up to 24 bytes).
+    const tail = pending.slice(cursor);
+    const escIdx = tail.lastIndexOf("\x1b");
+    const maybeSplitMark =
+      escIdx >= 0 &&
+      tail.length - escIdx <= 24 &&
+      /^\x1b(?:\](?:1(?:3(?:3(?:;.*)?)?)?)?)?$/.test(tail.slice(escIdx));
+    const holdFrom = maybeSplitMark ? escIdx : tail.length;
+    const flushable = tail.slice(0, holdFrom);
+    if (flushable) {
+      emitTerminal(lastTerminalSession, {
+        kind: "data",
+        data: btoa(flushable),
+        dropped: false,
+      });
     }
+    feedIdx += cursor + flushable.length;
     return true;
   };
   w.__tethraLastSession = () => lastTerminalSession;
