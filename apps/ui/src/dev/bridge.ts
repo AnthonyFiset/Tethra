@@ -156,7 +156,28 @@ const devApi = {
   },
   screenApp: (sessionId: string) => sessionScreenApp(sessionId),
   type: (text: string) => {
-    for (const ch of text) devApi.key(ch);
+    for (const ch of text) {
+      devApi.key(ch);
+      // xterm takes printable keys from keydown except space (keyCode 32
+      // is not in its keydown table) — it reads that from keypress. Real
+      // typing always produces the keypress; synthesize it.
+      if (ch === " ") {
+        const target = document.activeElement;
+        if (target?.classList.contains("xterm-helper-textarea")) {
+          target.dispatchEvent(
+            new KeyboardEvent("keypress", {
+              key: " ",
+              code: "Space",
+              keyCode: 32,
+              which: 32,
+              charCode: 32,
+              bubbles: true,
+              cancelable: true,
+            } as KeyboardEventInit),
+          );
+        }
+      }
+    }
   },
   click: (selector: string) => {
     const el = document.querySelector(selector) as HTMLElement | null;

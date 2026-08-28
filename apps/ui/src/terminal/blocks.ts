@@ -945,6 +945,22 @@ function disposeFinished(block: FinishedBlock | undefined): void {
   block.end.dispose();
 }
 
+/**
+ * ED3 (`CSI 3 J`) destroyed the scrollback on purpose — the project launch
+ * wipe, or a user `clear`. Every finished block's rows are gone with it, so
+ * drop them instead of keeping headerless ghosts: the typed launch script
+ * (`done` / `export PATH` / `fi`) used to survive as blocks under Claude
+ * Code's frame. The active block is kept — its prompt is re-marked by the
+ * next OSC 133 phase.
+ */
+export function forgetFinishedBlocks(sessionId: string): void {
+  const tracker = trackers.get(sessionId);
+  if (!tracker || tracker.finished.length === 0) return;
+  for (const block of tracker.finished) disposeFinished(block);
+  tracker.finished = [];
+  syncChrome(sessionId);
+}
+
 export function disposeBlockTracker(sessionId: string): void {
   const tracker = trackers.get(sessionId);
   if (!tracker) return;

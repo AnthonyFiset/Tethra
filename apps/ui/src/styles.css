@@ -107,6 +107,29 @@
     overflow-y: auto;
   }
 
+  /* xterm 6 draws its own overlay scrollbar (VS Code's scrollable element),
+     so the ::-webkit-scrollbar rules below never reach it: a 14px slab
+     painted over the terminal's last columns. Narrow it to the app thumb. */
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.vertical {
+    width: 10px !important;
+  }
+
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+    width: 4px !important;
+    left: 3px !important;
+    border-radius: 99px;
+  }
+
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.horizontal {
+    height: 10px !important;
+  }
+
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.horizontal > .slider {
+    height: 4px !important;
+    top: 3px !important;
+    border-radius: 99px;
+  }
+
   /* The whole surface is a tool, not a document. */
   * {
     user-select: none;

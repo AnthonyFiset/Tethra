@@ -548,6 +548,14 @@ export function suppressPtyUserInput(durationMs = 800): void {
   );
 }
 
+/**
+ * Per-session write chain. `terminal_input` is an async Tauri command — every
+ * call is its own task racing for the session lock, so two keystrokes in
+ * flight at once could reach the PTY swapped (a burst of `qrstuvw` landed as
+ * `rusvtw` over SSH). Serialize here; a failed write never poisons the chain.
+ */
+const terminalInputChains = new Map<string, Promise<void>>();
+
 export function sendTerminalInput(
   sessionId: string,
   data: Uint8Array,
@@ -556,10 +564,19 @@ export function sendTerminalInput(
   if (!options?.force && Date.now() < ptyUserInputSuppressedUntil) {
     return Promise.resolve();
   }
-  return invoke("terminal_input", {
-    sessionId,
-    data: Array.from(data),
+  const payload = Array.from(data);
+  const prev = terminalInputChains.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(() =>
+    invoke<void>("terminal_input", { sessionId, data: payload }),
+  );
+  const settled = next.catch(() => undefined);
+  terminalInputChains.set(sessionId, settled);
+  void settled.then(() => {
+    if (terminalInputChains.get(sessionId) === settled) {
+      terminalInputChains.delete(sessionId);
+    }
   });
+  return next;
 }
 
 export function resizeTerminal(

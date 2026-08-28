@@ -213,8 +213,11 @@ pub struct SessionManager {
     policy: Arc<dyn HostKeyPolicy>,
     gate: Arc<dyn ApprovalGate>,
     /// Idle authenticated sessions available for a new channel.
-    pool: Arc<Mutex<HashMap<Uuid, Vec<Arc<Handle<ClientHandler>>>>>>,
+    pool: SessionPool,
 }
+
+/// Idle authenticated sessions per host, ready for a new channel.
+type SessionPool = Arc<Mutex<HashMap<Uuid, Vec<Arc<Handle<ClientHandler>>>>>>;
 
 const POOL_MAX_PER_HOST: usize = 2;
 
@@ -319,6 +322,7 @@ impl SessionManager {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn finish_pty(
         &self,
         host_id: Uuid,
@@ -330,10 +334,8 @@ impl SessionManager {
         agent_status: AgentForwardStatus,
         mux_session: Option<&str>,
     ) -> Result<PtyOpenResult> {
-        if want_agent {
-            if let Err(err) = channel.agent_forward(true).await {
-                tracing::warn!(%err, "auth-agent-req@openssh.com failed");
-            }
+        if want_agent && let Err(err) = channel.agent_forward(true).await {
+            tracing::warn!(%err, "auth-agent-req@openssh.com failed");
         }
 
         channel

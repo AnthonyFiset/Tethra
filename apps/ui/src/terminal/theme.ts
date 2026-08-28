@@ -30,6 +30,10 @@ export function themeFromAppTokens(): ITheme {
     cursorAccent: base,
     selectionBackground: "#2c4a75",
     selectionInactiveBackground: "#1e2f4a",
+    // xterm 6 overlay scrollbar — same thumb ramp as ::-webkit-scrollbar.
+    scrollbarSliderBackground: cssVar("--color-line-strong", "#3f4046"),
+    scrollbarSliderHoverBackground: "#4a4a4a",
+    scrollbarSliderActiveBackground: "#5a5a5a",
     black: elevated,
     red: danger,
     green: success,

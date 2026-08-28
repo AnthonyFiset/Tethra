@@ -24,6 +24,7 @@ import {
   noteSubmittedCommand,
   recordOpLog,
   flushBlockPhases,
+  forgetFinishedBlocks,
   readActiveShellInputLine,
   refreshActiveBlock,
   notifyTuiChange,
@@ -369,6 +370,18 @@ export function createTerminal(
       { prefix: "?", final: "l" },
       onDecMode(false),
     ),
+  );
+
+  // ED3 outside the alternate screen: scrollback wiped on purpose (project
+  // launch wipe, `clear`). Finished blocks have no rows left to anchor to.
+  disposables.push(
+    terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+      const ps = params.length > 0 ? params[0] : 0;
+      if (ps === 3 && terminal.buffer.active.type === "normal") {
+        forgetFinishedBlocks(sessionId);
+      }
+      return false;
+    }),
   );
 
   terminal.onData((data) => {

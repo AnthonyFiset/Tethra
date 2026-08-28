@@ -286,6 +286,10 @@ function Workspace({
 }): React.JSX.Element {
   const [hosts, setHosts] = useState<HostSummaryDto[]>([]);
   const [projects, setProjects] = useState<ProjectSummaryDto[]>([]);
+  // Session restore must not race the vault lists: a project tab restored
+  // before `projects` arrived came back as a bare host shell.
+  const [hostsLoaded, setHostsLoaded] = useState(false);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [agents, setAgents] = useState<AgentSpecDto[]>([]);
   const [runningSessions, setRunningSessions] = useState<
     RunningSessionSummaryDto[]
@@ -384,10 +388,12 @@ function Workspace({
   useEffect(() => {
     listHosts()
       .then(setHosts)
-      .catch((reason: unknown) => setError(String(reason)));
+      .catch((reason: unknown) => setError(String(reason)))
+      .finally(() => setHostsLoaded(true));
     listProjects()
       .then(setProjects)
-      .catch((reason: unknown) => setError(String(reason)));
+      .catch((reason: unknown) => setError(String(reason)))
+      .finally(() => setProjectsLoaded(true));
     listAgents()
       .then(setAgents)
       .catch((reason: unknown) => setError(String(reason)));
@@ -595,23 +601,32 @@ function Workspace({
     if (!status.unlocked || !restoredTabs.current) return;
     const entries = tabsRef.current
       .filter((t) => t.kind === "terminal" || t.kind === "local")
-      .map((t) => ({ hostId: t.hostId, muxName: t.muxName ?? null }));
+      .map((t) => ({
+        hostId: t.hostId,
+        muxName: t.muxName ?? null,
+        projectId: t.projectId ?? null,
+      }));
     localStorage.setItem("tethra.openTabs", JSON.stringify(entries));
   }, [tabs, status.unlocked]);
 
   useEffect(() => {
     if (restoredTabs.current) return;
-    if (!status.unlocked || hosts.length === 0) return;
+    if (!status.unlocked || !hostsLoaded || !projectsLoaded) return;
     if (tabsRef.current.length > 0) {
       restoredTabs.current = true;
       return;
     }
     restoredTabs.current = true;
-    let saved: { hostId: string; muxName?: string | null }[] = [];
+    type SavedTab = {
+      hostId: string;
+      muxName?: string | null;
+      projectId?: string | null;
+    };
+    let saved: SavedTab[] = [];
     try {
       saved = JSON.parse(
         localStorage.getItem("tethra.openTabs") ?? "[]",
-      ) as { hostId: string; muxName?: string | null }[];
+      ) as SavedTab[];
     } catch {
       return;
     }
@@ -619,7 +634,14 @@ function Workspace({
     void (async () => {
       for (const entry of saved) {
         try {
-          if (entry.hostId === "local") {
+          if (entry.projectId) {
+            // Project tabs have no per-tab muxName — the project's own
+            // tmux session is the anchor. Relaunch reattaches (`-A`) and
+            // keeps the tab bound to the project (title, agent chrome,
+            // running-session dedupe) instead of opening a bare host shell.
+            const project = projects.find((p) => p.id === entry.projectId);
+            if (project) await openProject(project);
+          } else if (entry.hostId === "local") {
             await openLocal();
           } else {
             const host = hosts.find((h) => h.id === entry.hostId);
@@ -636,7 +658,7 @@ function Workspace({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status.unlocked, hosts]);
+  }, [status.unlocked, hostsLoaded, projectsLoaded]);
 
   function adoptTransfer(transfer: WorkspaceTransfer): void {
     setTabs((current) => {
