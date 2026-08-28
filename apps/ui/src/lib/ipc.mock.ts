@@ -1443,6 +1443,18 @@ export function onVaultStatus(
   });
 }
 
+export type OsFileDropEvent =
+  | { type: "enter" | "over" }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
+/** Browser harness: no OS drags. */
+export async function onOsFileDrop(
+  _handler: (event: OsFileDropEvent) => void,
+): Promise<UnlistenFn> {
+  return () => undefined;
+}
+
 export function onVaultLocked(handler: () => void): Promise<UnlistenFn> {
   vaultLockedListeners.add(handler);
   return Promise.resolve(() => {

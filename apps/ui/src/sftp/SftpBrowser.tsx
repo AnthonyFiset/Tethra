@@ -8,6 +8,7 @@ import {
   localMkdir,
   localRemove,
   localRename,
+  onOsFileDrop,
   sftpRemoteCanonicalize,
   sftpRemoteCreateDirEntry,
   sftpRemoteList,
@@ -189,15 +190,14 @@ export function SftpBrowser({
     let disposed = false;
     void (async () => {
       try {
-        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        const stop = await getCurrentWebview().onDragDropEvent((event) => {
+        const stop = await onOsFileDrop((event) => {
           if (!activeRef.current) return;
-          const kind = event.payload.type;
+          const kind = event.type;
           if (kind === "over" || kind === "enter") {
             setOsDragActive(true);
-          } else if (kind === "drop") {
+          } else if (event.type === "drop") {
             setOsDragActive(false);
-            for (const path of event.payload.paths) {
+            for (const path of event.paths) {
               const name =
                 path.split(/[\\/]/).filter(Boolean).pop() ?? path;
               queue.enqueue({

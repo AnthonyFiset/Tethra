@@ -614,6 +614,28 @@ export function onVaultStatus(
   );
 }
 
+/** OS file drag over/onto the window (Finder → SFTP upload). */
+export type OsFileDropEvent =
+  | { type: "enter" | "over" }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
+/**
+ * Subscribe to native file drags on the current webview. Resolves with the
+ * unlisten fn; the web harness has no OS drags (mock resolves a no-op).
+ */
+export async function onOsFileDrop(
+  handler: (event: OsFileDropEvent) => void,
+): Promise<UnlistenFn> {
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  return getCurrentWebview().onDragDropEvent((event) => {
+    const p = event.payload;
+    if (p.type === "drop") handler({ type: "drop", paths: p.paths });
+    else if (p.type === "enter" || p.type === "over") handler({ type: p.type });
+    else handler({ type: "leave" });
+  });
+}
+
 export function onVaultLocked(handler: () => void): Promise<UnlistenFn> {
   return listen("vault-locked", () => handler());
 }
