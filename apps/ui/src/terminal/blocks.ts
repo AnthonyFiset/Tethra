@@ -5,6 +5,7 @@ import {
   getTerminalGitBranch,
   getTerminalInstance,
   getTuiState,
+  markAgentLaunched,
   resetTuiState,
 } from "./registry";
 import { disposeBlockOverlay, scheduleBlockOverlaySync } from "./blockOverlay";
@@ -147,7 +148,9 @@ export function notifyTuiChange(sessionId: string): void {
  * Signals, any one suffices:
  * - xterm alternate buffer (plain vim/htop without tmux),
  * - the app launched an agent CLI as the session command (project run),
- * - the running command is a known agent CLI (`claude` typed in a shell),
+ * - the running command is a known agent CLI (`claude` typed in a shell)
+ *   or a classic full-screen program (vim, htop, less…) — under tmux with
+ *   the alternate screen disabled those never reach xterm's alt buffer,
  * - DEC 2026 synchronized output or mouse tracking seen since the last
  *   shell prompt.
  *
@@ -161,7 +164,7 @@ export function sessionScreenApp(sessionId: string): boolean {
   const tui = getTuiState(sessionId);
   if (!tui) return false;
   if (tui.agentLaunched || tui.sync || tui.mouse) return true;
-  return sessionRunsAgentCommand(sessionId);
+  return sessionRunsScreenCommand(sessionId);
 }
 
 function markerLine(marker: IMarker | undefined): number | undefined {
@@ -873,8 +876,18 @@ function applyPhase(
       );
 
       const fromInput = Boolean(tracker.open.commandFromInput);
+      // Project launch: the first command end after the launch script's
+      // wipe is the `if … fi` compound finishing — i.e. tmux + the agent
+      // have exited. Not a user block, and the session goes back to the
+      // shell: prompt panel + block chrome return (they used to stay hidden
+      // on a bare `root@host:~#` after `/exit`). Ends before the wipe are
+      // the script's earlier lines; ED3 drops those blocks.
+      const tui = getTuiState(sessionId);
+      const launchScript = Boolean(tui?.agentLaunched && tui.launchWiped);
+      if (launchScript) markAgentLaunched(sessionId, false);
       if (
         !commandText ||
+        launchScript ||
         (!fromInput && !isPlausibleCommandText(commandText))
       ) {
         // Bare Enter — no block, no header.
@@ -978,13 +991,16 @@ export function disposeBlockTracker(sessionId: string): void {
 const AGENT_COMMAND_RE = /^(claude|codex|gemini|agy|opencode|aider)(\s|$)/;
 
 /**
- * True when the session's currently-running command is a known agent CLI.
- * Used to gate BEL-based attention: a shell's tab-completion bell must never
- * raise the "Waiting for you" banner — only a real agent's bell may.
+ * Programs that take the whole screen but emit none of the TUI signals we
+ * can see through tmux (no DEC 2026, no mouse, alt screen swallowed by the
+ * mux). Optional `sudo` prefix and an absolute path are tolerated.
  */
-export function sessionRunsAgentCommand(sessionId: string): boolean {
+const SCREEN_COMMAND_RE =
+  /^(?:sudo\s+(?:-\S+\s+)*)?(?:\S*\/)?(vim?|nvim|vimdiff|nano|pico|emacs|micro|helix|hx|less|more|most|man|htop|btop|top|atop|glances|nmon|iotop|iftop|nethogs|ranger|mc|lazygit|lazydocker|tig|k9s|tmux|screen|zellij|ssh|mosh|watch|journalctl|ncdu|cmus|mutt|neomutt|weechat|irssi|nvtop)(\s|$)/;
+
+function currentCommandText(sessionId: string): string {
   const tracker = trackers.get(sessionId);
-  if (!tracker?.active || !tracker.open.outputStart) return false;
+  if (!tracker?.active || !tracker.open.outputStart) return "";
   let cmd = (tracker.open.commandText ?? "").trim();
   if (!cmd) {
     // The C-time scan can miss (bytes in flight); the chrome snapshot has
@@ -994,7 +1010,22 @@ export function sessionRunsAgentCommand(sessionId: string): boolean {
         ?.blocks.find((b) => b.kind === "active")
         ?.commandText.trim() ?? "";
   }
-  return AGENT_COMMAND_RE.test(cmd);
+  return cmd;
+}
+
+/** Running command is an agent CLI or a classic full-screen program. */
+export function sessionRunsScreenCommand(sessionId: string): boolean {
+  const cmd = currentCommandText(sessionId);
+  return AGENT_COMMAND_RE.test(cmd) || SCREEN_COMMAND_RE.test(cmd);
+}
+
+/**
+ * True when the session's currently-running command is a known agent CLI.
+ * Used to gate BEL-based attention: a shell's tab-completion bell must never
+ * raise the "Waiting for you" banner — only a real agent's bell may.
+ */
+export function sessionRunsAgentCommand(sessionId: string): boolean {
+  return AGENT_COMMAND_RE.test(currentCommandText(sessionId));
 }
 
 /**

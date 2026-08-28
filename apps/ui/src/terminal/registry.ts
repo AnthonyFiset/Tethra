@@ -81,6 +81,13 @@ export interface TuiState {
   mouse: boolean;
   cursorHidden: boolean;
   agentLaunched: boolean;
+  /**
+   * The launch script's screen+scrollback wipe (ED3) has run — the mux is
+   * starting. Bash runs the typed script line by line (`for…done`,
+   * `export PATH`, `if…fi` each get their own OSC 133 C/D), so only a
+   * command end AFTER the wipe means the agent itself has exited.
+   */
+  launchWiped: boolean;
 }
 
 function freshTuiState(): TuiState {
@@ -89,6 +96,7 @@ function freshTuiState(): TuiState {
     mouse: false,
     cursorHidden: false,
     agentLaunched: false,
+    launchWiped: false,
   };
 }
 
@@ -101,7 +109,13 @@ export function getTuiState(sessionId: string): TuiState | undefined {
   return terminals.get(sessionId)?.tui;
 }
 
-/** Shell prompt reported — whatever ran before has given the screen back. */
+/**
+ * Shell prompt reported — whatever ran before has given the screen back.
+ * `agentLaunched` is NOT cleared here: the host shell's first prompt can
+ * land after the launch script was sent (slow SSH shell start), which
+ * would drop the flag while the agent is still running. The launch
+ * compound's OSC 133;D (block tracker `commandEnd`) is the exit signal.
+ */
 export function resetTuiState(sessionId: string): void {
   const record = terminals.get(sessionId);
   if (!record) return;
@@ -118,6 +132,7 @@ export function markAgentLaunched(sessionId: string, on = true): void {
   const record = terminals.get(sessionId);
   if (!record || record.tui.agentLaunched === on) return;
   record.tui.agentLaunched = on;
+  if (!on) record.tui.launchWiped = false;
   tuiChangeListener(sessionId);
 }
 
@@ -159,6 +174,7 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
       lines,
       mirror: readActiveShellInputLine(sessionId),
       blockState: debugBlockState(sessionId),
+      tui: terminals.get(sessionId)?.tui,
       phaseLog: getPhaseLog(),
     };
   };
@@ -379,6 +395,8 @@ export function createTerminal(
       const ps = params.length > 0 ? params[0] : 0;
       if (ps === 3 && terminal.buffer.active.type === "normal") {
         forgetFinishedBlocks(sessionId);
+        const record = terminals.get(sessionId);
+        if (record?.tui.agentLaunched) record.tui.launchWiped = true;
       }
       return false;
     }),

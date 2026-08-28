@@ -190,9 +190,10 @@ const devApi = {
     const candidates = Array.from(
       root.querySelectorAll("button, a, [role='button'], [role='menuitem']"),
     ) as HTMLElement[];
-    const hit = candidates.find((el) =>
-      (el.textContent ?? "").trim().includes(text),
-    );
+    // Exact text first: "VPS NLD" must not resolve to "Test · VPS NLD".
+    const hit =
+      candidates.find((el) => (el.textContent ?? "").trim() === text) ??
+      candidates.find((el) => (el.textContent ?? "").trim().includes(text));
     if (!hit) throw new Error(`no clickable element containing "${text}"`);
     hit.click();
     return true;
