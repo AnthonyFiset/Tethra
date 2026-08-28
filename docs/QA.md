@@ -84,7 +84,14 @@ Mandatory replay assertions (each caught a real shipped bug):
    (nothing forwarded to the shell — typing `/clear` used to run the
    literal path in bash); `/clear` + Enter runs shell clear AND wipes
    local scrollback; Escape/Backspace exit the mode cleanly.
-7. **Retype a previously-run command** (a finished block's exact text):
+7. **TUI / agent apps own the screen**: feed A+B+PS1, the command echo,
+   then C with NO D, then screen-takeover content (cursor home, clear,
+   banner rows, a `> `-style input row, cursor parked mid-screen).
+   Assert ZERO overlay elements (headers, groups, blanks) while running —
+   block chrome floated into Claude Code's UI when the active header
+   anchored to the cursor row. After D + a fresh prompt, chrome returns;
+   a plain running command with an intact PS1 row keeps its header.
+8. **Retype a previously-run command** (a finished block's exact text):
    the chrome on the CURSOR row must be the active header showing a bare
    `❯` — never the typed text, never a finished block's header. (Finished
    blocks text-matching the live row painted the user's in-progress typing

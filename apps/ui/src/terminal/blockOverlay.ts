@@ -222,7 +222,7 @@ function syncBlockOverlay(sessionId: string): void {
   // whole viewport, composing or running — output rows are safe: only
   // user@host / ornament-~ prompt shapes qualify.
   const activeBlock = snapshot.blocks.find((b) => b.kind === "active");
-  if (activeBlock && !snapshot.uncoverLivePrompt) {
+  if (activeBlock && !snapshot.running && !snapshot.uncoverLivePrompt) {
     const from = viewportStart;
     for (let y = from; y <= viewportEnd; y++) {
       if (usedRows.has(y)) continue;
@@ -291,7 +291,7 @@ function pickExclusiveCoverLine(
   // matching it (user retyping a previous command) painted its header over
   // the text being typed — the box appeared to "type into the terminal".
   const cursorAbs = buf.baseY + buf.cursorY;
-  if (cmd) {
+  if (cmd && (isActive || !snapshot.running)) {
     const prefer = block.promptLine;
     const matches = promptRows.filter(
       (r) =>

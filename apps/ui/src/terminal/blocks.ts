@@ -97,6 +97,9 @@ export type BlockChromeSnapshot = {
   onRerun?: (command: string) => void;
   /** Active live prompt should not be covered (mirror fallback). */
   uncoverLivePrompt: boolean;
+  /** A command is executing (OSC 133 C seen, no D) — the app owns the
+   * screen: no blanking, no text-matched covers (TUI rows fake prompts). */
+  running: boolean;
 };
 
 const trackers = new Map<string, BlockTracker>();
@@ -575,14 +578,26 @@ export function getBlockChromeSnapshot(
     const cursorLine = terminal
       ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY
       : undefined;
-    const promptLine = cursorLine ?? promptMarkerLine;
-    const commandLine = cursorLine ?? commandMarkerLine ?? promptLine;
+    const composingNow = !tracker.open.outputStart;
+    // Composing/idle: the live block tracks the CURSOR row (A/B markers
+    // often sit on an earlier empty prompt line — orphan headers).
+    // RUNNING: the cursor lives inside the command's output — a TUI (claude
+    // code, vim) parks it mid-screen and the header floated into the app's
+    // UI. Anchor running blocks to the PROMPT MARKER only; if the app
+    // overwrote that row, the overlay's prompt-shape guard drops the header
+    // (the app owns the screen).
+    const promptLine = composingNow
+      ? (cursorLine ?? promptMarkerLine)
+      : promptMarkerLine;
+    const commandLine = composingNow
+      ? (cursorLine ?? commandMarkerLine ?? promptLine)
+      : (commandMarkerLine ?? promptLine);
     if (promptLine != null && commandLine != null) {
       // Composing (no OSC 133;C yet): the input box is the visible editor —
       // NEVER echo the in-progress typing into a styled header (it showed
       // the command twice: box + fake header). Once running, prefer the
       // command captured at outputStart; fall back to the PS1 row.
-      const composing = !tracker.open.outputStart;
+      const composing = composingNow;
       const liveCmd = composing
         ? ""
         : ((tracker.open.commandText ?? "").trim() ||
@@ -617,6 +632,7 @@ export function getBlockChromeSnapshot(
     context: tracker.context,
     onRerun: tracker.onRerun,
     uncoverLivePrompt: tracker.uncoverLivePrompt,
+    running: Boolean(tracker.active && tracker.open.outputStart),
   };
 }
 
