@@ -291,8 +291,9 @@ export function noteSubmittedCommand(sessionId: string, text: string): void {
   if (!t) return;
   const queue = submittedCommands.get(sessionId) ?? [];
   queue.push({ text: t, at: Date.now() });
-  // Bound the queue — a submission is consumed by the very next 133;C.
-  while (queue.length > 8) queue.shift();
+  // Bound the queue — submissions are consumed by upcoming 133;C marks.
+  // Generous: pasting a multi-line script queues one entry per line.
+  while (queue.length > 32) queue.shift();
   submittedCommands.set(sessionId, queue);
 }
 

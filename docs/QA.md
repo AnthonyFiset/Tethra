@@ -75,7 +75,16 @@ Mandatory replay assertions (each caught a real shipped bug):
    delays) — burst timing is what broke attribution (whole-queue phase
    flush), and short plain commands ("sudo apt update", "npm run build")
    were once discarded by the directory-listing heuristic.
-5. **Retype a previously-run command** (a finished block's exact text):
+5. **Torture replay** (`qa-torture.b64`, from `ubuntu_torture_transcript`):
+   long fast output, ANSI colors/unicode/emoji, 500-char lines, rapid
+   back-to-back Enters, clear mid-stream, big find — preload the 10
+   commands via `__tethraNoteCmd`, feed at full burst, assert all 10
+   finished blocks carry their exact labels in order.
+6. **Slash commands**: with the box empty, typing `/` enters local mode
+   (nothing forwarded to the shell — typing `/clear` used to run the
+   literal path in bash); `/clear` + Enter runs shell clear AND wipes
+   local scrollback; Escape/Backspace exit the mode cleanly.
+7. **Retype a previously-run command** (a finished block's exact text):
    the chrome on the CURSOR row must be the active header showing a bare
    `❯` — never the typed text, never a finished block's header. (Finished
    blocks text-matching the live row painted the user's in-progress typing

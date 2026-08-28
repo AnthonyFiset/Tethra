@@ -11,6 +11,7 @@ import {
   subscribeBlockChanges,
 } from "../terminal/blocks";
 import {
+  clearTerminalViewport,
   focusTerminal,
   getTerminalInstance,
 } from "../terminal/registry";
@@ -112,6 +113,10 @@ export function PromptPanel({
   );
   /** Mirror failed → uncover live PS1; box is caret-only. */
   const [uncover, setUncover] = useState(false);
+  /** Local slash-command being composed ("/clear") — keys NOT forwarded. */
+  const [localCmd, setLocalCmd] = useState<string | null>(null);
+  const localCmdRef = useRef<string | null>(null);
+  const [cmdHint, setCmdHint] = useState<string | null>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const uncoverRef = useRef(false);
   uncoverRef.current = uncover;
@@ -129,6 +134,9 @@ export function PromptPanel({
     pendingBase.current = "";
     setUncover(false);
     uncoverRef.current = false;
+    localCmdRef.current = null;
+    setLocalCmd(null);
+    setCmdHint(null);
     mirrorMisses.current = 0;
     lastForwardWasEdit.current = false;
     setUncoverLivePrompt(sessionId, false);
@@ -245,6 +253,81 @@ export function PromptPanel({
     // uncover/interactive toggle rebind
   }, [sessionId, busyWithApp, uncover]);
 
+  function exitLocalCommand(): void {
+    localCmdRef.current = null;
+    setLocalCmd(null);
+  }
+
+  function runLocalCommand(cmd: string): void {
+    if (cmd === "/clear") {
+      // Shell clear empties the tmux pane (so redraws stay clean); the
+      // viewport clear also wipes local scrollback once the redraw lands.
+      noteSubmittedCommand(sessionId, "clear");
+      void sendTerminalInput(sessionId, encoder.encode("clear\n"), {
+        force: true,
+      });
+      window.setTimeout(() => clearTerminalViewport(sessionId), 350);
+      return;
+    }
+    setCmdHint(`Unknown command: ${cmd}`);
+    window.setTimeout(() => setCmdHint(null), 2500);
+  }
+
+  /**
+   * Slash commands: "/" on an EMPTY line enters local mode — keys stay in
+   * the app (nothing reaches the shell) until Enter runs the command or
+   * Escape/Backspace exits. Typing "/clear" used to send the literal text
+   * to bash ("/clear: No such file or directory").
+   */
+  function handleLocalCommandKey(event: KeyboardEvent): boolean {
+    const current = localCmdRef.current;
+    if (current === null) {
+      if (
+        event.key === "/" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        mirrorRef.current === "" &&
+        pendingRef.current === ""
+      ) {
+        localCmdRef.current = "/";
+        setLocalCmd("/");
+        return true;
+      }
+      return false;
+    }
+    if (event.metaKey || event.ctrlKey) {
+      return false;
+    }
+    if (event.key === "Escape") {
+      exitLocalCommand();
+      return true;
+    }
+    if (event.key === "Backspace") {
+      const next = current.slice(0, -1);
+      if (!next) {
+        exitLocalCommand();
+      } else {
+        localCmdRef.current = next;
+        setLocalCmd(next);
+      }
+      return true;
+    }
+    if (event.key === "Enter") {
+      const cmd = current.trim();
+      exitLocalCommand();
+      runLocalCommand(cmd);
+      return true;
+    }
+    if (event.key.length === 1 && !event.altKey) {
+      localCmdRef.current = current + event.key;
+      setLocalCmd(localCmdRef.current);
+      return true;
+    }
+    // Arrows / Tab etc. are inert while composing a slash command.
+    return true;
+  }
+
   /** Optimistic echo for the box only — the shell's echo reconciles it. */
   function predictKey(event: KeyboardEvent): void {
     if (uncoverRef.current || event.metaKey || event.ctrlKey || event.altKey) {
@@ -335,6 +418,13 @@ export function PromptPanel({
       // Already handled by the textarea's onKeyDown when focused there.
       if (event.target === areaRef.current) return;
 
+      if (handleLocalCommandKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        areaRef.current?.focus({ preventScroll: true });
+        return;
+      }
+
       const bytes = encodeKeyToPty(event);
       if (!bytes) return;
 
@@ -390,7 +480,7 @@ export function PromptPanel({
 
       <textarea
         ref={areaRef}
-        value={uncover ? "" : mirror + pending}
+        value={localCmd ?? (uncover ? "" : mirror + pending)}
         rows={1}
         readOnly={busyWithApp || uncover}
         spellCheck={false}
@@ -404,6 +494,11 @@ export function PromptPanel({
         }}
         onKeyDown={(event) => {
           if (busyWithApp) return;
+          if (handleLocalCommandKey(event.nativeEvent)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           const bytes = encodeKeyToPty(event.nativeEvent);
           if (!bytes) return;
           event.preventDefault();
@@ -429,10 +524,20 @@ export function PromptPanel({
           <span>Live keys → shell · prompt uncovered</span>
         ) : (
           <>
-            <span>Live keys → shell</span>
-            <span>Tab completes</span>
-            <span>⌘F find</span>
-            <span>⌘K commands</span>
+            {localCmd !== null ? (
+              <span className="text-accent">
+                /clear — clear screen &amp; scrollback · Esc cancels
+              </span>
+            ) : cmdHint ? (
+              <span className="text-accent">{cmdHint}</span>
+            ) : (
+              <>
+                <span>Live keys → shell</span>
+                <span>Tab completes</span>
+                <span>⌘F find</span>
+                <span>⌘K commands</span>
+              </>
+            )}
           </>
         )}
         <span className="flex-1" />

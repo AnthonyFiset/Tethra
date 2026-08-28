@@ -512,6 +512,9 @@ if (typeof window !== "undefined") {
       cursor = re.lastIndex;
       const phase = phases[match[1].toUpperCase()];
       if (phase) {
+        const w = window as unknown as Record<string, unknown>;
+        const stats = (w.__tethraFeedStats ??= {}) as Record<string, number>;
+        stats[phase] = (stats[phase] ?? 0) + 1;
         const exit =
           phase === "commandEnd" && match[2]
             ? Number.parseInt(match[2].slice(1), 10)

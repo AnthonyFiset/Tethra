@@ -11,7 +11,11 @@ const VARIANTS: Record<Variant, string> = {
   ghost:
     "bg-transparent text-fg-muted border-transparent hover:bg-hover hover:text-fg",
   subtle: "bg-elevated text-fg border-line hover:bg-hover hover:border-line-strong",
-  danger: "bg-danger text-white border-transparent hover:brightness-110",
+  // Quiet destructive: red text on a normal surface — a solid red fill was
+  // the loudest element on every page it appeared (DESIGN.md: the amber
+  // agent-waiting banner is the ONE emphatic tint).
+  danger:
+    "border-line bg-elevated text-danger hover:border-danger/40 hover:bg-danger/10",
 };
 
 const SIZES: Record<Size, string> = {

@@ -650,6 +650,17 @@ export function writeTerminalMessage(sessionId: string, message: string): void {
   terminals.get(sessionId)?.terminal.write(`\r\n${message}\r\n`);
 }
 
+/** /clear: wipe viewport AND scrollback (shell `clear` keeps scrollback). */
+export function clearTerminalViewport(sessionId: string): void {
+  const record = terminals.get(sessionId);
+  if (!record) return;
+  enqueueTerminalOp(sessionId, () => {
+    record.terminal.clear();
+    scheduleBlockOverlaySync(sessionId);
+    return Promise.resolve();
+  });
+}
+
 export function focusTerminal(sessionId: string): void {
   terminals.get(sessionId)?.terminal.focus();
 }

@@ -651,3 +651,67 @@ async fn ubuntu_apt_full_download_transcript() {
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
         .await;
 }
+
+/// Torture: fast long output, colors/unicode, very wide lines, rapid
+/// back-to-back commands (no waiting between Enters), clear mid-stream,
+/// then more output. Marks must stay balanced 1:1 with commands and the
+/// transcript feeds the UI replay's consistency assertions.
+#[tokio::test]
+#[ignore = "requires Docker openssh-server"]
+async fn ubuntu_torture_transcript() {
+    let env = Env::setup_ubuntu().await;
+    let name = unique("torture");
+    let mut pty = Pty::open(&env, Some(&name)).await;
+    pty.wait_for(OSC_PROMPT_MARK, Duration::from_secs(30)).await;
+    pty.settle(Duration::from_millis(700)).await;
+
+    pty.send("seq 1 300\n").await;
+    pty.wait_for("\r\n300", Duration::from_secs(20)).await;
+    pty.settle(Duration::from_millis(400)).await;
+
+    pty.send("printf '\\033[31mred\\033[32mgreen\\033[34mblue\\033[0m unicode ✓ 漢字 🚀\\n'\n")
+        .await;
+    pty.wait_for("🚀", Duration::from_secs(10)).await;
+    pty.settle(Duration::from_millis(300)).await;
+
+    pty.send("ls --color=always /usr/bin | head -40\n").await;
+    pty.settle(Duration::from_secs(2)).await;
+
+    pty.send("printf 'y%.0s' $(seq 1 500); echo END-WIDE\n").await;
+    pty.wait_for("END-WIDE", Duration::from_secs(10)).await;
+    pty.settle(Duration::from_millis(300)).await;
+
+    // Rapid burst — three Enters with no waiting at all.
+    pty.send("echo rapid-1\n").await;
+    pty.send("echo rapid-2\n").await;
+    pty.send("echo rapid-3\n").await;
+    pty.wait_for("rapid-3", Duration::from_secs(10)).await;
+    pty.settle(Duration::from_millis(500)).await;
+
+    pty.send("clear\n").await;
+    pty.settle(Duration::from_secs(1)).await;
+
+    pty.send("find /usr/lib -name '*.so*' | head -200\n").await;
+    pty.settle(Duration::from_secs(3)).await;
+
+    pty.send("echo done-$((90+9))\n").await;
+    pty.wait_for("done-99", Duration::from_secs(10)).await;
+    pty.settle(Duration::from_secs(1)).await;
+
+    let seq: String = mark_sequence(&pty.all).into_iter().collect();
+    println!("torture mark sequence: {seq}");
+    let c = seq.matches('C').count();
+    let d = seq.matches('D').count();
+    assert_eq!(c, d, "unbalanced marks ({c} C vs {d} D): {seq}");
+    assert_eq!(c, 10, "expected 10 commands, marks say {c}: {seq}");
+    assert!(!pty.all.contains(ALT_SCREEN_ENTER), "alt screen entered");
+
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/qa-transcripts");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(dir.join("ubuntu-torture.bin"), &pty.raw).expect("write");
+    println!("saved {} bytes to target/qa-transcripts/ubuntu-torture.bin", pty.raw.len());
+
+    pty.close().await;
+    env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
+        .await;
+}
