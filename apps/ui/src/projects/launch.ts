@@ -112,11 +112,19 @@ export function projectLaunchScript(options: {
       ]
     : [];
 
+  // The script is TYPED into the shell, so every line above echoes with a
+  // PS1/PS2 in front of it. Wipe screen + scrollback right before the mux
+  // takes over — inside each branch, because the shell reads and echoes
+  // the whole compound before running any of it. Without this the echoed
+  // heredoc sat in scrollback under the agent's inline redraw and the
+  // block parser turned `done` / `export PATH` / `fi` into blocks.
+  const wipe = `  ${WIPE_SCREEN}`;
   return [
     ...byokPreamble,
     ...pathBootstrap,
     ...ensureRemote,
     `if command -v tmux >/dev/null 2>&1; then`,
+    wipe,
     `  _tethra_tmux_conf=$(mktemp "\${TMPDIR:-/tmp}/tethra-tmux.XXXXXX") || exit 1`,
     `  cat > "\$_tethra_tmux_conf" <<'TETHRA_TMUX_EOF'`,
     confHeredoc,
@@ -124,14 +132,24 @@ export function projectLaunchScript(options: {
     `  tmux -L ${socketQ} -f "\$_tethra_tmux_conf" new-session -A -s ${sessionQ} -c ${pathQ} -- ${inner}`,
     `  rm -f "\$_tethra_tmux_conf"`,
     `elif command -v zellij >/dev/null 2>&1; then`,
+    wipe,
     `  cd ${pathQ} && zellij attach -c ${sessionQ} -- ${inner}`,
     `else`,
+    wipe,
     `  echo "tethra: no tmux/zellij — session will not persist across disconnects" >&2`,
     `  cd ${pathQ} && ${inner}`,
     `fi`,
     "",
   ].join("\n");
 }
+
+/**
+ * ED2 (push viewport to scrollback, as `clear` does) → ED3 (drop that
+ * scrollback) → cursor home. Order matters: ED3 first would be undone by
+ * the ED2 push. Plain bytes outside any sync block, so the renderer's
+ * sync filter passes them through untouched.
+ */
+export const WIPE_SCREEN = "printf '\\033[2J\\033[3J\\033[H'";
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {

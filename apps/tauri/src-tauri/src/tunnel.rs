@@ -215,11 +215,7 @@ pub async fn auto_start_for_session(
 }
 
 /// Fire-and-forget entry used from `open_terminal` so tunnels never delay first paint.
-pub async fn auto_start_for_session_spawned(
-    app: AppHandle,
-    session_id: Uuid,
-    host_id: Uuid,
-) {
+pub async fn auto_start_for_session_spawned(app: AppHandle, session_id: Uuid, host_id: Uuid) {
     let state = app.state::<AppState>();
     auto_start_for_session(&app, &*state, session_id, host_id).await;
 }

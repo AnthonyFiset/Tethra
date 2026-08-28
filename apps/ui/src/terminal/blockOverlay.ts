@@ -2,7 +2,7 @@ import type { Terminal } from "@xterm/xterm";
 import { writeClipboardText } from "../lib/ipc";
 import { armShellInjectGate } from "./inject";
 import type { BlockChromeSnapshot, BlockChromeEntry } from "./blocks";
-import { getBlockChromeSnapshot } from "./blocks";
+import { getBlockChromeSnapshot, sessionScreenApp } from "./blocks";
 import {
   BLOCK_COLORS,
   formatBlockTime,
@@ -34,9 +34,15 @@ export function setBlockOverlayHost(
   if (!root || !terminal) return;
 
   const disposables: { dispose(): void }[] = [];
-  disposables.push(terminal.onScroll(() => scheduleBlockOverlaySync(sessionId)));
-  disposables.push(terminal.onResize(() => scheduleBlockOverlaySync(sessionId)));
-  disposables.push(terminal.onRender(() => scheduleBlockOverlaySync(sessionId)));
+  disposables.push(
+    terminal.onScroll(() => scheduleBlockOverlaySync(sessionId)),
+  );
+  disposables.push(
+    terminal.onResize(() => scheduleBlockOverlaySync(sessionId)),
+  );
+  disposables.push(
+    terminal.onRender(() => scheduleBlockOverlaySync(sessionId)),
+  );
   disposables.push(
     terminal.buffer.onBufferChange(() => scheduleBlockOverlaySync(sessionId)),
   );
@@ -84,7 +90,9 @@ function measureCellHeight(terminal: Terminal): number {
   const core = (
     terminal as unknown as {
       _core?: {
-        _renderService?: { dimensions?: { css?: { cell?: { height?: number } } } };
+        _renderService?: {
+          dimensions?: { css?: { cell?: { height?: number } } };
+        };
       };
     }
   )._core;
@@ -124,8 +132,7 @@ function lineRect(
     const rowRect = row.getBoundingClientRect();
     if (rowRect.height > 0) {
       // Use the row's top for alignment, but never its height if it's > 2 cells.
-      const safeH =
-        rowRect.height <= height * 2 ? rowRect.height : height;
+      const safeH = rowRect.height <= height * 2 ? rowRect.height : height;
       return {
         top: rowRect.top - rootRect.top,
         height: safeH,
@@ -183,8 +190,9 @@ function syncBlockOverlay(sessionId: string): void {
   const { root, terminal } = host;
   root.replaceChildren();
 
-  // Alt-screen / TUI: hide block chrome — keys go to the app.
-  if (terminal.buffer.active.type === "alternate") return;
+  // Alt-screen / TUI (Claude Code, Codex, vim…): the app owns every cell.
+  // No headers, no covers, no blanking — chrome floated into its UI.
+  if (sessionScreenApp(sessionId)) return;
 
   const buf = terminal.buffer.active;
   const viewportStart = buf.viewportY;
@@ -299,19 +307,13 @@ function pickExclusiveCoverLine(
         (isActive || r.y !== cursorAbs) &&
         (r.cmd === cmd || r.cmd.startsWith(`${cmd} `)),
     );
-    matches.sort(
-      (a, b) => Math.abs(a.y - prefer) - Math.abs(b.y - prefer),
-    );
+    matches.sort((a, b) => Math.abs(a.y - prefer) - Math.abs(b.y - prefer));
     if (matches[0]) return tryTake(matches[0].y);
   }
 
   // 2) Active idle: cover the cursor/marker row.
   if (isActive && !cmd) {
-    return (
-      tryTake(block.commandLine) ??
-      tryTake(block.promptLine) ??
-      null
-    );
+    return tryTake(block.commandLine) ?? tryTake(block.promptLine) ?? null;
   }
 
   // 3) Active with command but theme strip failed — cover marker if unused
@@ -346,11 +348,7 @@ function pickExclusiveCoverLine(
   return null;
 }
 
-function applyHorizontal(
-  el: HTMLElement,
-  left: number,
-  width: number,
-): void {
+function applyHorizontal(el: HTMLElement, left: number, width: number): void {
   el.style.left = `${left}px`;
   el.style.width = `${width}px`;
   el.style.right = "auto";
@@ -547,9 +545,7 @@ function buildHeader(block: BlockChromeEntry, isActive: boolean): HTMLElement {
   } else if (block.exitCode != null && block.exitCode !== 0) {
     metaBits.push(`exit ${block.exitCode}`);
     if (block.meta.endedAt && block.meta.startedAt) {
-      metaBits.push(
-        formatDuration(block.meta.endedAt - block.meta.startedAt),
-      );
+      metaBits.push(formatDuration(block.meta.endedAt - block.meta.startedAt));
     }
     if (block.meta.endedAt) metaBits.push(formatBlockTime(block.meta.endedAt));
   } else if (block.meta.endedAt && block.meta.startedAt) {
@@ -642,7 +638,11 @@ function buildActionCluster(
     ? "tethra-block-actions-cluster is-active"
     : "tethra-block-actions-cluster";
 
-  function iconBtn(label: string, glyph: string, run: () => void): HTMLButtonElement {
+  function iconBtn(
+    label: string,
+    glyph: string,
+    run: () => void,
+  ): HTMLButtonElement {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "tethra-block-action-btn";

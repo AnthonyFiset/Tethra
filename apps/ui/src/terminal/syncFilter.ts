@@ -2,10 +2,18 @@
  * Filter PTY bytes for agent TUI scroll-jump (M12.2).
  *
  * Claude Code / Codex / Copilot redraw with DEC 2026 sync blocks that contain
- * ED2 (`CSI 2 J`) / ED3 (`CSI 3 J`). xterm.js resets viewportY on those erases
- * even inside a sync block (xtermjs/xterm.js#5801). Native terminals feel fine;
- * we strip only those clears while a sync block is open. `clear`, vim, htop are
- * unaffected — they don't use mode 2026.
+ * ED2 (`CSI 2 J`) / ED3 (`CSI 3 J`). With `scrollOnEraseInDisplay` xterm.js
+ * pushes the erased screen into scrollback and yanks viewportY on every
+ * frame (xtermjs/xterm.js#5801). Native terminals feel fine.
+ *
+ * Inside a sync block ED2 is REWRITTEN — not dropped — as "home + erase
+ * below" wrapped in DECSC/DECRC, which clears the same cells without the
+ * scrollback push. Dropping it (the previous behaviour) left every stale
+ * row on screen and the next frame painted over them: Claude Code through
+ * tmux (inline, no alt screen) rendered its logo and rules across leftover
+ * shell text — "warped, lines everywhere". ED3 (wipe scrollback) inside a
+ * sync block is still dropped. `clear`, vim, htop are unaffected — they
+ * don't use mode 2026.
  *
  * Stateful across chunks (CSI may split on flush boundaries).
  */
@@ -22,11 +30,7 @@ export class SyncClearFilter {
    * Transform a chunk. Returns bytes safe to feed xterm (may be shorter).
    */
   push(input: Uint8Array): Uint8Array {
-    if (
-      !this.inSync &&
-      this.state === "ground" &&
-      !containsEsc(input)
-    ) {
+    if (!this.inSync && this.state === "ground" && !containsEsc(input)) {
       return input;
     }
 
@@ -115,9 +119,18 @@ export class SyncClearFilter {
 
     // ED: CSI Ps J — Ps defaults to 0
     if (final === "J" && !params.includes("?")) {
-      const ps = params === "" ? "0" : params.split(";")[0] ?? "0";
-      if (this.inSync && (ps === "2" || ps === "3")) {
-        // Drop ED2/ED3 inside sync blocks — this is the scroll yank.
+      const ps = params === "" ? "0" : (params.split(";")[0] ?? "0");
+      if (this.inSync && ps === "3") {
+        // Drop ED3 inside sync blocks — wiping scrollback mid-frame.
+        return;
+      }
+      if (this.inSync && ps === "2") {
+        // ED2 → DECSC, CUP 1;1, ED0, DECRC: clears the whole screen with no
+        // scrollback push (the scroll yank) and the cursor stays put.
+        out.push(0x1b, 0x37); // ESC 7
+        emitCsi("1;1", "H", out);
+        emitCsi("", "J", out);
+        out.push(0x1b, 0x38); // ESC 8
         return;
       }
     }

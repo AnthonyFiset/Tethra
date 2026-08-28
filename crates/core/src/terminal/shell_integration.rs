@@ -371,14 +371,14 @@ mod tests {
         assert!(BASH_INTEGRATION.contains("133;A"));
         assert!(BASH_INTEGRATION.contains("133;D"));
         assert!(ZSH_INTEGRATION.contains("133;C"));
-    // OSC 7 cwd now goes through the tmux-passthrough emitter.
-    assert!(ZSH_INTEGRATION.contains("7;file://"));
-    assert!(BASH_INTEGRATION.contains("133;G;"));
-    assert!(ZSH_INTEGRATION.contains("133;G;"));
-    // Marks must survive tmux (passthrough envelope + emitter).
-    assert!(BASH_INTEGRATION.contains("Ptmux;"));
-    assert!(ZSH_INTEGRATION.contains("Ptmux;"));
-  }
+        // OSC 7 cwd now goes through the tmux-passthrough emitter.
+        assert!(ZSH_INTEGRATION.contains("7;file://"));
+        assert!(BASH_INTEGRATION.contains("133;G;"));
+        assert!(ZSH_INTEGRATION.contains("133;G;"));
+        // Marks must survive tmux (passthrough envelope + emitter).
+        assert!(BASH_INTEGRATION.contains("Ptmux;"));
+        assert!(ZSH_INTEGRATION.contains("Ptmux;"));
+    }
 
     #[test]
     fn persistent_wrapper_is_invisible_and_versioned() {

@@ -429,10 +429,7 @@ impl SessionManager {
     pub async fn drain_pool(&self, host_id: Option<Uuid>) {
         let mut guard = self.pool.lock().await;
         let drain: Vec<(Uuid, Vec<Arc<Handle<ClientHandler>>>)> = if let Some(id) = host_id {
-            guard
-                .remove(&id)
-                .map(|v| vec![(id, v)])
-                .unwrap_or_default()
+            guard.remove(&id).map(|v| vec![(id, v)]).unwrap_or_default()
         } else {
             guard.drain().collect()
         };

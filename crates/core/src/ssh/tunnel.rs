@@ -250,8 +250,7 @@ impl TunnelOpener {
                     .success()
             }
             AuthMaterial::DefaultKeys => {
-                super::session::authenticate_with_default_keys(&mut session, &host.username)
-                    .await?
+                super::session::authenticate_with_default_keys(&mut session, &host.username).await?
             }
         };
 

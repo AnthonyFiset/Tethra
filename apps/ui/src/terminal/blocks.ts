@@ -4,11 +4,10 @@ import {
   getTerminalCwd,
   getTerminalGitBranch,
   getTerminalInstance,
+  getTuiState,
+  resetTuiState,
 } from "./registry";
-import {
-  disposeBlockOverlay,
-  scheduleBlockOverlaySync,
-} from "./blockOverlay";
+import { disposeBlockOverlay, scheduleBlockOverlaySync } from "./blockOverlay";
 
 interface BlockMeta {
   cwd?: string;
@@ -133,6 +132,36 @@ function notify(sessionId: string): void {
 function syncChrome(sessionId: string): void {
   scheduleBlockOverlaySync(sessionId);
   notify(sessionId);
+}
+
+/** TUI signals (DEC 2026, mouse, cursor) change what the session shows. */
+export function notifyTuiChange(sessionId: string): void {
+  syncChrome(sessionId);
+}
+
+/**
+ * True while a full-screen program owns the session: Claude Code, Codex,
+ * vim, htop… Block chrome must not paint and the prompt panel must get out
+ * of the way — the terminal is the app's whole UI.
+ *
+ * Signals, any one suffices:
+ * - xterm alternate buffer (plain vim/htop without tmux),
+ * - the app launched an agent CLI as the session command (project run),
+ * - the running command is a known agent CLI (`claude` typed in a shell),
+ * - DEC 2026 synchronized output or mouse tracking seen since the last
+ *   shell prompt.
+ *
+ * Deliberately NOT a signal: cursor hidden (`?25l`). npm/cargo/pip hide it
+ * for progress bars, and toggling the prompt panel on every build would be
+ * a layout jump on ordinary commands.
+ */
+export function sessionScreenApp(sessionId: string): boolean {
+  const terminal = getTerminalInstance(sessionId);
+  if (terminal?.buffer.active.type === "alternate") return true;
+  const tui = getTuiState(sessionId);
+  if (!tui) return false;
+  if (tui.agentLaunched || tui.sync || tui.mouse) return true;
+  return sessionRunsAgentCommand(sessionId);
 }
 
 function markerLine(marker: IMarker | undefined): number | undefined {
@@ -268,7 +297,8 @@ function extractCommandLine(
 ): string {
   const lineNo = markerLine(command) ?? markerLine(prompt);
   if (lineNo == null) return "";
-  const raw = terminal.buffer.active.getLine(lineNo)?.translateToString(true) ?? "";
+  const raw =
+    terminal.buffer.active.getLine(lineNo)?.translateToString(true) ?? "";
   // Defense: markers that drifted onto output rows have no PS1.
   if (!lineHasPs1(raw)) return "";
   const stripped = stripPs1(raw).trim();
@@ -287,7 +317,10 @@ function extractCommandLine(
  * buffer scanning at C-time raced tmux redraws and misattributed blocks
  * (every apt block labeled "ls -a" in the field).
  */
-const submittedCommands = new Map<string, Array<{ text: string; at: number }>>();
+const submittedCommands = new Map<
+  string,
+  Array<{ text: string; at: number }>
+>();
 
 export function noteSubmittedCommand(sessionId: string, text: string): void {
   const t = text.trim();
@@ -363,7 +396,10 @@ function findCommandAboveCursor(
   return null;
 }
 
-function markerAtLine(terminal: Terminal, absLine: number): IMarker | undefined {
+function markerAtLine(
+  terminal: Terminal,
+  absLine: number,
+): IMarker | undefined {
   const cursor = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
   const offset = absLine - cursor;
   // Long-output commands (apt) put their PS1 row far above the cursor.
@@ -556,8 +592,7 @@ export function getBlockChromeSnapshot(
 
     blocks.push({
       id: block.id,
-      kind:
-        block.exitCode !== null && block.exitCode !== 0 ? "failed" : "ok",
+      kind: block.exitCode !== null && block.exitCode !== 0 ? "failed" : "ok",
       promptLine,
       commandLine: Math.max(promptLine, commandLine ?? promptLine),
       endLine,
@@ -600,7 +635,7 @@ export function getBlockChromeSnapshot(
       const composing = composingNow;
       const liveCmd = composing
         ? ""
-        : ((tracker.open.commandText ?? "").trim() ||
+        : (tracker.open.commandText ?? "").trim() ||
           (terminal
             ? (() => {
                 const raw =
@@ -610,7 +645,7 @@ export function getBlockChromeSnapshot(
                 const stripped = stripPs1(raw).trim();
                 return isPlausibleCommandText(stripped) ? stripped : "";
               })()
-            : ""));
+            : "");
       blocks.push({
         id: "active",
         kind: "active",
@@ -644,10 +679,7 @@ export function queueBlockPhase(
   ensure(sessionId).pending.push({ phase, exitCode });
 }
 
-export function flushBlockPhases(
-  sessionId: string,
-  terminal: Terminal,
-): void {
+export function flushBlockPhases(sessionId: string, terminal: Terminal): void {
   const tracker = trackers.get(sessionId);
   if (!tracker || tracker.pending.length === 0) return;
   // Exactly ONE phase per flush op. Each op is enqueued right after the
@@ -677,6 +709,8 @@ function applyPhase(
 ): void {
   switch (phase) {
     case "promptStart": {
+      // A new shell prompt: whatever full-screen app ran has exited.
+      resetTuiState(sessionId);
       // Always mark the cursor row. The old "empty line → offset -1" heuristic
       // landed on the previous output row, so the real PS1 stayed uncovered.
       const marker = terminal.registerMarker(0);
@@ -768,6 +802,7 @@ function applyPhase(
       break;
     }
     case "commandEnd": {
+      resetTuiState(sessionId);
       const end = terminal.registerMarker(0);
       if (!end) return;
       let command = tracker.open.commandStart ?? end;
@@ -924,8 +959,7 @@ export function disposeBlockTracker(sessionId: string): void {
 }
 
 /** Agent CLIs whose bells legitimately mean "the agent needs you". */
-const AGENT_COMMAND_RE =
-  /^(claude|codex|gemini|agy|opencode|aider)(\s|$)/;
+const AGENT_COMMAND_RE = /^(claude|codex|gemini|agy|opencode|aider)(\s|$)/;
 
 /**
  * True when the session's currently-running command is a known agent CLI.
@@ -934,8 +968,16 @@ const AGENT_COMMAND_RE =
  */
 export function sessionRunsAgentCommand(sessionId: string): boolean {
   const tracker = trackers.get(sessionId);
-  if (!tracker?.active) return false;
-  const cmd = (tracker.open.commandText ?? "").trim();
+  if (!tracker?.active || !tracker.open.outputStart) return false;
+  let cmd = (tracker.open.commandText ?? "").trim();
+  if (!cmd) {
+    // The C-time scan can miss (bytes in flight); the chrome snapshot has
+    // the same PS1-row fallback the header uses.
+    cmd =
+      getBlockChromeSnapshot(sessionId)
+        ?.blocks.find((b) => b.kind === "active")
+        ?.commandText.trim() ?? "";
+  }
   return AGENT_COMMAND_RE.test(cmd);
 }
 

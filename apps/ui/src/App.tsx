@@ -113,6 +113,7 @@ import { agentDisplayName, resolveAgentForLaunch } from "./projects/agents";
 import { projectLaunchScript, sleep } from "./projects/launch";
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
+  markAgentLaunched,
   clearTerminal,
   copyTerminalSelection,
   createTerminal,
@@ -1660,6 +1661,9 @@ function Workspace({
           force: true,
         });
       }
+      // The agent CLI is the session's command — no shell, no OSC 133 ever.
+      // Tell the terminal layer so chrome + prompt panel stand down now.
+      if (agent) markAgentLaunched(sessionId);
       if (byok?.keyLabel) {
         setAgentNotice(
           (migratedFrom

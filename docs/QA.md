@@ -23,6 +23,50 @@ bash login shell — an Ubuntu-VPS stand-in) and runs:
     locally; observed ~1ms — catches pipeline stalls)
 - `crates/core/tests/ssh_integration.rs` (exec, pty, sftp, host keys)
 
+## 1a. Real Mac app drive (WKWebView + tmux + PTY truth) — REQUIRED for TUI/agent work
+
+The mock harness fakes IPC. It cannot show WKWebView paint, tmux inline
+redraws, the typed launch script echo, or the prompt panel's real focus
+routing — Claude Code "warped, lines everywhere" shipped through it. Every
+change touching agent sessions, TUI handling, the prompt panel, or block
+chrome is verified in the REAL app before it is called done:
+
+```bash
+# terminal 1 — the app (dev build; the UI bridge is compiled in only for DEV)
+cd apps/tauri/src-tauri && npx --prefix ../../ui tauri dev
+# terminal 2 — the driver (keep it running)
+node scripts/app-drive.mjs serve
+# then, from anywhere:
+node scripts/app-drive.mjs status                      # app connected?
+node scripts/app-drive.mjs eval 'return dev.sessions()'
+node scripts/app-drive.mjs snapshot <sessionId> 80     # viewport + 80 scrollback rows,
+                                                       #   overlay DOM, block state
+node scripts/app-drive.mjs eval 'dev.clickText("Local terminal"); await new Promise(r=>setTimeout(r,2000)); dev.type("claude"); dev.key("Enter"); return dev.layout()'
+node scripts/app-drive.mjs shot out.png                # window pixels (needs Screen Recording
+                                                       #   permission for the terminal app)
+node scripts/app-drive.mjs keys 'text'                 # native keystrokes (Accessibility)
+```
+
+`dev` inside `eval` (see `apps/ui/src/dev/bridge.ts`): `sessions()`,
+`snapshot(id, {scrollback})`, `screenApp(id)`, `blocks(id)`, `chrome(id)`,
+`layout()`, `key(k)` / `type(text)` (dispatched to the focused element with
+keyCode, so xterm and the prompt panel both accept them), `click(sel)`,
+`clickText(text)`, `console()`.
+
+Mandatory real-app assertions for full-screen apps (each caught a shipped bug):
+1. **Launch `claude` in a local shell**: after the first frame `screenApp` is
+   true, `layout().promptPanel` is null (panel hidden), `snapshot().overlay`
+   is empty, and the viewport holds ONLY the app's frame — no PS1 row, no
+   previous output bleeding through (`syncFilter` ED2 rewrite).
+2. **Project launch on a remote host**: the scrollback must NOT contain the
+   typed launch script (`for _p in …`, `set -g status off`, `TETHRA_TMUX_EOF`)
+   — `launch.ts` wipes screen + scrollback before the mux starts. Block
+   state must not list `done` / `export PATH` / `fi` blocks.
+3. **Exit the app** (`/exit`, Ctrl+C): the next shell prompt brings the
+   prompt panel and block chrome back; `screenApp` false.
+4. Vault stays locked → the driver can only reach the lock screen. Never
+   use "Recover with keyring" from automation: it sets a NEW master password.
+
 ## 1b. Real-stream UI replay (renderer truth)
 
 The Ubuntu QA test (`ubuntu_apt_update_clear_then_typing_works`) saves the

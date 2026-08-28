@@ -1,6 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { HostSummaryDto } from "../lib/ipc";
-import { setBlockSessionContext } from "../terminal/blocks";
+import {
+  sessionScreenApp,
+  setBlockSessionContext,
+  subscribeBlockChanges,
+} from "../terminal/blocks";
+import { focusTerminal } from "../terminal/registry";
 import { PromptPanel } from "./PromptPanel";
 import { TerminalView } from "../terminal/TerminalView";
 
@@ -62,6 +67,20 @@ export function SessionView({
   }
   if (host) metaParts.push(host.hostname);
 
+  // Full-screen app (Claude Code, Codex, vim…) owns the session: drop the
+  // prompt panel entirely so the terminal gets the rows and keys go straight
+  // to xterm. The panel returns on the next shell prompt.
+  const [screenApp, setScreenApp] = useState(() => sessionScreenApp(sessionId));
+  useEffect(() => {
+    setScreenApp(sessionScreenApp(sessionId));
+    return subscribeBlockChanges(sessionId, () => {
+      setScreenApp(sessionScreenApp(sessionId));
+    });
+  }, [sessionId]);
+  useEffect(() => {
+    if (screenApp && active && (visible ?? true)) focusTerminal(sessionId);
+  }, [screenApp, active, visible, sessionId]);
+
   useEffect(() => {
     setBlockSessionContext(sessionId, {
       waiting,
@@ -106,13 +125,15 @@ export function SessionView({
           </div>
         ) : null}
       </div>
-      <PromptPanel
-        sessionId={sessionId}
-        active={active && connected && (visible ?? true)}
-        cwd={cwd}
-        gitBranch={gitBranch}
-        meta={metaParts.length > 0 ? metaParts.join(" · ") : undefined}
-      />
+      {screenApp ? null : (
+        <PromptPanel
+          sessionId={sessionId}
+          active={active && connected && (visible ?? true)}
+          cwd={cwd}
+          gitBranch={gitBranch}
+          meta={metaParts.length > 0 ? metaParts.join(" · ") : undefined}
+        />
+      )}
     </div>
   );
 }

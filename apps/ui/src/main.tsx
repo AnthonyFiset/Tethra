@@ -8,9 +8,12 @@ import { applyChromeDataset } from "./lib/chrome";
 import { activateWindowChrome } from "./lib/ipc";
 import { applyWindowMaterial } from "./lib/materials";
 import "./styles.css";
+import { startDevBridge } from "./dev/bridge";
 
 // Set before first paint so CSS clearance/fonts apply immediately.
 applyChromeDataset();
+// Dev-only: automation bridge for scripts/app-drive.mjs (real-app QA).
+startDevBridge();
 
 const root = document.getElementById("root");
 

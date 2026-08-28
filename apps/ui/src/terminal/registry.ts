@@ -26,6 +26,7 @@ import {
   flushBlockPhases,
   readActiveShellInputLine,
   refreshActiveBlock,
+  notifyTuiChange,
 } from "./blocks";
 import { scheduleBlockOverlaySync } from "./blockOverlay";
 import {
@@ -56,7 +57,78 @@ interface TerminalRecord {
   gitBranch?: string;
   /** Strips ED2/ED3 inside DEC 2026 sync blocks (agent TUI scroll-jump). */
   syncFilter: SyncClearFilter;
+  /** Full-screen-app signals parsed from the output stream. */
+  tui: TuiState;
   disposables: { dispose(): void }[];
+}
+
+/**
+ * Signals that a full-screen program owns the session. None of them are
+ * produced by a shell prompt; all are reset when the shell reports a new
+ * prompt (OSC 133 A/D) so a finished TUI hands the screen back.
+ *
+ * - `sync`: DEC 2026 synchronized output (Claude Code flicker-free, Codex,
+ *   ratatui apps). tmux passes it through even with the alt screen disabled.
+ * - `mouse`: any xterm mouse-tracking mode (1000–1006).
+ * - `cursorHidden`: DECTCEM off. Tracked for diagnostics only — build
+ *   tools hide the cursor for progress bars, so it is not a TUI signal.
+ * - `agentLaunched`: the app itself started an agent CLI as the session's
+ *   command (project launch) — there is no shell and never an OSC 133 mark.
+ */
+export interface TuiState {
+  sync: boolean;
+  mouse: boolean;
+  cursorHidden: boolean;
+  agentLaunched: boolean;
+}
+
+function freshTuiState(): TuiState {
+  return {
+    sync: false,
+    mouse: false,
+    cursorHidden: false,
+    agentLaunched: false,
+  };
+}
+
+/** Call-time import (registry ↔ blocks are circular; no init-time use). */
+function tuiChangeListener(sessionId: string): void {
+  notifyTuiChange(sessionId);
+}
+
+export function getTuiState(sessionId: string): TuiState | undefined {
+  return terminals.get(sessionId)?.tui;
+}
+
+/** Shell prompt reported — whatever ran before has given the screen back. */
+export function resetTuiState(sessionId: string): void {
+  const record = terminals.get(sessionId);
+  if (!record) return;
+  const t = record.tui;
+  if (!t.sync && !t.mouse && !t.cursorHidden) return;
+  t.sync = false;
+  t.mouse = false;
+  t.cursorHidden = false;
+  tuiChangeListener(sessionId);
+}
+
+/** Project launch started an agent CLI directly (no shell in the session). */
+export function markAgentLaunched(sessionId: string, on = true): void {
+  const record = terminals.get(sessionId);
+  if (!record || record.tui.agentLaunched === on) return;
+  record.tui.agentLaunched = on;
+  tuiChangeListener(sessionId);
+}
+
+const MOUSE_MODES = new Set([1000, 1001, 1002, 1003, 1005, 1006, 1015]);
+
+function flattenModes(params: (number | number[])[]): number[] {
+  const out: number[] = [];
+  for (const p of params) {
+    if (Array.isArray(p)) out.push(...p);
+    else out.push(p);
+  }
+  return out;
 }
 
 const terminals = new Map<string, TerminalRecord>();
@@ -256,6 +328,49 @@ export function createTerminal(
     }),
   );
 
+  // DECSET / DECRST: full-screen-app signals. Handlers return false so
+  // xterm still applies the mode itself.
+  const onDecMode = (set: boolean) => (params: (number | number[])[]) => {
+    const record = terminals.get(sessionId);
+    if (!record) return false;
+    const t = record.tui;
+    let changed = false;
+    for (const mode of flattenModes(params)) {
+      if (mode === 2026) {
+        // Begin OR end of a synchronized frame — either proves a TUI.
+        if (!t.sync) {
+          t.sync = true;
+          changed = true;
+        }
+      } else if (MOUSE_MODES.has(mode)) {
+        if (t.mouse !== set) {
+          t.mouse = set;
+          changed = true;
+        }
+      } else if (mode === 25) {
+        const hidden = !set;
+        if (t.cursorHidden !== hidden) {
+          t.cursorHidden = hidden;
+          changed = true;
+        }
+      }
+    }
+    if (changed) tuiChangeListener(sessionId);
+    return false;
+  };
+  disposables.push(
+    terminal.parser.registerCsiHandler(
+      { prefix: "?", final: "h" },
+      onDecMode(true),
+    ),
+  );
+  disposables.push(
+    terminal.parser.registerCsiHandler(
+      { prefix: "?", final: "l" },
+      onDecMode(false),
+    ),
+  );
+
   terminal.onData((data) => {
     // Full suppress during UI inject (tools Insert, Assist, block Rerun…).
     if (inputIsSuppressed(sessionId)) return;
@@ -298,6 +413,7 @@ export function createTerminal(
     clipboard,
     unicode11,
     syncFilter: new SyncClearFilter(),
+    tui: freshTuiState(),
     disposables,
   };
   terminals.set(sessionId, record);
@@ -413,10 +529,7 @@ export function fitTerminal(sessionId: string): void {
  * (raw PS1 leaks, ls-output mistaken for commandText). */
 const terminalOpTail = new Map<string, Promise<void>>();
 
-function enqueueTerminalOp(
-  sessionId: string,
-  op: () => Promise<void>,
-): void {
+function enqueueTerminalOp(sessionId: string, op: () => Promise<void>): void {
   const prev = terminalOpTail.get(sessionId) ?? Promise.resolve();
   const next = prev.then(op, op);
   terminalOpTail.set(sessionId, next);
@@ -703,7 +816,9 @@ export function getTerminalSelectionForCopy(sessionId: string): string {
   return lastSelections.get(sessionId) ?? "";
 }
 
-export async function copyTerminalSelection(sessionId: string): Promise<boolean> {
+export async function copyTerminalSelection(
+  sessionId: string,
+): Promise<boolean> {
   const text = getTerminalSelectionForCopy(sessionId);
   if (!text) return false;
   return writeClipboardText(text);
@@ -778,6 +893,11 @@ export function disposeAllTerminals(): void {
   for (const sessionId of [...terminals.keys()]) {
     disposeTerminal(sessionId);
   }
+}
+
+/** Dev bridge: every live session id (mounted or hidden). */
+export function listTerminalSessionIds(): string[] {
+  return Array.from(terminals.keys());
 }
 
 export function hasTerminal(sessionId: string): boolean {

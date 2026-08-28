@@ -19,10 +19,10 @@ use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use ssh_client_core::model::{Host, PtySize};
-use ssh_client_core::terminal::TMUX_INTEGRATION_VERSION;
 use ssh_client_core::ssh::{
     HostStore, InMemoryHostStore, PtyHandle, SessionManager, StaticAuthProvider,
 };
+use ssh_client_core::terminal::TMUX_INTEGRATION_VERSION;
 use tokio::sync::mpsc::Receiver;
 
 const HOST: &str = "127.0.0.1";
@@ -277,14 +277,22 @@ async fn mux_session_survives_reconnect_with_state() {
     // The app sends \r after reattach to request a fresh prompt; do the same.
     tokio::time::sleep(Duration::from_millis(500)).await;
     pty2.send("\r").await;
-    pty2.wait_for(OSC_PROMPT_MARK, Duration::from_secs(20)).await;
-    pty2.run("echo token=$TETHRA_QA_TOKEN", "token=alive-77").await;
+    pty2.wait_for(OSC_PROMPT_MARK, Duration::from_secs(20))
+        .await;
+    pty2.run("echo token=$TETHRA_QA_TOKEN", "token=alive-77")
+        .await;
 
     // Version stamp present → future attaches keep this session.
     let iv = env
-        .exec(&format!("tmux -L tethra show-options -qv -t {name} @tethra_iv"))
+        .exec(&format!(
+            "tmux -L tethra show-options -qv -t {name} @tethra_iv"
+        ))
         .await;
-    assert_eq!(iv.trim(), TMUX_INTEGRATION_VERSION, "session not version-stamped: {iv:?}");
+    assert_eq!(
+        iv.trim(),
+        TMUX_INTEGRATION_VERSION,
+        "session not version-stamped: {iv:?}"
+    );
 
     pty2.close().await;
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
@@ -303,11 +311,14 @@ async fn stale_unversioned_session_is_replaced_on_attach() {
     // Fake a broken-build leftover: a DEFAULT-config server (no conf, no
     // stamping) holding a plain shell with no integration. Requires killing
     // any configured server other tests left behind.
-    env.exec("tmux -L tethra kill-server 2>/dev/null || true").await;
+    env.exec("tmux -L tethra kill-server 2>/dev/null || true")
+        .await;
     env.exec(&format!("tmux -L tethra new-session -d -s {name} || true"))
         .await;
     let before = env
-        .exec(&format!("tmux -L tethra show-options -qv -t {name} @tethra_iv"))
+        .exec(&format!(
+            "tmux -L tethra show-options -qv -t {name} @tethra_iv"
+        ))
         .await;
     assert_eq!(before.trim(), "", "precondition: stale session unstamped");
 
@@ -317,9 +328,15 @@ async fn stale_unversioned_session_is_replaced_on_attach() {
     pty.run("echo reborn-ok", "reborn-ok").await;
 
     let after = env
-        .exec(&format!("tmux -L tethra show-options -qv -t {name} @tethra_iv"))
+        .exec(&format!(
+            "tmux -L tethra show-options -qv -t {name} @tethra_iv"
+        ))
         .await;
-    assert_eq!(after.trim(), TMUX_INTEGRATION_VERSION, "replacement session not stamped");
+    assert_eq!(
+        after.trim(),
+        TMUX_INTEGRATION_VERSION,
+        "replacement session not stamped"
+    );
 
     pty.close().await;
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
@@ -677,7 +694,8 @@ async fn ubuntu_torture_transcript() {
     pty.send("ls --color=always /usr/bin | head -40\n").await;
     pty.settle(Duration::from_secs(2)).await;
 
-    pty.send("printf 'y%.0s' $(seq 1 500); echo END-WIDE\n").await;
+    pty.send("printf 'y%.0s' $(seq 1 500); echo END-WIDE\n")
+        .await;
     pty.wait_for("END-WIDE", Duration::from_secs(10)).await;
     pty.settle(Duration::from_millis(300)).await;
 
@@ -709,7 +727,10 @@ async fn ubuntu_torture_transcript() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/qa-transcripts");
     std::fs::create_dir_all(&dir).expect("mkdir");
     std::fs::write(dir.join("ubuntu-torture.bin"), &pty.raw).expect("write");
-    println!("saved {} bytes to target/qa-transcripts/ubuntu-torture.bin", pty.raw.len());
+    println!(
+        "saved {} bytes to target/qa-transcripts/ubuntu-torture.bin",
+        pty.raw.len()
+    );
 
     pty.close().await;
     env.exec(&format!("tmux -L tethra kill-session -t {name} || true"))
