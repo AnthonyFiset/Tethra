@@ -17,6 +17,7 @@ import {
   Settings,
   Sparkles,
   TerminalSquare,
+  Search as SearchIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
@@ -104,10 +105,10 @@ export function CommandPalette({
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px]" />
         <RadixDialog.Content
           aria-label="Command palette"
-          className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-32px)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-panel border border-line-strong bg-elevated shadow-2xl shadow-black/70"
+          className="fixed top-[14%] left-1/2 z-50 flex max-h-[70vh] w-[calc(100vw-32px)] max-w-[640px] -translate-x-1/2 flex-col overflow-hidden rounded-[14px] border border-line-strong bg-elevated shadow-2xl shadow-black/70"
         >
           <RadixDialog.Title className="sr-only">
             Command palette
@@ -120,11 +121,17 @@ export function CommandPalette({
               return value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
             }}
           >
-            <Command.Input
-              autoFocus
-              placeholder="Search hosts, projects, and commands…"
-              className="h-12 w-full border-b border-line bg-transparent px-4 text-[15px] text-fg outline-none placeholder:text-fg-subtle"
-            />
+            <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-line px-4">
+              <SearchIcon size={16} className="shrink-0 text-fg-subtle" />
+              <Command.Input
+                autoFocus
+                placeholder="Search hosts, projects, and commands…"
+                className="h-full min-w-0 flex-1 bg-transparent text-[14.5px] text-fg outline-none placeholder:text-fg-subtle"
+              />
+              <kbd className="rounded-md border border-line px-1.5 py-0.5 font-sans text-[10px] text-fg-subtle">
+                esc
+              </kbd>
+            </div>
             <Command.List className="min-h-0 flex-1 overflow-y-auto p-1.5">
               <Command.Empty className="px-3 py-8 text-center text-ui text-fg-subtle">
                 No matching command
@@ -364,6 +371,17 @@ export function CommandPalette({
                 ))}
               </Group>
             </Command.List>
+            <div className="flex shrink-0 items-center gap-4 border-t border-line px-4 py-2 text-[10.5px] text-fg-subtle">
+              <span className="flex items-center gap-1.5">
+                <kbd className="rounded border border-line px-1 py-px">↑↓</kbd>
+                navigate
+              </span>
+              <span className="flex items-center gap-1.5">
+                <kbd className="rounded border border-line px-1 py-px">↵</kbd>
+                run
+              </span>
+              <span className="ml-auto font-mono">Tethra</span>
+            </div>
           </Command>
         </RadixDialog.Content>
       </RadixDialog.Portal>
@@ -405,7 +423,7 @@ function Item({
     <Command.Item
       value={value}
       onSelect={onSelect}
-      className="flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-ui text-fg-muted select-none data-[selected=true]:bg-hover data-[selected=true]:text-fg"
+      className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-ui text-fg-muted select-none data-[selected=true]:bg-active data-[selected=true]:text-fg [&_svg]:text-fg-subtle data-[selected=true]:[&_svg]:text-accent"
     >
       <span className="grid w-5 shrink-0 place-items-center">{icon}</span>
       <span className="truncate">{children}</span>

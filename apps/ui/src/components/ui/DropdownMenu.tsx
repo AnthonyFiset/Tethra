@@ -3,7 +3,7 @@ import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 export const dropdownMenuContentClass =
-  "z-[2147483001] rounded-md border border-line-strong bg-elevated p-1 shadow-xl shadow-black/60";
+  "z-[2147483001] min-w-[13rem] rounded-xl border border-line-strong bg-elevated p-1.5 shadow-2xl shadow-black/60";
 
 type ContentProps = ComponentPropsWithoutRef<typeof RadixDropdownMenu.Content>;
 
@@ -32,7 +32,7 @@ export function DropdownMenuItem({
   return (
     <RadixDropdownMenu.Item
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-ui text-fg-muted outline-none select-none data-[highlighted]:bg-hover data-[highlighted]:text-fg",
+        "flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-ui text-fg-muted outline-none select-none data-[highlighted]:bg-hover data-[highlighted]:text-fg [&>svg]:text-fg-subtle data-[highlighted]:[&>svg]:text-fg-muted",
         className,
       )}
       {...rest}

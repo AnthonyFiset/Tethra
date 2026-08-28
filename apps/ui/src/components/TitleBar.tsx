@@ -231,7 +231,7 @@ export function TitleBar({
                   {zoomed ? "Exit zoom" : "Zoom pane"}
                 </DropdownMenuItem>
               )}
-              <DropdownMenu.Separator className="my-1 h-px bg-line" />
+              <DropdownMenu.Separator className="-mx-1.5 my-1.5 h-px bg-line" />
               {onSettings && (
                 <DropdownMenuItem icon={<Settings size={14} />} onSelect={onSettings}>
                   Settings…
@@ -252,7 +252,7 @@ export function TitleBar({
                   Change master password
                 </DropdownMenuItem>
               )}
-              <DropdownMenu.Separator className="my-1 h-px bg-line" />
+              <DropdownMenu.Separator className="-mx-1.5 my-1.5 h-px bg-line" />
               {onAbout && (
                 <DropdownMenuItem icon={<Info size={14} />} onSelect={onAbout}>
                   About Tethra

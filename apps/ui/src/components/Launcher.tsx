@@ -140,6 +140,17 @@ export function Launcher({
         activeTags.every((tag) => host.tags.includes(tag)),
       );
     }
+    // The hero promises "start typing to find a host" — honor it live.
+    const q = quick.trim().toLowerCase();
+    if (q && !q.includes("@")) {
+      list = list.filter(
+        (host) =>
+          host.label.toLowerCase().includes(q) ||
+          host.hostname.toLowerCase().includes(q) ||
+          host.username.toLowerCase().includes(q) ||
+          host.tags.some((t) => t.toLowerCase().includes(q)),
+      );
+    }
     list.sort((a, b) => {
       if (sortMode === "name") return a.label.localeCompare(b.label);
       // Recent: open tabs → running agents → lastConnectedAt → name.
@@ -160,7 +171,7 @@ export function Launcher({
       );
     });
     return list;
-  }, [hosts, activeTags, sortMode, openHostIds, runningByHost]);
+  }, [hosts, activeTags, quick, sortMode, openHostIds, runningByHost]);
 
   const sortedProjects = useMemo(() => {
     return [...projects].sort((a, b) => {
@@ -176,6 +187,12 @@ export function Launcher({
     event.preventDefault();
     const target = quick.trim();
     if (!target) return;
+    // Typing narrowed the grid to one host → Enter connects to it.
+    if (!target.includes("@") && filteredHosts.length === 1) {
+      onConnect(filteredHosts[0]!, {});
+      setQuick("");
+      return;
+    }
     onQuickConnect(target);
     setQuick("");
   }

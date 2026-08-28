@@ -1,5 +1,5 @@
-import { ArrowLeft, ArrowRight } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, UploadCloud } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
 import { cn } from "../lib/cn";
 import type { FileEntryDto } from "../lib/generated/FileEntryDto";
@@ -46,6 +46,12 @@ export function SftpBrowser({
   const [selectedLocal, setSelectedLocal] = useState<FileEntryDto>();
   const [selectedRemote, setSelectedRemote] = useState<FileEntryDto>();
   const [queueTick, setQueueTick] = useState(0);
+  /** True while an OS drag (Finder) hovers the window — shows the drop veil. */
+  const [osDragActive, setOsDragActive] = useState(false);
+  const remotePathRef = useRef(initialRemotePath);
+  remotePathRef.current = remotePath;
+  const activeRef = useRef(active);
+  activeRef.current = active || pane;
 
   const queue = useMemo(
     () =>
@@ -174,6 +180,50 @@ export function SftpBrowser({
     });
   }
 
+  // OS-level drag-in: drop files/folders from Finder anywhere on the
+  // browser to upload them into the current REMOTE directory. The Tauri
+  // webview reports real filesystem paths; the web harness has no OS drags,
+  // so the dynamic import fails silently there.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        const stop = await getCurrentWebview().onDragDropEvent((event) => {
+          if (!activeRef.current) return;
+          const kind = event.payload.type;
+          if (kind === "over" || kind === "enter") {
+            setOsDragActive(true);
+          } else if (kind === "drop") {
+            setOsDragActive(false);
+            for (const path of event.payload.paths) {
+              const name =
+                path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+              queue.enqueue({
+                id: crypto.randomUUID(),
+                direction: "upload",
+                localPath: path,
+                remotePath: joinPath(remotePathRef.current, name),
+                label: name,
+              });
+            }
+          } else {
+            setOsDragActive(false);
+          }
+        });
+        if (disposed) stop();
+        else unlisten = stop;
+      } catch {
+        // Not running under Tauri (dev:web) — no OS drag events.
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queue]);
+
   async function uploadSelected() {
     if (!selectedLocal) return;
     if (selectedLocal.fileType !== "file" && selectedLocal.fileType !== "dir") {
@@ -206,12 +256,23 @@ export function SftpBrowser({
   return (
     <div
       className={cn(
-        "flex flex-col bg-base",
+        "relative flex flex-col bg-base",
         pane
           ? "size-full"
           : cn("absolute inset-0", active ? "z-10 flex" : "hidden"),
       )}
     >
+      {osDragActive && (
+        <div className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-xl border-2 border-dashed border-accent/60 bg-accent/8">
+          <div className="flex items-center gap-2.5 rounded-xl border border-line-strong bg-elevated px-4 py-2.5 shadow-2xl shadow-black/50">
+            <UploadCloud size={16} className="text-accent" />
+            <span className="text-ui text-fg">
+              Drop to upload to{" "}
+              <span className="font-mono text-fg-muted">{remotePath}</span>
+            </span>
+          </div>
+        </div>
+      )}
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
         <Button
           size="sm"

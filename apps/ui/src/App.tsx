@@ -2400,7 +2400,13 @@ function Workspace({
     const openRunningIds = new Set<string>();
 
     for (const tab of tabs) {
-      if (tab.kind !== "terminal" && tab.kind !== "local") continue;
+      if (
+        tab.kind !== "terminal" &&
+        tab.kind !== "local" &&
+        tab.kind !== "sftp"
+      ) {
+        continue;
+      }
       const host =
         tab.hostId !== "local"
           ? hosts.find((entry) => entry.id === tab.hostId)
@@ -2412,10 +2418,13 @@ function Workspace({
       if (runningId) openRunningIds.add(runningId);
       items.push({
         key: `open:${tab.sessionId}`,
+        kind: tab.kind === "sftp" ? "files" : "terminal",
         label:
-          project && host
-            ? `${project.name} · ${host.label}`
-            : (project?.name ?? host?.label ?? tab.title),
+          tab.kind === "sftp"
+            ? `${host?.label ?? tab.title} · files`
+            : project && host
+              ? `${project.name} · ${host.label}`
+              : (project?.name ?? host?.label ?? tab.title),
         hostId: tab.hostId,
         openSessionId: tab.sessionId,
         runningId,

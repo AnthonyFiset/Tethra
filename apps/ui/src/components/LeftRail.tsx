@@ -37,6 +37,8 @@ export type RailRunningItem = {
   key: string;
   label: string;
   hostId: string;
+  /** Row flavor: terminal session (default) or SFTP file browser. */
+  kind?: "terminal" | "files";
   /** Open PTY tab session id when this row is a live tab. */
   openSessionId?: string;
   /** Vault running-session id when this row is agent-registered. */
@@ -191,11 +193,15 @@ export function LeftRail({
                   className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left text-[12px]"
                 >
                   <span className="grid size-5 shrink-0 place-items-center rounded-md bg-elevated">
-                    <TerminalSquare
-                      size={11}
-                      strokeWidth={2.4}
-                      style={{ color: tint }}
-                    />
+                    {item.kind === "files" ? (
+                      <Folder size={11} strokeWidth={2.4} style={{ color: tint }} />
+                    ) : (
+                      <TerminalSquare
+                        size={11}
+                        strokeWidth={2.4}
+                        style={{ color: tint }}
+                      />
+                    )}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 </button>
@@ -390,11 +396,15 @@ export function LeftRail({
                   className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
                 >
                   <span className="grid size-5 shrink-0 place-items-center rounded-md bg-elevated">
-                    <TerminalSquare
-                      size={11}
-                      strokeWidth={2.4}
-                      style={{ color: tint }}
-                    />
+                    {item.kind === "files" ? (
+                      <Folder size={11} strokeWidth={2.4} style={{ color: tint }} />
+                    ) : (
+                      <TerminalSquare
+                        size={11}
+                        strokeWidth={2.4}
+                        style={{ color: tint }}
+                      />
+                    )}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   <span
