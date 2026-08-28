@@ -1040,6 +1040,13 @@ function Workspace({
   }
 
   function enterWorkspace(): void {
+    // The Tunnels/Files pickers render over the workspace while railNav
+    // points at them — entering the workspace means the user wants their
+    // session panes, so always clear the overlay (opening an SFTP browser
+    // left the Files picker stacked on top of it).
+    setRailNav((nav) =>
+      nav === "files" || nav === "tunnels" ? "hosts" : nav,
+    );
     setAppMode("workspace");
   }
 
@@ -1907,6 +1914,10 @@ function Workspace({
         },
       ]);
       activateSession(opened.sessionId);
+      // The Files picker renders while railNav is "files" — leave it, or it
+      // stays stacked over the browser it just opened and the user has to
+      // close it manually to see anything.
+      setRailNav("hosts");
       enterWorkspace();
     } catch (reason) {
       setError(String(reason));
