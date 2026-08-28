@@ -55,6 +55,16 @@
     --terminal-bg: #0d0d0d;
   }
 
+  /* Native controls (checkboxes, radios, selects, progress) carry the brand
+     accent instead of the platform default blue — the only native chrome
+     that survives our styling pass must still look like Tethra. */
+  input[type="checkbox"],
+  input[type="radio"],
+  select,
+  progress {
+    accent-color: var(--color-accent);
+  }
+
   html,
   body,
   #root {

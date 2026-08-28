@@ -181,6 +181,8 @@ interface Tab {
 /** Dedupe paste when macOS fires both keydown and Edit→Paste. */
 let lastTerminalPasteAt = 0;
 
+const transcriptDecoder = new TextDecoder();
+
 export default function App(): React.JSX.Element {
   const [status, setStatus] = useState<VaultStatusDto>();
   const [bootError, setBootError] = useState<string>();
@@ -923,7 +925,7 @@ function Workspace({
   }
 
   function appendTranscript(sessionId: string, bytes: Uint8Array): void {
-    const chunk = new TextDecoder().decode(bytes);
+    const chunk = transcriptDecoder.decode(bytes);
     const prev = transcripts.current.get(sessionId) ?? "";
     const next = (prev + chunk).slice(-16_384);
     transcripts.current.set(sessionId, next);
@@ -2844,6 +2846,7 @@ function Workspace({
               {!inWorkspace ? (
                 <Launcher
                   section={launcherSection}
+                  onOpenLocal={() => void openLocal()}
                   hosts={hosts}
                   projects={projects}
                   runningSessions={runningSessions}

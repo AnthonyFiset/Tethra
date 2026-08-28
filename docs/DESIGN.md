@@ -94,3 +94,32 @@ link, not a section).
 6. Empty state and error copy present and instructive? → §5.
 7. Terminal width stolen by new chrome while a session is focused? → §2.
 8. Status indicators checked in their empty/idle state (not only active)? → §5.
+
+## §7 Pre-publish checklist (run before every release)
+
+Grounded in dark-UI design-system practice: dark mode is a designed
+system, not inverted colors; focus/contrast/motion must be audited on the
+dark surfaces they actually render on.
+
+- [ ] **Focus visible everywhere**: every interactive element shows the
+      accent focus ring on charcoal surfaces (`focus-visible:ring-accent`
+      or `focus:border-accent`). A ring that worked on light backgrounds
+      is not proof.
+- [ ] **All control states**: default / hover / active / disabled /
+      focus for buttons, rows, cards, chips. No hover-only affordances
+      without a keyboard path.
+- [ ] **No raw native chrome**: selects, checkboxes, radios, progress are
+      either fully tokened or carry `accent-color: var(--color-accent)`
+      (styles.css base layer). Platform-default blue is a violation.
+- [ ] **One emphatic tint per screen** (§4): the amber agent-waiting
+      banner. Destructive actions are red TEXT on normal surfaces, never
+      red fills.
+- [ ] **Contrast**: fg-muted and fg-subtle pass WCAG AA on the surface
+      they sit on; verify after any token change, in the real app, not a
+      mockup.
+- [ ] **Version visible** in the ⋯ menu footer and About.
+- [ ] **Every page on the card language**: Overview, Projects, Hosts,
+      Tunnels, Identities, Files, Assist, Settings, dialogs, ⋯ menu,
+      About. Screenshot each in the harness; compare against this doc.
+- [ ] **Perf gate**: torture replay shows 0 long tasks and flat heap
+      (docs/QA.md §1b); block/finished caps intact.

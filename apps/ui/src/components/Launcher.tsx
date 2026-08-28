@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, FolderKanban, Plus, X } from "lucide-react";
+import { ChevronDown, Folder, FolderKanban, Plus, TerminalSquare, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   HostSummaryDto,
@@ -49,6 +49,8 @@ interface LauncherProps {
   onImport: () => void;
   onLocal: () => void;
   onQuickConnect: (target: string) => void;
+  /** Open a local shell tab (this machine). */
+  onOpenLocal?: () => void;
   agentLabel?: (agentId: string | null | undefined) => string;
 }
 
@@ -77,6 +79,7 @@ export function Launcher({
   onAddProject,
   onImport,
   onQuickConnect,
+  onOpenLocal,
   agentLabel,
 }: LauncherProps): React.JSX.Element {
   const [quick, setQuick] = useState("");
@@ -214,6 +217,17 @@ export function Launcher({
           >
             Connect
           </button>
+          {onOpenLocal && (
+            <button
+              type="button"
+              onClick={onOpenLocal}
+              title="Open a terminal on this machine"
+              className="flex h-[46px] shrink-0 cursor-pointer items-center gap-2 rounded-[11px] border border-line-strong bg-surface px-4 text-[13px] font-medium text-fg-muted transition-colors hover:border-fg-subtle hover:bg-hover hover:text-fg"
+            >
+              <TerminalSquare size={14} strokeWidth={2} />
+              Local terminal
+            </button>
+          )}
         </form>
       </div>
       )}
