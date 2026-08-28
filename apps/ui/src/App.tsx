@@ -557,6 +557,12 @@ function Workspace({
 
   function handleRailNav(nav: RailNavId): void {
     setRailNav(nav);
+    if (nav === "overview") {
+      setLauncherSection("all");
+      closeSurface();
+      goLauncher();
+      return;
+    }
     if (nav === "hosts" || nav === "projects") {
       setLauncherSection(nav);
       closeSurface();
@@ -2600,7 +2606,7 @@ function Workspace({
                         ? "hosts"
                         : launcherSection === "projects"
                           ? "projects"
-                          : null
+                          : "overview"
             }
             onNav={handleRailNav}
             onGoHome={() => {

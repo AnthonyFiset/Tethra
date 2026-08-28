@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   Folder,
+  House,
   FolderGit2,
   KeyRound,
   Lightbulb,
@@ -23,6 +24,7 @@ import { Logo } from "./Logo";
 import { Tooltip } from "./ui/Tooltip";
 
 export type RailNavId =
+  | "overview"
   | "projects"
   | "hosts"
   | "tunnels"
@@ -48,6 +50,11 @@ const NAV: {
   icon: React.ReactNode;
   iconActiveClass?: string;
 }[] = [
+  {
+    id: "overview",
+    label: "Overview",
+    icon: <House size={15} strokeWidth={2} />,
+  },
   {
     id: "projects",
     label: "Projects",

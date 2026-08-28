@@ -367,8 +367,14 @@ export function Launcher({
                     <button
                       key={tag}
                       type="button"
+                      aria-pressed={activeTags.includes(tag)}
                       onClick={() => toggleTag(tag)}
-                      className="flex cursor-pointer items-center gap-[11px] rounded-panel border border-line bg-surface px-[15px] py-[13px] text-left transition-colors hover:border-line-strong hover:bg-hover"
+                      className={cn(
+                        "flex cursor-pointer items-center gap-[11px] rounded-panel border px-[15px] py-[13px] text-left transition-colors",
+                        activeTags.includes(tag)
+                          ? "border-accent/50 bg-accent/8"
+                          : "border-line bg-surface hover:border-line-strong hover:bg-hover",
+                      )}
                     >
                       <span
                         className="grid size-8 shrink-0 place-items-center rounded-[9px]"
@@ -400,8 +406,22 @@ export function Launcher({
 
             {showHosts && (
             <section className="flex flex-col gap-2.5">
-              <span className="text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
+              <span className="flex items-baseline gap-2 text-[11px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">
                 Hosts
+                {activeTags.length > 0 && (
+                  <>
+                    <span className="font-normal normal-case tracking-normal">
+                      {filteredHosts.length} of {hosts.length} · {activeTags.join(" + ")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTags([])}
+                      className="cursor-pointer font-normal normal-case tracking-normal text-accent hover:underline"
+                    >
+                      Show all
+                    </button>
+                  </>
+                )}
               </span>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {filteredHosts.map((host) => (
