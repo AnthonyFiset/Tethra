@@ -34,7 +34,13 @@ export const DEFAULTS = {
   fontSize: 12.5,
   /** Must match @fontsource-variable/jetbrains-mono registered family. */
   fontFamily: "JetBrains Mono Variable",
-  lineHeight: 1.25,
+  /**
+   * 1.0: xterm 6's core renderer draws block/box glyphs from the font, whose
+   * ink covers the em — not the lineHeight-padded cell. Any value above 1
+   * slices TUI art (agent logos, btop bars) with background stripes, and the
+   * WebGL addon's full-cell custom glyphs never paint reliably in WKWebView.
+   */
+  lineHeight: 1,
   ligatures: false,
   cursorBlink: true,
   cursorStyle: "bar" as CursorStylePref,
@@ -140,6 +146,8 @@ export function setTerminalFontFamily(value: string): void {
 
 export function getTerminalLineHeight(): number {
   const raw = Number(readString(KEYS.lineHeight));
+  // Migrate the pre-v0.5 default (1.25) — it banded block glyphs.
+  if (raw === 1.25) return DEFAULTS.lineHeight;
   if (!Number.isFinite(raw) || raw < 1 || raw > 2) return DEFAULTS.lineHeight;
   return Math.round(raw * 100) / 100;
 }

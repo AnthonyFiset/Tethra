@@ -274,9 +274,10 @@ export function createTerminal(
   const existing = terminals.get(sessionId);
   if (existing) return existing;
 
-  // Font metrics must come from Terminal options (not CSS). Reference: 12.5px
-  // → ~16px cells at lineHeight 1.25. Re-assert after open/fit — xterm 6's
-  // TextMetrics path can measure a fallback face before JetBrains loads.
+  // Font metrics must come from Terminal options (not CSS). lineHeight stays
+  // 1.0 — above that, block/box glyphs band (see prefs DEFAULTS.lineHeight).
+  // Re-assert after open/fit — xterm 6's TextMetrics path can measure a
+  // fallback face before JetBrains loads.
   const fontSize = getTerminalFontSize();
   const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
   const lineHeight = getTerminalLineHeight();
