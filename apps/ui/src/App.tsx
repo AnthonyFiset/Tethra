@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AssistBar } from "./components/AssistBar";
 import { CommandPalette } from "./components/CommandPalette";
+import { FilesView } from "./components/FilesView";
 import {
   Launcher,
   parseQuickConnect,
   type HostDraft,
 } from "./components/Launcher";
+import {
+  LeftRail,
+  type RailNavId,
+  type RailRunningItem,
+} from "./components/LeftRail";
 import { HostAvatar, DEFAULT_HOST_COLOR } from "./components/HostAvatar";
 import { Logo } from "./components/Logo";
 import {
@@ -22,20 +28,21 @@ import { AssistSurface } from "./surfaces/AssistSurface";
 import { IdentitiesSurface } from "./surfaces/IdentitiesSurface";
 import { VaultSurface } from "./surfaces/VaultSurface";
 import {
-  SURFACE_LABELS,
   type SurfaceId,
 } from "./surfaces/SurfaceShell";
-import { Sidebar } from "./components/Sidebar";
-import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { TunnelsView } from "./components/TunnelsView";
 import { TunnelsPanel } from "./components/TunnelsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Button } from "./components/ui/Button";
 import { Dialog } from "./components/ui/Dialog";
 import { ErrorBanner } from "./components/ui/Field";
 import { TooltipProvider } from "./components/ui/Tooltip";
+import { cn } from "./lib/cn";
+import { BlockMenuHost } from "./terminal/BlockMenuHost";
 import { HostFormModal } from "./hosts/HostFormModal";
 import { SshConfigImportModal } from "./hosts/SshConfigImportModal";
+import { SURFACE_NAV_EXPAND_MIN_PX } from "./lib/breakpoints";
 import { getIdleLockSecs, getLandingPref } from "./lib/prefs";
 import {
   mergeAttention,
@@ -52,6 +59,7 @@ import {
   killMuxSession,
   listAgents,
   listHosts,
+  setHostTags,
   listProjects,
   listRunningSessions,
   localHome,
@@ -80,6 +88,7 @@ import {
   respondHostKey,
   sendTerminalInput,
   syncNow,
+  syncStatus,
   touchProjectOpened,
   tunnelList,
   updateCheck,
@@ -94,6 +103,7 @@ import {
   type HostSummaryDto,
   type ProjectSummaryDto,
   type RunningSessionSummaryDto,
+  type SyncStatusDto,
   type TerminalEvent,
   type ToolsProbeDto,
   type VaultStatusDto,
@@ -103,14 +113,17 @@ import { agentDisplayName, resolveAgentForLaunch } from "./projects/agents";
 import { projectLaunchScript, sleep } from "./projects/launch";
 import { SftpBrowser } from "./sftp/SftpBrowser";
 import {
+  markAgentLaunched,
   clearTerminal,
   copyTerminalSelection,
   createTerminal,
   disposeTerminal,
   focusTerminal,
+  getTerminalInstance,
   persistProjectScrollback,
   resetTerminal,
   restoreProjectScrollback,
+  scheduleFlushBlockPhases,
   writeTerminal,
   writeTerminalMessage,
 } from "./terminal/registry";
@@ -119,10 +132,12 @@ import { clearScrollbackSnapshot } from "./terminal/scrollback";
 import {
   lastBlockCommand,
   queueBlockPhase,
+  sessionRunsAgentCommand,
   setBlockRerunHandler,
 } from "./terminal/blocks";
+import { scheduleBlockOverlaySync } from "./terminal/blockOverlay";
 import { SplitPanes } from "./terminal/SplitPanes";
-import { TerminalView } from "./terminal/TerminalView";
+import { SessionView } from "./components/SessionView";
 import {
   type LayoutNode,
   leaf,
@@ -148,11 +163,15 @@ interface Tab {
   title: string;
   kind: "terminal" | "local" | "sftp";
   connected: boolean;
+  /** Named tmux session on the host (persistence + restore + reconnect). */
+  muxName?: string;
   color?: string | null;
   remotePath?: string;
   localPath?: string;
   /** Last OSC 7 working directory, when reported. */
   cwd?: string;
+  /** Last OSC 133;G git branch, when reported. */
+  gitBranch?: string;
   /** Vault project id when this tab was opened from a project. */
   projectId?: string;
   /** `off` | `active` | `unavailable` — SSH agent forwarding for this session. */
@@ -162,6 +181,8 @@ interface Tab {
 
 /** Dedupe paste when macOS fires both keydown and Edit→Paste. */
 let lastTerminalPasteAt = 0;
+
+const transcriptDecoder = new TextDecoder();
 
 export default function App(): React.JSX.Element {
   const [status, setStatus] = useState<VaultStatusDto>();
@@ -265,12 +286,20 @@ function Workspace({
 }): React.JSX.Element {
   const [hosts, setHosts] = useState<HostSummaryDto[]>([]);
   const [projects, setProjects] = useState<ProjectSummaryDto[]>([]);
+  // Session restore must not race the vault lists: a project tab restored
+  // before `projects` arrived came back as a bare host shell.
+  const [hostsLoaded, setHostsLoaded] = useState(false);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [agents, setAgents] = useState<AgentSpecDto[]>([]);
   const [runningSessions, setRunningSessions] = useState<
     RunningSessionSummaryDto[]
   >([]);
   /** Ephemeral attention keyed by running-session id. */
   const [sessionAttention, setSessionAttention] = useState<
+    Record<string, SessionAttention>
+  >({});
+  /** Attention keyed by attached PTY session id (host tabs without a running row). */
+  const [ptyAttention, setPtyAttention] = useState<
     Record<string, SessionAttention>
   >({});
   /** PTY session id → running session id (while attached). */
@@ -298,7 +327,6 @@ function Workspace({
   const [openingLocal, setOpeningLocal] = useState(false);
   const [error, setError] = useState<string>();
   const [prompt, setPrompt] = useState<HostKeyPrompt>();
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [editor, setEditor] = useState<HostSummaryDto | "new">();
   const [hostDraft, setHostDraft] = useState<HostDraft>();
   const [projectEditor, setProjectEditor] = useState<
@@ -312,6 +340,24 @@ function Workspace({
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionId>("general");
   const [activeSurface, setActiveSurface] = useState<SurfaceId | null>(null);
+  const [railNav, setRailNav] = useState<RailNavId>("hosts");
+  const [syncInfo, setSyncInfo] = useState<SyncStatusDto>();
+  const [railCollapsed, setRailCollapsed] = useState(
+    () =>
+      !window.matchMedia(`(min-width: ${SURFACE_NAV_EXPAND_MIN_PX}px)`).matches,
+  );
+  /** Warp-style: sidebar is fully shown or fully hidden (⌘B / titlebar). */
+  const [railHidden, setRailHidden] = useState(
+    () => localStorage.getItem("tethra.railHidden") === "1",
+  );
+  /** Reconnect attempt counts per dropped session. */
+  const reconnectAttempts = useRef(new Map<string, number>());
+  /** Live hosts list for callbacks outside React render. */
+  const hostsRef = useRef<HostSummaryDto[]>([]);
+  /** Home filter: overview, hosts-only, or projects-only. */
+  const [launcherSection, setLauncherSection] = useState<
+    "all" | "hosts" | "projects"
+  >("all");
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistKeysEpoch, setAssistKeysEpoch] = useState(0);
   const [muxHint, setMuxHint] = useState<{
@@ -322,9 +368,6 @@ function Workspace({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appVersion, setAppVersion] = useState<string>();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => window.localStorage.getItem("tethra.sidebar") === "rail",
-  );
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -345,10 +388,12 @@ function Workspace({
   useEffect(() => {
     listHosts()
       .then(setHosts)
-      .catch((reason: unknown) => setError(String(reason)));
+      .catch((reason: unknown) => setError(String(reason)))
+      .finally(() => setHostsLoaded(true));
     listProjects()
       .then(setProjects)
-      .catch((reason: unknown) => setError(String(reason)));
+      .catch((reason: unknown) => setError(String(reason)))
+      .finally(() => setProjectsLoaded(true));
     listAgents()
       .then(setAgents)
       .catch((reason: unknown) => setError(String(reason)));
@@ -423,6 +468,20 @@ function Workspace({
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${SURFACE_NAV_EXPAND_MIN_PX}px)`);
+    const onChange = () => setRailCollapsed(!mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!status.unlocked) return;
+    void syncStatus()
+      .then(setSyncInfo)
+      .catch(() => undefined);
+  }, [status.unlocked]);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -505,12 +564,101 @@ function Workspace({
     }
   }, [status.unlocked]);
 
+  function handleRailNav(nav: RailNavId): void {
+    setRailNav(nav);
+    if (nav === "overview") {
+      setLauncherSection("all");
+      closeSurface();
+      goLauncher();
+      return;
+    }
+    if (nav === "hosts" || nav === "projects") {
+      setLauncherSection(nav);
+      closeSurface();
+      goLauncher();
+      return;
+    }
+    if (nav === "identities") {
+      openSurface("identities");
+      return;
+    }
+    if (nav === "assist") {
+      openSurface("assist");
+      return;
+    }
+    setActiveSurface(null);
+    if (appMode === "workspace") {
+      goLauncher();
+    }
+  }
+
+  // --- Session restore across app restarts -------------------------------
+  // tmux keeps the remote side alive; persist which tabs were open so a
+  // relaunch reattaches them automatically after unlock.
+  const restoredTabs = useRef(false);
+
   useEffect(() => {
-    window.localStorage.setItem(
-      "tethra.sidebar",
-      sidebarCollapsed ? "rail" : "expanded",
-    );
-  }, [sidebarCollapsed]);
+    if (!status.unlocked || !restoredTabs.current) return;
+    const entries = tabsRef.current
+      .filter((t) => t.kind === "terminal" || t.kind === "local")
+      .map((t) => ({
+        hostId: t.hostId,
+        muxName: t.muxName ?? null,
+        projectId: t.projectId ?? null,
+      }));
+    localStorage.setItem("tethra.openTabs", JSON.stringify(entries));
+  }, [tabs, status.unlocked]);
+
+  useEffect(() => {
+    if (restoredTabs.current) return;
+    if (!status.unlocked || !hostsLoaded || !projectsLoaded) return;
+    if (tabsRef.current.length > 0) {
+      restoredTabs.current = true;
+      return;
+    }
+    restoredTabs.current = true;
+    type SavedTab = {
+      hostId: string;
+      muxName?: string | null;
+      projectId?: string | null;
+    };
+    let saved: SavedTab[] = [];
+    try {
+      saved = JSON.parse(
+        localStorage.getItem("tethra.openTabs") ?? "[]",
+      ) as SavedTab[];
+    } catch {
+      return;
+    }
+    if (saved.length === 0) return;
+    void (async () => {
+      for (const entry of saved) {
+        try {
+          if (entry.projectId) {
+            // Project tabs have no per-tab muxName — the project's own
+            // tmux session is the anchor. Relaunch reattaches (`-A`) and
+            // keeps the tab bound to the project (title, agent chrome,
+            // running-session dedupe) instead of opening a bare host shell.
+            const project = projects.find((p) => p.id === entry.projectId);
+            if (project) await openProject(project);
+          } else if (entry.hostId === "local") {
+            await openLocal();
+          } else {
+            const host = hosts.find((h) => h.id === entry.hostId);
+            if (host) {
+              await connect(host, {
+                forceNew: true,
+                muxName: entry.muxName ?? undefined,
+              });
+            }
+          }
+        } catch {
+          // Failures surface through the normal error state; keep restoring.
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status.unlocked, hostsLoaded, projectsLoaded]);
 
   function adoptTransfer(transfer: WorkspaceTransfer): void {
     setTabs((current) => {
@@ -614,12 +762,16 @@ function Workspace({
     [activeId, tabs],
   );
 
-  function toggleSidebar(): void {
-    if (window.matchMedia("(max-width: 767px)").matches) {
-      setDrawerOpen((open) => !open);
-    } else {
-      setSidebarCollapsed((value) => !value);
-    }
+  useEffect(() => {
+    hostsRef.current = hosts;
+  }, [hosts]);
+
+  function toggleRail(): void {
+    // Warp-style: ⌘B / titlebar button fully shows or hides the sidebar.
+    setRailHidden((value) => {
+      localStorage.setItem("tethra.railHidden", value ? "0" : "1");
+      return !value;
+    });
   }
 
   async function attachOutput(
@@ -635,6 +787,17 @@ function Workspace({
       next: SessionAttention,
       source: string,
     ): void {
+      setPtyAttention((current) => {
+        const merged = mergeAttention(current[ptyId], next, source);
+        if (
+          current[ptyId]?.state === merged.state &&
+          current[ptyId]?.message === merged.message
+        ) {
+          return current;
+        }
+        return { ...current, [ptyId]: merged };
+      });
+
       const runningId = ptyToRunning.current.get(ptyId);
       if (!runningId) return;
       setSessionAttention((current) => {
@@ -681,6 +844,9 @@ function Workspace({
               ? exitRaw.exit_code
               : null;
         queueBlockPhase(sessionId, event.phase, exitCode);
+        // Flush only after preceding PTY writes for this session have landed.
+        // Immediate flush raced terminal.write and parked markers on output rows.
+        scheduleFlushBlockPhases(sessionId);
         if (typeof exitCode === "number") {
           lastExitCodes.current.set(sessionId, exitCode);
         }
@@ -696,6 +862,22 @@ function Workspace({
           applyPtyAttention(sessionId, { state: "running" }, "activity");
         }
       } else if (event.kind === "attention") {
+        // Waiting banner + desktop notify share this path. Ignore silence —
+        // only BEL / OSC 9 / OSC 777 (sources bel|osc) arm waiting.
+        if (event.source === "silence") {
+          return;
+        }
+        // A bare BEL is only agent attention when an agent is actually
+        // running here (project session, or a known agent CLI in the
+        // current block). Shell bells — tab-completion, ^G — must never
+        // raise the "Waiting for you" banner on a plain terminal.
+        if (
+          event.source === "bel" &&
+          !ptyToRunning.current.has(sessionId) &&
+          !sessionRunsAgentCommand(sessionId)
+        ) {
+          return;
+        }
         applyPtyAttention(
           sessionId,
           {
@@ -711,6 +893,40 @@ function Workspace({
           ),
         );
         writeTerminalMessage(sessionId, `\x1b[90m${closedMessage}\x1b[0m`);
+        // Auto-reconnect: a dropped connection (sleep, wifi change) on a
+        // named-mux tab reattaches to the same tmux session — up to 3 tries.
+        const droppedTab = tabsRef.current.find(
+          (t) => t.sessionId === sessionId,
+        );
+        if (
+          droppedTab?.kind === "terminal" &&
+          droppedTab.muxName &&
+          droppedTab.hostId !== "local"
+        ) {
+          const tries = reconnectAttempts.current.get(sessionId) ?? 0;
+          if (tries < 3) {
+            reconnectAttempts.current.set(sessionId, tries + 1);
+            const delay = 1500 * (tries + 1);
+            writeTerminalMessage(
+              sessionId,
+              `\x1b[90mreconnecting in ${Math.round(delay / 1000)}s…\x1b[0m`,
+            );
+            const hostId = droppedTab.hostId;
+            const muxName = droppedTab.muxName;
+            window.setTimeout(() => {
+              const still = tabsRef.current.find(
+                (t) => t.sessionId === sessionId,
+              );
+              if (!still || still.connected) return;
+              const hostEntry = hostsRef.current.find((h) => h.id === hostId);
+              if (!hostEntry) return;
+              // Replace the dead tab with a fresh attach to the same mux.
+              void closeTab(sessionId, { keepMux: true }).then(() =>
+                connect(hostEntry, { forceNew: true, muxName }),
+              );
+            }, delay);
+          }
+        }
       }
     };
 
@@ -732,7 +948,7 @@ function Workspace({
   }
 
   function appendTranscript(sessionId: string, bytes: Uint8Array): void {
-    const chunk = new TextDecoder().decode(bytes);
+    const chunk = transcriptDecoder.decode(bytes);
     const prev = transcripts.current.get(sessionId) ?? "";
     const next = (prev + chunk).slice(-16_384);
     transcripts.current.set(sessionId, next);
@@ -766,6 +982,37 @@ function Workspace({
     injectShellText(activeTab.sessionId, command, { run: false });
   }
 
+  // Opening a PTY at the wrong size and resizing after attach forces a full
+  // tmux redraw that duplicates restored content into scrollback — open at
+  // the size the terminal pane actually uses.
+  function readLastPtySize(): { cols: number; rows: number } {
+    try {
+      const raw = localStorage.getItem("tethra.ptySize");
+      if (raw) {
+        const v = JSON.parse(raw) as { cols?: number; rows?: number };
+        if (
+          typeof v.cols === "number" &&
+          typeof v.rows === "number" &&
+          v.cols > 20 &&
+          v.rows > 5
+        ) {
+          return { cols: Math.min(v.cols, 500), rows: Math.min(v.rows, 200) };
+        }
+      }
+    } catch {
+      // storage unavailable — fall through
+    }
+    return { cols: 120, rows: 32 };
+  }
+
+  function saveLastPtySize(cols: number, rows: number): void {
+    try {
+      localStorage.setItem("tethra.ptySize", JSON.stringify({ cols, rows }));
+    } catch {
+      // storage unavailable — ignore
+    }
+  }
+
   function wireTerminal(sessionId: string): void {
     createTerminal(sessionId, {
       onInput: (data) => {
@@ -774,12 +1021,20 @@ function Workspace({
         });
       },
       onResize: (cols, rows) => {
+        saveLastPtySize(cols, rows);
         void resizeTerminal(sessionId, cols, rows);
       },
       onCwd: (cwd) => {
         setTabs((current) =>
           current.map((tab) =>
             tab.sessionId === sessionId ? { ...tab, cwd } : tab,
+          ),
+        );
+      },
+      onGitBranch: (gitBranch) => {
+        setTabs((current) =>
+          current.map((tab) =>
+            tab.sessionId === sessionId ? { ...tab, gitBranch } : tab,
           ),
         );
       },
@@ -808,8 +1063,14 @@ function Workspace({
   }
 
   function enterWorkspace(): void {
+    // The Tunnels/Files pickers render over the workspace while railNav
+    // points at them — entering the workspace means the user wants their
+    // session panes, so always clear the overlay (opening an SFTP browser
+    // left the Files picker stacked on top of it).
+    setRailNav((nav) =>
+      nav === "files" || nav === "tunnels" ? "hosts" : nav,
+    );
     setAppMode("workspace");
-    setDrawerOpen(false);
   }
 
   function openSettings(section: SettingsSectionId | string = "general"): void {
@@ -839,19 +1100,25 @@ function Workspace({
     setSettingsOpen(false);
     setPaletteOpen(false);
     setActiveSurface(surface);
+    if (surface === "identities") setRailNav("identities");
+    if (surface === "assist") setRailNav("assist");
   }
 
   function closeSurface(): void {
     setActiveSurface(null);
+    if (railNav === "identities" || railNav === "assist") {
+      setRailNav("hosts");
+    }
   }
 
   /** View change only — never kills PTYs or remote mux sessions. */
   function goLauncher(): void {
     setAppMode("launcher");
-    setDrawerOpen(false);
     setAssistOpen(false);
     setZoomedId(undefined);
-    setActiveSurface(null);
+    if (!activeSurface) {
+      setRailNav("hosts");
+    }
   }
 
   function pasteIntoTerminal(sessionId: string, text: string): void {
@@ -976,7 +1243,7 @@ function Workspace({
         break;
       }
       case "view.toggle_sidebar":
-        toggleSidebar();
+        toggleRail();
         break;
       case "view.launcher":
         goLauncher();
@@ -1120,33 +1387,113 @@ function Workspace({
     setEditor("new");
   }
 
-  async function connect(host: HostSummaryDto): Promise<void> {
+  async function connect(
+    host: HostSummaryDto,
+    opts?: { forceNew?: boolean; muxName?: string },
+  ): Promise<void> {
+    // Focus an already-open terminal for this host unless the caller asks
+    // for a new session (tab-strip +, modifier).
+    if (!opts?.forceNew) {
+      const existing = tabsRef.current.find(
+        (tab) =>
+          tab.hostId === host.id &&
+          tab.kind === "terminal" &&
+          tab.connected,
+      );
+      if (existing) {
+        activateSession(existing.sessionId);
+        enterWorkspace();
+        focusTerminal(existing.sessionId);
+        return;
+      }
+    }
+
     setError(undefined);
     setConnectingHostId(host.id);
-    setDrawerOpen(false);
+    const t0 = performance.now();
+    // Optimistic pane: show workspace + connecting tab before SSH returns.
+    const pendingId = `pending-${crypto.randomUUID()}`;
+    // Stable per-tab tmux session: the shell lives on the host and survives
+    // app restarts; restore/reconnect reattach by this name.
+    const muxName =
+      opts?.muxName ?? `tethra-${crypto.randomUUID().slice(0, 8)}`;
+    setTabs((current) => [
+      ...current,
+      {
+        sessionId: pendingId,
+        hostId: host.id,
+        title: host.label,
+        kind: "terminal",
+        connected: false,
+        color: host.color,
+        muxName,
+      },
+    ]);
+    activateSession(pendingId);
+    enterWorkspace();
+    const tPaint = performance.now();
+    console.info(
+      `[tethra-open] ${host.label} optimistic paint ${(tPaint - t0).toFixed(0)}ms`,
+    );
 
     try {
-      const opened = await openTerminal(host.id, 80, 24);
+      const size = readLastPtySize();
+      const opened = await openTerminal(host.id, size.cols, size.rows, muxName);
+      const tOpen = performance.now();
+      console.info(
+        `[tethra-open] ${host.label} open_terminal ${(tOpen - t0).toFixed(0)}ms (ssh=${(tOpen - tPaint).toFixed(0)}ms)`,
+      );
       const sessionId = opened.sessionId;
       wireTerminal(sessionId);
       void attachOutput(sessionId, "Connection closed.");
-      setTabs((current) => [
-        ...current,
-        {
-          sessionId,
-          hostId: host.id,
-          title: host.label,
-          kind: "terminal",
-          connected: true,
-          color: host.color,
-          agentForward: opened.agentForward,
-          agentForwardHint: opened.agentForwardHint ?? undefined,
-        },
-      ]);
+      const connectedAt = new Date().toISOString();
+      setHosts((current) =>
+        current.map((entry) =>
+          entry.id === host.id
+            ? { ...entry, lastConnectedAt: connectedAt }
+            : entry,
+        ),
+      );
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.sessionId === pendingId
+            ? {
+                sessionId,
+                hostId: host.id,
+                title: host.label,
+                kind: "terminal" as const,
+                connected: true,
+                muxName,
+                color: host.color,
+                agentForward: opened.agentForward,
+                agentForwardHint: opened.agentForwardHint ?? undefined,
+              }
+            : tab,
+        ),
+      );
       activateSession(sessionId);
-      enterWorkspace();
+      // Reattach (restore/reconnect): the shell's prompt marks fired before
+      // we were attached, so block chrome would sit empty until the next
+      // command. Nudge a fresh prompt once the redraw has landed.
+      if (opts?.muxName) {
+        window.setTimeout(() => {
+          void sendTerminalInput(sessionId, new Uint8Array([0x0d]), {
+            force: true,
+          }).catch(() => undefined);
+        }, 600);
+      }
+      // Probes stay off the critical path.
+      void maybeShowToolsHint(sessionId, host.id, []);
+      console.info(
+        `[tethra-open] ${host.label} ready ${(performance.now() - t0).toFixed(0)}ms`,
+      );
     } catch (reason) {
+      setTabs((current) => current.filter((tab) => tab.sessionId !== pendingId));
       setError(String(reason));
+      console.warn(
+        `[tethra-open] ${host.label} failed after ${(performance.now() - t0).toFixed(0)}ms`,
+        reason,
+      );
     } finally {
       setConnectingHostId(undefined);
     }
@@ -1155,8 +1502,6 @@ function Workspace({
   async function openLocal(): Promise<void> {
     setError(undefined);
     setOpeningLocal(true);
-    setDrawerOpen(false);
-
     try {
       const sessionId = await openLocalTerminal(80, 24);
       wireTerminal(sessionId);
@@ -1209,8 +1554,6 @@ function Workspace({
   async function openProject(project: ProjectSummaryDto): Promise<void> {
     setError(undefined);
     setOpeningProjectId(project.id);
-    setDrawerOpen(false);
-
     try {
       const agents = await listAgents();
       const { agent, migratedFrom } = resolveAgentForLaunch(
@@ -1340,6 +1683,9 @@ function Workspace({
           force: true,
         });
       }
+      // The agent CLI is the session's command — no shell, no OSC 133 ever.
+      // Tell the terminal layer so chrome + prompt panel stand down now.
+      if (agent) markAgentLaunched(sessionId);
       if (byok?.keyLabel) {
         setAgentNotice(
           (migratedFrom
@@ -1434,6 +1780,21 @@ function Workspace({
     // reattachSession closes over projects — refresh when unlocked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.unlocked, projects]);
+
+  useEffect(() => {
+    if (!import.meta.env.VITE_TETHRA_MOCK) return;
+    setSessionAttention({
+      "run-1": { state: "running" },
+      "run-2": {
+        state: "waiting",
+        message: "Approve pending file edit",
+      },
+      "run-3": {
+        state: "failed",
+        message: "Last command exited with code 1",
+      },
+    });
+  }, []);
 
   useEffect(() => {
     if (!status.unlocked || runningSessions.length === 0) {
@@ -1560,7 +1921,6 @@ function Workspace({
   async function openFiles(host: HostSummaryDto): Promise<void> {
     setError(undefined);
     setOpeningFilesHostId(host.id);
-    setDrawerOpen(false);
     try {
       const [opened, home] = await Promise.all([
         openSftp(host.id),
@@ -1580,6 +1940,10 @@ function Workspace({
         },
       ]);
       activateSession(opened.sessionId);
+      // The Files picker renders while railNav is "files" — leave it, or it
+      // stays stacked over the browser it just opened and the user has to
+      // close it manually to see anything.
+      setRailNav("hosts");
       enterWorkspace();
     } catch (reason) {
       setError(String(reason));
@@ -1695,7 +2059,10 @@ function Workspace({
     }
   }
 
-  async function closeTab(sessionId: string): Promise<void> {
+  async function closeTab(
+    sessionId: string,
+    opts?: { keepMux?: boolean },
+  ): Promise<void> {
     setTunnelActiveBySession((current) => {
       if (!(sessionId in current)) return current;
       const next = { ...current };
@@ -1703,6 +2070,18 @@ function Workspace({
       return next;
     });
     const tab = tabs.find((entry) => entry.sessionId === sessionId);
+    // A deliberate close ends the shell: kill the tab's named tmux session
+    // (plain host tabs only — project/agent sessions detach and keep running).
+    if (
+      !opts?.keepMux &&
+      tab?.kind === "terminal" &&
+      tab.muxName &&
+      !tab.projectId &&
+      !ptyToRunning.current.get(sessionId)
+    ) {
+      void killMuxSession(tab.hostId, tab.muxName).catch(() => undefined);
+    }
+    reconnectAttempts.current.delete(sessionId);
     const index = tabs.findIndex((entry) => entry.sessionId === sessionId);
     const nextTabs = tabs.filter((entry) => entry.sessionId !== sessionId);
     setLayout((current) =>
@@ -1721,6 +2100,12 @@ function Workspace({
     transcripts.current.delete(sessionId);
     lastExitCodes.current.delete(sessionId);
     ptyToRunning.current.delete(sessionId);
+    setPtyAttention((current) => {
+      if (!(sessionId in current)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
     if (tab?.kind === "terminal" || tab?.kind === "local") {
       if (tab.projectId) {
         await persistProjectScrollback(sessionId, tab.projectId);
@@ -1883,14 +2268,28 @@ function Workspace({
           if (mode === "workspace") return "launcher";
           return tabsRef.current.length > 0 ? "workspace" : "launcher";
         });
-        setDrawerOpen(false);
         setAssistOpen(false);
         setZoomedId(undefined);
         return;
       }
       if (event.key.toLowerCase() === "b") {
         event.preventDefault();
-        toggleSidebar();
+        toggleRail();
+      }
+      {
+        // ⌘1…⌘9 jump straight to the nth session.
+        const digit = Number.parseInt(event.key, 10);
+        if (digit >= 1 && digit <= 9) {
+          const sessionTabs = tabsRef.current.filter(
+            (entry) => entry.kind === "terminal" || entry.kind === "local",
+          );
+          const target = sessionTabs[digit - 1];
+          if (target) {
+            event.preventDefault();
+            selectTab(target.sessionId);
+            return;
+          }
+        }
       }
       if (event.key.toLowerCase() === "f" && status.unlocked) {
         const tab = tabsRef.current.find(
@@ -1990,24 +2389,107 @@ function Workspace({
   }, [status.unlocked, assistOpen]);
 
   const inWorkspace = appMode === "workspace";
-  const connectionLabel = (() => {
-    if (!inWorkspace) return "Launcher";
-    if (!activeTab) return "Workspace";
-    if (activeTab.kind === "sftp") {
-      return activeTab.connected ? "Files" : "Files · offline";
+
+  const activeTunnelCount = useMemo(
+    () =>
+      Object.values(tunnelActiveBySession).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+    [tunnelActiveBySession],
+  );
+
+  const titlebarTabs = useMemo(
+    () =>
+      tabs.map((tab) => {
+        const host =
+          tab.hostId !== "local"
+            ? hosts.find((entry) => entry.id === tab.hostId)
+            : undefined;
+        const project = tab.projectId
+          ? projects.find((entry) => entry.id === tab.projectId)
+          : undefined;
+        const runningId = ptyToRunning.current.get(tab.sessionId);
+        return {
+          sessionId: tab.sessionId,
+          title:
+            tab.kind === "local"
+              ? "Local"
+              : tab.kind === "sftp"
+                ? `${host?.label ?? tab.title} files`
+                : (host?.label ?? tab.title),
+          kind: tab.kind,
+          connected: tab.connected,
+          color: tab.color,
+          projectName: project?.name,
+          waiting:
+            ptyAttention[tab.sessionId]?.state === "waiting" ||
+            (runningId != null &&
+              sessionAttention[runningId]?.state === "waiting"),
+        };
+      }),
+    [tabs, hosts, projects, sessionAttention, ptyAttention],
+  );
+
+  /** RUNNING rail: live open tabs first, then detached vault sessions. */
+  const railRunningItems = useMemo((): RailRunningItem[] => {
+    const items: RailRunningItem[] = [];
+    const openRunningIds = new Set<string>();
+
+    for (const tab of tabs) {
+      if (
+        tab.kind !== "terminal" &&
+        tab.kind !== "local" &&
+        tab.kind !== "sftp"
+      ) {
+        continue;
+      }
+      const host =
+        tab.hostId !== "local"
+          ? hosts.find((entry) => entry.id === tab.hostId)
+          : undefined;
+      const project = tab.projectId
+        ? projects.find((entry) => entry.id === tab.projectId)
+        : undefined;
+      const runningId = ptyToRunning.current.get(tab.sessionId);
+      if (runningId) openRunningIds.add(runningId);
+      items.push({
+        key: `open:${tab.sessionId}`,
+        kind: tab.kind === "sftp" ? "files" : "terminal",
+        label:
+          tab.kind === "sftp"
+            ? `${host?.label ?? tab.title} · files`
+            : project && host
+              ? `${project.name} · ${host.label}`
+              : (project?.name ?? host?.label ?? tab.title),
+        hostId: tab.hostId,
+        openSessionId: tab.sessionId,
+        runningId,
+        attentionState:
+          (runningId ? sessionAttention[runningId]?.state : undefined) ??
+          ptyAttention[tab.sessionId]?.state,
+      });
     }
-    if (activeTab.kind === "local") {
-      return activeTab.connected ? "Local" : "Local · closed";
+
+    for (const session of runningSessions) {
+      if (openRunningIds.has(session.id)) continue;
+      if (
+        session.projectId &&
+        tabs.some((tab) => tab.projectId === session.projectId)
+      ) {
+        continue;
+      }
+      items.push({
+        key: `detached:${session.id}`,
+        label: session.projectName,
+        hostId: session.hostId,
+        runningId: session.id,
+        attentionState: sessionAttention[session.id]?.state,
+      });
     }
-    const host = hosts.find((entry) => entry.id === activeTab.hostId);
-    const name = host?.label ?? activeTab.title;
-    const tunnels = tunnelActiveBySession[activeTab.sessionId] ?? 0;
-    if (!activeTab.connected) return `${name} · closed`;
-    if (tunnels > 0) {
-      return `${name} · ${tunnels} tunnel${tunnels === 1 ? "" : "s"}`;
-    }
-    return name;
-  })();
+
+    return items;
+  }, [tabs, hosts, projects, runningSessions, sessionAttention, ptyAttention]);
 
   // Tab selection is source of truth for what to show. Layout only wins when
   // it's a real split that still contains the active session.
@@ -2020,24 +2502,110 @@ function Workspace({
     if (tabs[0]) return leaf(tabs[0].sessionId);
     return null;
   })();
+  const layoutIsSplit = effectiveLayout?.type === "split";
+  const ptyTabs = tabs.filter(
+    (tab) => tab.kind === "terminal" || tab.kind === "local",
+  );
   const canZoom = Boolean(
     zoomedId || (effectiveLayout && effectiveLayout.type === "split"),
   );
 
+  function renderTerminalSession(
+    tab: (typeof tabs)[number],
+    focused: boolean,
+    visible: boolean,
+  ): React.JSX.Element {
+    const runningId = ptyToRunning.current.get(tab.sessionId);
+    const runningAttention = runningId
+      ? sessionAttention[runningId]
+      : undefined;
+    const attachedAttention = ptyAttention[tab.sessionId];
+    const attention = attachedAttention ?? runningAttention;
+    const runningSession = runningId
+      ? runningSessions.find((s) => s.id === runningId)
+      : undefined;
+    return (
+      <SessionView
+        pane
+        sessionId={tab.sessionId}
+        host={
+          tab.hostId !== "local"
+            ? hosts.find((h) => h.id === tab.hostId)
+            : undefined
+        }
+        cwd={tab.cwd}
+        gitBranch={tab.gitBranch}
+        connected={tab.connected}
+        active={focused}
+        visible={visible}
+        color={tab.color ?? DEFAULT_HOST_COLOR}
+        findOpen={inWorkspace && findSessionId === tab.sessionId}
+        waiting={attention?.state === "waiting"}
+        waitingMessage={attention?.message}
+        isAgentSession={Boolean(tab.projectId ?? runningSession?.projectId)}
+        onReview={() => {
+          activateSession(tab.sessionId);
+          void focusMainWindow();
+        }}
+        onJumpToAgent={() => {
+          activateSession(tab.sessionId);
+          setAssistOpen(true);
+        }}
+        sessionStartedAt={runningSession?.startedAt}
+        onFindOpen={() => setFindSessionId(tab.sessionId)}
+        onFindClose={() =>
+          setFindSessionId((current) =>
+            current === tab.sessionId ? undefined : current,
+          )
+        }
+        onPaste={(text) => pasteIntoTerminal(tab.sessionId, text)}
+        onSplitRight={() => void splitPane("horizontal")}
+        onSplitDown={() => void splitPane("vertical")}
+        onClose={() => void closeTab(tab.sessionId)}
+        onAssist={() => {
+          activateSession(tab.sessionId);
+          setAssistOpen(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex size-full flex-col bg-base">
       <TitleBar
-        connectionLabel={connectionLabel}
-        connected={Boolean(activeTab?.connected)}
+        tabs={titlebarTabs}
+        activeTabId={activeId}
+        inWorkspace={inWorkspace}
         openingLocal={openingLocal}
         canSplit={Boolean(activeTab && activeTab.kind !== "sftp")}
         zoomed={Boolean(zoomedId)}
         canZoom={canZoom}
         appVersion={appVersion}
-        showSidebarToggle={inWorkspace}
-        workspaceChrome={inWorkspace}
-        onToggleSidebar={toggleSidebar}
+        activeTunnelCount={activeTunnelCount}
         onOpenPalette={() => setPaletteOpen(true)}
+        onSelectTab={selectTab}
+        onCloseTab={(sessionId) => void closeTab(sessionId)}
+        onCloseOtherTabs={(keepId) => {
+          for (const tab of tabsRef.current) {
+            if (tab.sessionId !== keepId) void closeTab(tab.sessionId);
+          }
+        }}
+        onMoveTabToNewWindow={(sessionId) => {
+          activateSession(sessionId);
+          void moveActiveToNewWindow();
+        }}
+        onNewTab={() => {
+          const active = activeId
+            ? tabsRef.current.find((tab) => tab.sessionId === activeId)
+            : undefined;
+          const hostId = active?.hostId;
+          const host =
+            hostId && hostId !== "local"
+              ? hosts.find((entry) => entry.id === hostId)
+              : hosts[0];
+          if (host) void connect(host, { forceNew: true });
+          else void openLocal();
+        }}
         onOpenLocal={() => void openLocal()}
         onSplitRight={() => void splitPane("horizontal")}
         onSplitDown={() => void splitPane("vertical")}
@@ -2048,72 +2616,79 @@ function Workspace({
         onSettings={() => openSettings("general")}
         onAssistSettings={() => openSurface("assist")}
         onChangePassword={() => openSurface("vault")}
-        onOpenSurface={openSurface}
-        activeSurface={activeSurface}
         onAbout={() => setAboutOpen(true)}
         onLock={() => void lockNow()}
-        onGoLauncher={inWorkspace ? goLauncher : undefined}
-        onGoWorkspace={
-          !inWorkspace && tabs.length > 0 ? enterWorkspace : undefined
-        }
+        onGoLauncher={() => {
+          setLauncherSection("all");
+          goLauncher();
+        }}
+        railHidden={railHidden}
+        onToggleRail={toggleRail}
       />
 
       <UpdateBanner />
 
-      <div
-        className="relative grid min-h-0 flex-1 transition-[grid-template-columns] duration-150 max-md:block"
-        style={{
-          gridTemplateColumns: inWorkspace
-            ? `${sidebarCollapsed ? 52 : 248}px minmax(0, 1fr)`
-            : "minmax(0, 1fr)",
-        }}
-      >
-        {inWorkspace && (
-          <Sidebar
+      <div className="flex min-h-0 flex-1">
+        {!railHidden && (
+          <LeftRail
+            variant={inWorkspace ? "sessions" : "nav"}
+            collapsed={inWorkspace ? false : railCollapsed}
+            vaultStatus={status}
+            syncStatus={syncInfo}
+            hostCount={hosts.length}
+            projectCount={projects.length}
+            activeTunnelCount={activeTunnelCount}
+            runningItems={railRunningItems}
             hosts={hosts}
-            projects={projects}
-            runningSessions={runningSessions}
-            sessionAttention={sessionAttention}
-            openTabs={tabs}
-            activeTabId={activeId}
-            collapsed={sidebarCollapsed}
-            drawerOpen={drawerOpen}
-            recoveryAvailable={status.recoveryAvailable}
-            connectingHostId={connectingHostId}
-            openingFilesHostId={openingFilesHostId}
-            openingProjectId={openingProjectId}
-            onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
-            onConnect={(host) => void connect(host)}
-            onFiles={(host) => void openFiles(host)}
-            onEdit={setEditor}
-            onDelete={setPendingDelete}
-            onAddHost={() => {
-              setHostDraft(undefined);
-              setEditor("new");
+            activeSessionId={activeId}
+            activeNav={
+              activeSurface === "identities"
+                ? "identities"
+                : activeSurface === "assist"
+                  ? "assist"
+                  : inWorkspace || activeSurface
+                    ? null
+                    : railNav === "tunnels" || railNav === "files"
+                      ? railNav
+                      : launcherSection === "hosts"
+                        ? "hosts"
+                        : launcherSection === "projects"
+                          ? "projects"
+                          : "overview"
+            }
+            onNav={handleRailNav}
+            onGoHome={() => {
+              setLauncherSection("all");
+              closeSurface();
+              goLauncher();
             }}
-            onImport={() => setImportOpen(true)}
-            onOpenProject={(project) => void openProject(project)}
-            onEditProject={setProjectEditor}
-            onDeleteProject={setPendingDeleteProject}
-            onAddProject={() => setProjectEditor("new")}
-            onReattach={(session) => void reattachSession(session)}
-            onEndSession={(session) => void killRunningSession(session)}
-            onSelectTab={selectTab}
-            onCloseTab={(sessionId) => void closeTab(sessionId)}
-            onLock={() => void lockNow()}
-            agentLabel={(id) => agentDisplayName(agents, id)}
+            onOpenVault={() => openSurface("vault")}
+            onSettings={() => openSettings("general")}
+            onOpenRunning={(item) => {
+              if (item.openSessionId) {
+                selectTab(item.openSessionId);
+                return;
+              }
+              const session = runningSessions.find((s) => s.id === item.runningId);
+              if (session) void reattachSession(session);
+            }}
+            onCloseSession={(sessionId) => void closeTab(sessionId)}
+            onNewSession={() => {
+              const active = activeId
+                ? tabsRef.current.find((tab) => tab.sessionId === activeId)
+                : undefined;
+              const hostId = active?.hostId;
+              const host =
+                hostId && hostId !== "local"
+                  ? hosts.find((entry) => entry.id === hostId)
+                  : hosts[0];
+              if (host) void connect(host, { forceNew: true });
+              else void openLocal();
+            }}
           />
         )}
 
-        {inWorkspace && drawerOpen && (
-          <button
-            aria-label="Close hosts"
-            onClick={() => setDrawerOpen(false)}
-            className="absolute inset-0 z-20 bg-black/50 md:hidden"
-          />
-        )}
-
-        <main className="relative flex min-h-0 min-w-0 flex-col">
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {activeSurface === "vault" ? (
             <VaultSurface
               onClose={closeSurface}
@@ -2145,181 +2720,240 @@ function Workspace({
             <AgentsSurface agents={agents} onClose={closeSurface} />
           ) : activeSurface === "identities" ? (
             <IdentitiesSurface onClose={closeSurface} />
-          ) : !inWorkspace ? (
-            <Launcher
+          ) : railNav === "tunnels" ? (
+            <TunnelsView
               hosts={hosts}
-              projects={projects}
-              runningSessions={runningSessions}
-              sessionAttention={sessionAttention}
-              openHostIds={openHostIds}
-              error={error}
-              connectingHostId={connectingHostId}
-              openingFilesHostId={openingFilesHostId}
-              openingProjectId={openingProjectId}
-              onConnect={(host) => void connect(host)}
-              onFiles={(host) => void openFiles(host)}
-              onAgent={openAgentOnHost}
-              onEditHost={setEditor}
-              onDeleteHost={setPendingDelete}
-              onOpenProject={(project) => void openProject(project)}
-              onEditProject={setProjectEditor}
-              onDeleteProject={setPendingDeleteProject}
-              onReattach={(session) => void reattachSession(session)}
-              onEndSession={(session) => void killRunningSession(session)}
-              onAddHost={() => {
-                setHostDraft(undefined);
-                setEditor("new");
+              activeTunnelCount={activeTunnelCount}
+              onClose={() => {
+                setRailNav("hosts");
               }}
-              onAddProject={() => setProjectEditor("new")}
-              onImport={() => setImportOpen(true)}
-              onLocal={() => void openLocal()}
-              onQuickConnect={handleQuickConnect}
-              agentLabel={(id) => agentDisplayName(agents, id)}
+            />
+          ) : railNav === "files" ? (
+            <FilesView
+              hosts={hosts}
+              openingFilesHostId={openingFilesHostId}
+              onOpenFiles={(host) => void openFiles(host)}
+              onClose={() => setRailNav("hosts")}
             />
           ) : (
             <>
-              {tabs.length > 0 && (
-                <TabBar
-                  tabs={tabs}
-                  activeId={activeId}
-                  onSelect={selectTab}
-                  onClose={(sessionId) => void closeTab(sessionId)}
-                  onCloseOthers={(keepId) => {
-                    for (const tab of tabsRef.current) {
-                      if (tab.sessionId !== keepId) {
-                        void closeTab(tab.sessionId);
-                      }
-                    }
-                  }}
-                  onMoveToNewWindow={(sessionId) => {
-                    activateSession(sessionId);
-                    void moveActiveToNewWindow();
-                  }}
-                />
-              )}
-
-              {assistOpen &&
-                (() => {
-                  const context = assistContextForActive();
-                  if (!context) return null;
-                  return (
-                    <AssistBar
-                      context={context}
-                      reloadToken={assistKeysEpoch}
-                      onInsert={insertAssistCommand}
-                      onOpenSettings={() => openSurface("assist")}
-                      onClose={() => setAssistOpen(false)}
-                    />
-                  );
-                })()}
-
-              {activeTab &&
-                activeTab.kind === "terminal" &&
-                activeTab.connected && (
-                  <TunnelsPanel
-                    sessionId={activeTab.sessionId}
-                    connected={activeTab.connected}
-                    agentForward={activeTab.agentForward}
-                    agentForwardHint={activeTab.agentForwardHint}
-                  />
-                )}
-
-              <section className="relative min-h-0 flex-1">
-                {zoomedId && (
-                  <div className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-line bg-elevated/90 px-2 py-0.5 text-micro text-fg-muted">
-                    Zoomed — Esc to exit
-                  </div>
-                )}
-                {tabs.length === 0 || !effectiveLayout ? (
-                  <div className="grid size-full place-items-center gap-2 p-8 text-ui text-fg-muted">
-                    <span>No open tabs.</span>
-                    <button
-                      type="button"
-                      className="cursor-pointer text-accent hover:underline"
-                      onClick={goLauncher}
-                    >
-                      Back to Launcher
-                    </button>
-                  </div>
-                ) : (
-                  <SplitPanes
-                    layout={effectiveLayout}
-                    focusedId={activeId}
-                    zoomedId={zoomedId}
-                    narrow={narrow}
-                    onFocus={setActiveId}
-                    onLayoutChange={setLayout}
-                    renderPane={(sessionId, focused) => {
-                      const tab = tabs.find(
-                        (entry) => entry.sessionId === sessionId,
-                      );
-                      if (!tab) return null;
-                      if (tab.kind === "sftp") {
-                        return (
-                          <SftpBrowser
-                            key={tab.sessionId}
-                            pane
-                            sessionId={tab.sessionId}
-                            initialRemotePath={tab.remotePath ?? "."}
-                            initialLocalPath={tab.localPath ?? "/"}
-                            active={focused}
-                          />
-                        );
-                      }
+              {/* Keep session panes mounted across home round-trips so xterm
+                  scrollback survives. Hide with invisible — never unmount. */}
+              {tabs.length > 0 && effectiveLayout ? (
+                <div
+                  className={cn(
+                    "flex min-h-0 min-w-0 flex-1 flex-col",
+                    !inWorkspace &&
+                      "pointer-events-none absolute inset-0 z-0 opacity-0",
+                  )}
+                  aria-hidden={!inWorkspace}
+                >
+                  {assistOpen &&
+                    inWorkspace &&
+                    (() => {
+                      const context = assistContextForActive();
+                      if (!context) return null;
                       return (
-                        <TerminalView
-                          key={tab.sessionId}
-                          pane
-                          sessionId={tab.sessionId}
-                          active={focused}
-                          visible
-                          color={tab.color ?? DEFAULT_HOST_COLOR}
-                          findOpen={findSessionId === tab.sessionId}
-                          onFindOpen={() => setFindSessionId(tab.sessionId)}
-                          onFindClose={() =>
-                            setFindSessionId((current) =>
-                              current === tab.sessionId ? undefined : current,
-                            )
-                          }
-                          onPaste={(text) =>
-                            pasteIntoTerminal(tab.sessionId, text)
-                          }
-                          onSplitRight={() => void splitPane("horizontal")}
-                          onSplitDown={() => void splitPane("vertical")}
-                          onClose={() => void closeTab(tab.sessionId)}
-                          onAssist={() => {
-                            activateSession(tab.sessionId);
-                            setAssistOpen(true);
-                          }}
+                        <AssistBar
+                          context={context}
+                          reloadToken={assistKeysEpoch}
+                          onInsert={insertAssistCommand}
+                          onOpenSettings={() => openSurface("assist")}
+                          onClose={() => setAssistOpen(false)}
                         />
                       );
-                    }}
-                  />
-                )}
-              </section>
+                    })()}
 
-              {agentNotice && (
-                <button
-                  type="button"
-                  onClick={() => setAgentNotice(undefined)}
-                  className="absolute right-4 bottom-16 z-20 max-w-96 cursor-pointer rounded-md border border-accent/40 bg-elevated px-3 py-2 text-left text-micro text-fg shadow-lg shadow-black/50"
-                >
-                  {agentNotice}
-                </button>
-              )}
+                  {inWorkspace &&
+                    activeTab &&
+                    activeTab.kind === "terminal" &&
+                    activeTab.connected && (
+                      <TunnelsPanel
+                        sessionId={activeTab.sessionId}
+                        connected={activeTab.connected}
+                        agentForward={activeTab.agentForward}
+                        agentForwardHint={activeTab.agentForwardHint}
+                      />
+                    )}
 
-              {error && tabs.length > 0 && (
-                <button
-                  onClick={() => setError(undefined)}
-                  className="absolute right-4 bottom-4 z-20 max-w-96 cursor-pointer rounded-md border border-danger/40 bg-elevated px-3 py-2 text-left text-micro text-danger shadow-lg shadow-black/50"
-                >
-                  {error}
-                </button>
-              )}
+                  <section className="relative min-h-0 flex-1">
+                    {zoomedId && inWorkspace && (
+                      <div className="pointer-events-none absolute top-2 right-2 z-30 rounded border border-line bg-elevated/90 px-2 py-0.5 text-micro text-fg-muted">
+                        Zoomed — Esc to exit
+                      </div>
+                    )}
+
+                    {/* Persistent PTY pool: every terminal stays mounted across
+                        home ↔ session and tab switches (sftp). Hide with
+                        opacity (not visibility:hidden — that breaks xterm
+                        paint on WKWebView). Split layouts still use
+                        SplitPanes below for geometry. */}
+                    {ptyTabs.map((tab) => {
+                      const ownedBySplit =
+                        layoutIsSplit &&
+                        effectiveLayout != null &&
+                        containsSession(effectiveLayout, tab.sessionId);
+                      if (ownedBySplit) return null;
+                      const focused = tab.sessionId === activeId;
+                      const show =
+                        inWorkspace &&
+                        focused &&
+                        (tab.kind === "terminal" || tab.kind === "local") &&
+                        activeTab?.sessionId === tab.sessionId;
+                      return (
+                        <div
+                          key={tab.sessionId}
+                          className={cn(
+                            "absolute inset-0",
+                            show
+                              ? "z-10"
+                              : "pointer-events-none absolute inset-0 -z-10 opacity-0",
+                          )}
+                          aria-hidden={!show}
+                        >
+                          {renderTerminalSession(
+                            tab,
+                            show && focused,
+                            show,
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {layoutIsSplit && effectiveLayout ? (
+                      <SplitPanes
+                        layout={effectiveLayout}
+                        focusedId={activeId}
+                        zoomedId={zoomedId}
+                        narrow={narrow}
+                        onFocus={setActiveId}
+                        onLayoutChange={setLayout}
+                        renderPane={(sessionId, focused) => {
+                          const tab = tabs.find(
+                            (entry) => entry.sessionId === sessionId,
+                          );
+                          if (!tab) return null;
+                          if (tab.kind === "sftp") {
+                            return (
+                              <SftpBrowser
+                                key={tab.sessionId}
+                                pane
+                                sessionId={tab.sessionId}
+                                initialRemotePath={tab.remotePath ?? "."}
+                                initialLocalPath={tab.localPath ?? "/"}
+                                active={focused && inWorkspace}
+                              />
+                            );
+                          }
+                          return renderTerminalSession(
+                            tab,
+                            focused && inWorkspace,
+                            inWorkspace,
+                          );
+                        }}
+                      />
+                    ) : null}
+
+                    {inWorkspace && activeTab?.kind === "sftp" ? (
+                      <div className="absolute inset-0 z-20">
+                        <SftpBrowser
+                          key={activeTab.sessionId}
+                          pane
+                          sessionId={activeTab.sessionId}
+                          initialRemotePath={activeTab.remotePath ?? "."}
+                          initialLocalPath={activeTab.localPath ?? "/"}
+                          active
+                        />
+                      </div>
+                    ) : null}
+                  </section>
+
+                  {agentNotice && inWorkspace && (
+                    <button
+                      type="button"
+                      onClick={() => setAgentNotice(undefined)}
+                      className="absolute right-4 bottom-16 z-20 max-w-96 cursor-pointer rounded-md border border-accent/40 bg-elevated px-3 py-2 text-left text-micro text-fg shadow-lg shadow-black/50"
+                    >
+                      {agentNotice}
+                    </button>
+                  )}
+
+                  {error && tabs.length > 0 && inWorkspace && (
+                    <button
+                      onClick={() => setError(undefined)}
+                      className="absolute right-4 bottom-4 z-20 max-w-96 cursor-pointer rounded-md border border-danger/40 bg-elevated px-3 py-2 text-left text-micro text-danger shadow-lg shadow-black/50"
+                    >
+                      {error}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+
+              {!inWorkspace ? (
+                <Launcher
+                  section={launcherSection}
+                  onOpenLocal={() => void openLocal()}
+                  hosts={hosts}
+                  projects={projects}
+                  runningSessions={runningSessions}
+                  sessionAttention={sessionAttention}
+                  openHostIds={openHostIds}
+                  error={error}
+                  connectingHostId={connectingHostId}
+                  openingFilesHostId={openingFilesHostId}
+                  openingProjectId={openingProjectId}
+                  onConnect={(host, opts) => void connect(host, opts)}
+                  onFiles={(host) => void openFiles(host)}
+                  onAgent={openAgentOnHost}
+                  onEditHost={setEditor}
+                  onDeleteHost={setPendingDelete}
+                  onOpenProject={(project) => void openProject(project)}
+                  onEditProject={setProjectEditor}
+                  onDeleteProject={setPendingDeleteProject}
+                  onReattach={(session) => void reattachSession(session)}
+                  onEndSession={(session) => void killRunningSession(session)}
+                  onAddHost={() => {
+                    setHostDraft(undefined);
+                    setEditor("new");
+                  }}
+                  onAddProject={() => setProjectEditor("new")}
+                  onImport={() => setImportOpen(true)}
+                  onLocal={() => void openLocal()}
+                  onQuickConnect={handleQuickConnect}
+                  onCreateGroup={(name, hostIds) => {
+                    void (async () => {
+                      try {
+                        for (const id of hostIds) {
+                          const host = hosts.find((h) => h.id === id);
+                          if (!host || host.tags.includes(name)) continue;
+                          await setHostTags(id, [...host.tags, name]);
+                        }
+                        setHosts(await listHosts());
+                      } catch (reason) {
+                        setError(String(reason));
+                      }
+                    })();
+                  }}
+                  agentLabel={(id) => agentDisplayName(agents, id)}
+                />
+              ) : tabs.length === 0 || !effectiveLayout ? (
+                <div className="grid size-full place-items-center gap-2 p-8 text-ui text-fg-muted">
+                  <span>No open tabs.</span>
+                  <button
+                    type="button"
+                    className="cursor-pointer text-accent hover:underline"
+                    onClick={goLauncher}
+                  >
+                    Back to hosts
+                  </button>
+                </div>
+              ) : null}
             </>
           )}
         </main>
       </div>
+
+      <BlockMenuHost />
 
       <CommandPalette
         open={paletteOpen}
@@ -2347,6 +2981,7 @@ function Workspace({
           setHostDraft(undefined);
           setEditor("new");
         }}
+        onAddProject={() => setProjectEditor("new")}
         onImport={() => setImportOpen(true)}
         onSync={() => openSurface("vault")}
         onSettings={(section) => openSettings(section ?? "general")}
@@ -2360,8 +2995,8 @@ function Workspace({
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         initialSection={settingsSection}
-        sidebarCollapsed={sidebarCollapsed}
-        onSidebarCollapsedChange={setSidebarCollapsed}
+        sidebarCollapsed={railCollapsed}
+        onSidebarCollapsedChange={setRailCollapsed}
         onOpenSurface={(surface) => {
           setSettingsOpen(false);
           openSurface(surface);

@@ -9,20 +9,27 @@ export type SessionAttention = {
   noWatch?: boolean;
 };
 
-/** Explicit signals beat silence; never regress done/failed → waiting via silence. */
+/**
+ * Merge attention updates. Waiting is only accepted from explicit agent
+ * signals (`bel` / `osc`). Silence never arms waiting (idle shells must stay
+ * clean). Exit/activity/tmux may still clear or set non-waiting states.
+ */
 export function mergeAttention(
   prev: SessionAttention | undefined,
   next: SessionAttention,
   source: string,
 ): SessionAttention {
   if (source === "silence") {
-    if (
-      prev?.state === "waiting" ||
-      prev?.state === "done" ||
-      prev?.state === "failed"
-    ) {
-      return prev;
-    }
+    return prev ?? { state: "running" };
+  }
+  if (
+    next.state === "waiting" &&
+    source !== "bel" &&
+    source !== "osc" &&
+    source !== "tmux"
+  ) {
+    // Defense: unknown sources cannot raise the Review banner.
+    return prev ?? { state: "running", noWatch: next.noWatch };
   }
   return {
     state: next.state,
@@ -54,5 +61,16 @@ export function attentionLabel(state: AgentAttentionState): string {
       return "failed";
     default:
       return "running";
+  }
+}
+
+export function attentionDotClass(state: AgentAttentionState): string {
+  switch (state) {
+    case "waiting":
+      return "bg-warning";
+    case "failed":
+      return "bg-danger";
+    default:
+      return "bg-success";
   }
 }

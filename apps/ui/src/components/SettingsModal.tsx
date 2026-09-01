@@ -162,7 +162,7 @@ function SectionHeading({
 }): React.JSX.Element {
   const entry = SECTIONS.find((item) => item.id === section);
   return (
-    <h3 className="mt-0 mb-4 text-[15px] font-semibold text-fg">
+    <h3 className="mt-0 mb-5 border-b border-line pb-3 text-[15px] font-semibold text-fg">
       {entry?.label ?? "Settings"}
     </h3>
   );
@@ -296,11 +296,17 @@ function SettingsBody({
             className={cn(
               "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
               section === entry.id
-                ? "bg-hover text-fg"
+                ? "bg-active text-fg"
                 : "text-fg-muted hover:bg-hover/60 hover:text-fg",
             )}
           >
-            <span className="text-fg-subtle">{entry.icon}</span>
+            <span
+              className={cn(
+                section === entry.id ? "text-accent" : "text-fg-subtle",
+              )}
+            >
+              {entry.icon}
+            </span>
             {entry.label}
           </button>
         ))}
@@ -347,30 +353,31 @@ function GeneralSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 rounded-md border border-line bg-base px-3 py-3">
-        <span className="text-ui font-medium text-fg">Manage</span>
-        <p className="m-0 text-micro text-fg-muted">
-          Workflow features live on their own surfaces — not in Settings.
-        </p>
-        <div className="flex flex-col gap-1">
-          {(
-            [
-              ["vault", "Manage vault →"],
-              ["assist", "Manage Assist providers →"],
-              ["agents", "Manage agents →"],
-              ["identities", "Manage identities →"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className="cursor-pointer text-left text-ui text-accent hover:underline"
-              onClick={() => onOpenSurface(id)}
-            >
-              {label}
-            </button>
-          ))}
+      <div className="overflow-hidden rounded-xl border border-line bg-elevated">
+        <div className="border-b border-line px-4 py-3">
+          <span className="text-ui font-medium text-fg">Manage</span>
+          <p className="m-0 mt-0.5 text-micro text-fg-muted">
+            Workflow features live on their own surfaces — not in Settings.
+          </p>
         </div>
+        {(
+          [
+            ["vault", "Vault & sync"],
+            ["assist", "Assist providers"],
+            ["agents", "Agents"],
+            ["identities", "Identities & keys"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className="flex w-full cursor-pointer items-center justify-between border-b border-line px-4 py-2.5 text-left text-ui text-fg transition-colors last:border-b-0 hover:bg-hover"
+            onClick={() => onOpenSurface(id)}
+          >
+            {label}
+            <span aria-hidden className="text-fg-subtle">→</span>
+          </button>
+        ))}
       </div>
       <PrefRow
         title="Default landing"
@@ -378,7 +385,7 @@ function GeneralSection({
         defaultLabel="Launcher"
       >
         <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
           value={landing}
           onChange={(event) => {
             const next = event.target.value as LandingPref;
@@ -472,7 +479,7 @@ function AppearanceSection({
         defaultLabel="Expanded"
       >
         <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
           value={sidebarCollapsed ? "rail" : "expanded"}
           onChange={(event) => {
             onSidebarCollapsedChange(event.target.value === "rail");
@@ -501,7 +508,7 @@ function AppearanceSection({
         }}
       >
         <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
           value={material}
           disabled={busy}
           onChange={(event) => {
@@ -612,7 +619,7 @@ function TerminalSection(): React.JSX.Element {
         }}
       >
         <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
           value={fontFamily}
           onChange={(event) => {
             setFontFamily(event.target.value);
@@ -620,7 +627,7 @@ function TerminalSection(): React.JSX.Element {
             apply();
           }}
         >
-          <option value="JetBrains Mono">JetBrains Mono</option>
+          <option value="JetBrains Mono Variable">JetBrains Mono</option>
           <option value="SF Mono">SF Mono</option>
           <option value="Menlo">Menlo</option>
           <option value="Cascadia Code">Cascadia Code</option>
@@ -701,7 +708,7 @@ function TerminalSection(): React.JSX.Element {
         }}
       >
         <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
           value={cursorStyle}
           onChange={(event) => {
             const next = event.target.value as CursorStylePref;
@@ -737,7 +744,7 @@ function TerminalSection(): React.JSX.Element {
         }}
       >
         <select
-          className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+          className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
           value={scrollback}
           onChange={(event) => {
             const next = Number(event.target.value);
@@ -879,7 +886,7 @@ function KeyboardSection({
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Search shortcuts"
-        className="h-8 rounded-md border border-line bg-base px-2 text-ui text-fg"
+        className="h-8 cursor-pointer rounded-lg border border-line-strong bg-surface px-2.5 text-ui text-fg outline-none transition-colors hover:bg-hover focus:border-accent"
       />
       <div className="flex flex-col gap-1">
         {filtered.map(([label, shortcut]) => (
@@ -968,9 +975,9 @@ function PrefRow({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-elevated px-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className="text-ui text-fg">{title}</div>
+        <div className="text-ui font-medium text-fg">{title}</div>
         <div className="text-micro text-fg-subtle">{detail}</div>
         {defaultLabel && (
           <button
@@ -1021,7 +1028,7 @@ function ToggleRow({
         onClick={() => onChange(!checked)}
         className={cn(
           "relative h-6 w-10 cursor-pointer rounded-full border transition-colors",
-          checked ? "border-accent bg-accent" : "border-line bg-base",
+          checked ? "border-accent bg-accent" : "border-line-strong bg-active",
         )}
       >
         <span

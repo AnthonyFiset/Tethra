@@ -98,6 +98,8 @@ export interface HostMutation {
   tunnels?: TunnelDefinitionDto[];
   /** Opt-in SSH agent forwarding. Default off. */
   forwardAgent?: boolean;
+  /** Connect with the machine's default SSH keys (~/.ssh/id_*). */
+  useDefaultKeys?: boolean;
 }
 
 export function vaultStatus(): Promise<VaultStatusDto> {
@@ -171,6 +173,14 @@ export function updateHost(
 
 export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
+}
+
+/** Replace a host's tags only — never touches auth or connection settings. */
+export function setHostTags(
+  id: string,
+  tags: string[],
+): Promise<HostSummaryDto> {
+  return invoke<HostSummaryDto>("set_host_tags", { id, tags });
 }
 
 export function listIdentities(): Promise<IdentitySummaryDto[]> {
@@ -466,11 +476,13 @@ export function openTerminal(
   hostId: string,
   cols: number,
   rows: number,
+  muxSession?: string,
 ): Promise<OpenTerminalResultDto> {
   return invoke<OpenTerminalResultDto>("open_terminal", {
     hostId,
     cols,
     rows,
+    muxSession: muxSession ?? null,
   });
 }
 
@@ -536,6 +548,14 @@ export function suppressPtyUserInput(durationMs = 800): void {
   );
 }
 
+/**
+ * Per-session write chain. `terminal_input` is an async Tauri command — every
+ * call is its own task racing for the session lock, so two keystrokes in
+ * flight at once could reach the PTY swapped (a burst of `qrstuvw` landed as
+ * `rusvtw` over SSH). Serialize here; a failed write never poisons the chain.
+ */
+const terminalInputChains = new Map<string, Promise<void>>();
+
 export function sendTerminalInput(
   sessionId: string,
   data: Uint8Array,
@@ -544,10 +564,19 @@ export function sendTerminalInput(
   if (!options?.force && Date.now() < ptyUserInputSuppressedUntil) {
     return Promise.resolve();
   }
-  return invoke("terminal_input", {
-    sessionId,
-    data: Array.from(data),
+  const payload = Array.from(data);
+  const prev = terminalInputChains.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(() =>
+    invoke<void>("terminal_input", { sessionId, data: payload }),
+  );
+  const settled = next.catch(() => undefined);
+  terminalInputChains.set(sessionId, settled);
+  void settled.then(() => {
+    if (terminalInputChains.get(sessionId) === settled) {
+      terminalInputChains.delete(sessionId);
+    }
   });
+  return next;
 }
 
 export function resizeTerminal(
@@ -583,6 +612,28 @@ export function onVaultStatus(
   return listen<VaultStatusDto>("vault-status", (event) =>
     handler(event.payload),
   );
+}
+
+/** OS file drag over/onto the window (Finder → SFTP upload). */
+export type OsFileDropEvent =
+  | { type: "enter" | "over" }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
+/**
+ * Subscribe to native file drags on the current webview. Resolves with the
+ * unlisten fn; the web harness has no OS drags (mock resolves a no-op).
+ */
+export async function onOsFileDrop(
+  handler: (event: OsFileDropEvent) => void,
+): Promise<UnlistenFn> {
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  return getCurrentWebview().onDragDropEvent((event) => {
+    const p = event.payload;
+    if (p.type === "drop") handler({ type: "drop", paths: p.paths });
+    else if (p.type === "enter" || p.type === "over") handler({ type: p.type });
+    else handler({ type: "leave" });
+  });
 }
 
 export function onVaultLocked(handler: () => void): Promise<UnlistenFn> {

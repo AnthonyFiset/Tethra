@@ -1,8 +1,9 @@
 # Tethra roadmap
 
-_Revision 7 — 2026-08-21 (v0.4.0 shipped: signing, ⌘F, SFTP recursive, tunnels,
-agent forwarding). Current plan. Filename stays `ROADMAP.md`; bump the revision
-line, not the name._
+_Revision 8 — 2026-08-31 (v0.5.0 shipped: the visual overhaul — Warp blocks ×
+Termius organization, invisible tmux, full-screen agent handling, real-app QA
+harness). Current plan. Filename stays `ROADMAP.md`; bump the revision line,
+not the name._
 
 _Supersedes archived `docs/archive/ROADMAP-v2.md` / `ROADMAP-v3.md`._
 
@@ -91,6 +92,19 @@ rotated key — v0.2.11 machines updated to v0.3.1 cleanly. (The `v0.3.0` tag
 exists but never published installers; its release run stalled and v0.3.1 was
 stamped on the same tree.)
 
+### v0.5.0 — the visual overhaul — shipped 2026-08-31
+Warp-style command blocks (OSC 133 chrome headers, torture-QA'd streams,
+`/clear`), invisible tmux persistence per host tab, full-screen apps owning the
+session (prompt panel + chrome stand down and return; DEC 2026 ED2 rewrite
+kills agent scroll-jump), terminal rendering correctness (generated full-cell
+`Tethra Blocks` font for U+2580–259F, lineHeight 1.0, FitAddon padding fix,
+post-attach scrollback sweep, viewport on the app ramp), home/workspace card
+language with Overview rail + session sidebar + Finder drag-in, session
+restore across reload/restart, and the real-app QA harness
+(`scripts/app-drive.mjs`, docs/QA.md §1a) that gates terminal work in the live
+WKWebView. See `CHANGELOG.md` and PR #2. The Windows-native pass and command
+history search originally penciled for v0.5.0 move to v0.6.0.
+
 ---
 
 ## Part 2 — Known bugs and gaps
@@ -113,7 +127,7 @@ stamped on the same tree.)
 | SFTP no recursive folder transfer | ✅ Recursive upload/download with aggregate progress | v0.4.0 |
 | No terminal search (⌘F) | ✅ `@xterm/addon-search` find bar | v0.4.0 |
 | **No SSH agent forwarding** | ✅ Per-host opt-in (`ssh -A`) | v0.4.0 |
-| Windows is a copy-paste of the Mac build | Platform quality | v0.5.0 |
+| Windows is a copy-paste of the Mac build | Platform quality | v0.6.0 |
 | Jump hosts metadata-only; no FleetExec/snippets | Deferred | v0.6.0 |
 | Mobile stub only | Deferred | Last |
 
@@ -210,7 +224,7 @@ days after first signed installs.
 [`docs/milestones/M12.5.md`](docs/milestones/M12.5.md) Track C landed the
 foundation: a `ChromeStyle` abstraction (`'mac' | 'win' | 'linux'`) resolved once,
 `tauri-plugin-decoration`, Segoe UI Variable, caption-button clearance, system
-accent, Mica opt-in via Track B. What remains for v0.5.0 is the deeper pass —
+accent, Mica opt-in via Track B. What remains for v0.6.0 is the deeper pass —
 Fluent settings page, acrylic tuning, per-platform QA — so Windows feels native
 rather than ported.
 
@@ -228,8 +242,8 @@ macOS traffic-light inset, so one crate covers both.
 | **v0.3.0** | Azure OpenAI preset, BYOK injection, Launcher Running, Settings fill/hide, Track D design | ✅ Tagged; installers shipped as v0.3.1 |
 | **v0.3.1** | Version re-stamp of v0.3.0; first proven auto-update | ✅ Shipped |
 | **v0.4.0** | Agent notifications, SSH agent forwarding, code signing, port forwarding, SFTP recursive, terminal search | Table stakes + wedge notifications |
-| **v0.5.0** | Windows native chrome, command history search | Platform quality |
-| **v0.6.0** | Live ProxyJump, FleetExec, snippets, cross-device scrollback | Fleet features |
+| **v0.5.0** | Visual overhaul: blocks, invisible tmux, full-screen agents, real-app QA harness | ✅ Shipped |
+| **v0.6.0** | Windows native chrome, command history search, live ProxyJump, FleetExec, snippets, cross-device scrollback | Platform quality + fleet features |
 | **Later** | Hosted sync tier, mobile | See Part 5 |
 
 **v0.4.0 carries the wedge** — notifications are what make persistence useful

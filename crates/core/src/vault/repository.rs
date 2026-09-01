@@ -44,6 +44,10 @@ pub struct HostSummary {
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
     pub forward_agent: bool,
+    /// Host authenticates with the machine's default SSH keys (~/.ssh/id_*).
+    pub use_default_keys: bool,
+    /// Last successful terminal open (UTC).
+    pub last_connected_at: Option<chrono::DateTime<Utc>>,
 }
 
 impl From<&Host> for HostSummary {
@@ -67,6 +71,8 @@ impl From<&Host> for HostSummary {
             shell_integration: host.shell_integration,
             tunnels: host.tunnels.clone(),
             forward_agent: host.forward_agent,
+            use_default_keys: host.use_default_keys,
+            last_connected_at: host.last_connected_at,
         }
     }
 }
@@ -87,6 +93,8 @@ pub struct CreateHostRequest {
     pub shell_integration: ShellIntegration,
     pub tunnels: Vec<TunnelDefinition>,
     pub forward_agent: bool,
+    /// Authenticate with the machine's default SSH keys (no stored secret).
+    pub use_default_keys: bool,
 }
 
 /// Non-secret identity metadata for UI / IPC.
@@ -244,6 +252,7 @@ impl VaultRepository {
         host.shell_integration = request.shell_integration;
         host.tunnels = request.tunnels;
         host.forward_agent = request.forward_agent;
+        host.use_default_keys = request.use_default_keys;
 
         if let Some(identity_id) = request.identity_id {
             let (identity, _) = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -405,6 +414,7 @@ impl VaultRepository {
         record.shell_integration = request.shell_integration;
         record.tunnels = request.tunnels;
         record.forward_agent = request.forward_agent;
+        record.use_default_keys = request.use_default_keys;
 
         if let Some(identity_id) = request.identity_id {
             let _ = get_encrypted_json::<IdentityRecord>(&self.vault, identity_id)
@@ -458,6 +468,31 @@ impl VaultRepository {
             .await?;
         }
 
+        let next = row.version + 1;
+        put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
+        let host = Host::from(record);
+        let (has_password, auth_kind, sync_secret) = self.identity_meta(host.identity_id).await?;
+        let mut summary = HostSummary::from(&host);
+        summary.has_password = has_password;
+        summary.auth_kind = auth_kind;
+        summary.sync_secret = sync_secret;
+        Ok(summary)
+    }
+
+    /// Replace a host's tags only — safe partial update for group management
+    /// (never touches auth, tunnels, or connection settings).
+    pub async fn set_host_tags(&self, id: Uuid, tags: Vec<String>) -> Result<HostSummary> {
+        let (mut record, row) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Host {
+            return Err(Error::InvalidArgument("item is not a host".into()));
+        }
+        let mut cleaned: Vec<String> = tags
+            .into_iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        cleaned.dedup();
+        record.tags = cleaned;
         let next = row.version + 1;
         put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
         let host = Host::from(record);
@@ -1089,6 +1124,24 @@ impl VaultRepository {
         Ok((false, fingerprint))
     }
 
+    /// Stamp a successful connect for Arrange-by Recent ordering.
+    pub async fn touch_host_connected(&self, id: Uuid) -> Result<HostSummary> {
+        let (mut record, row) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
+        if row.kind != ItemKind::Host {
+            return Err(Error::InvalidArgument("item is not a host".into()));
+        }
+        record.last_connected_at = Some(Utc::now());
+        let next = row.version + 1;
+        put_encrypted_json(&self.vault, id, ItemKind::Host, next, false, false, &record).await?;
+        let host = Host::from(record);
+        let (has_password, auth_kind, sync_secret) = self.identity_meta(host.identity_id).await?;
+        let mut summary = HostSummary::from(&host);
+        summary.has_password = has_password;
+        summary.auth_kind = auth_kind;
+        summary.sync_secret = sync_secret;
+        Ok(summary)
+    }
+
     pub async fn get_host(&self, id: Uuid) -> Result<Host> {
         let (record, _) = get_encrypted_json::<HostRecord>(&self.vault, id).await?;
         Ok(Host::from(record))
@@ -1244,6 +1297,9 @@ impl HostStore for VaultRepository {
 #[async_trait]
 impl AuthProvider for VaultRepository {
     async fn credentials_for(&self, host: &Host) -> Result<AuthMaterial> {
+        if host.identity_id.is_none() && host.use_default_keys {
+            return Ok(AuthMaterial::DefaultKeys);
+        }
         let identity_id = host
             .identity_id
             .ok_or_else(|| Error::InvalidArgument("host has no identity".into()))?;
@@ -1296,6 +1352,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "lab".into(),
                 hostname: "127.0.0.1".into(),
                 port: 2222,
@@ -1331,6 +1388,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let host = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "box".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -1376,6 +1434,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let host = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "box".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -1467,6 +1526,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "lab".into(),
                 hostname: "127.0.0.1".into(),
                 port: 2222,
@@ -1508,6 +1568,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "old".into(),
                 hostname: "10.0.0.1".into(),
                 port: 22,
@@ -1527,6 +1588,7 @@ mod tests {
             .update_host(
                 created.id,
                 CreateHostRequest {
+                    use_default_keys: false,
                     label: "new".into(),
                     hostname: "10.0.0.2".into(),
                     port: 2222,
@@ -1559,6 +1621,7 @@ mod tests {
         let (_dir, repo) = unlocked_repo().await;
         let existing = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "target".into(),
                 hostname: "old.example.com".into(),
                 port: 22,
@@ -1649,6 +1712,7 @@ ZPzL/y8ftsnYTWVDR71ZAAAAEHRlc3RAdGV0aHJhLmxvY2FsAQIDBA==
 
         let created = repo
             .create_host(CreateHostRequest {
+                use_default_keys: false,
                 label: "tethra-vm".into(),
                 hostname: "1.2.3.4".into(),
                 port: 22,

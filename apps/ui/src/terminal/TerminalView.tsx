@@ -7,8 +7,13 @@ import {
   clearTerminal,
   copyTerminalSelection,
   fitTerminal,
+  getTerminalInstance,
   getTerminalSelectionForCopy,
 } from "./registry";
+import {
+  scheduleBlockOverlaySync,
+  setBlockOverlayHost,
+} from "./blockOverlay";
 import { TerminalFindBar } from "./TerminalFindBar";
 
 interface TerminalViewProps {
@@ -29,6 +34,8 @@ interface TerminalViewProps {
   onSplitDown?: () => void;
   onClose?: () => void;
   onAssist?: (selection?: string) => void;
+  /** `session` omits the host-color top hairline (context bar replaces it). */
+  chrome?: "default" | "session";
 }
 
 interface MenuState {
@@ -58,29 +65,62 @@ export function TerminalView({
   onSplitDown,
   onClose,
   onAssist,
+  chrome = "default",
 }: TerminalViewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
+    const overlay = overlayRef.current;
     if (!container) return;
 
     attachTerminal(sessionId, container);
     let fitTimer: number | undefined;
     const observer = new ResizeObserver(() => {
-      if (!visible) return;
+      if (!visibleRef.current) return;
       window.clearTimeout(fitTimer);
-      fitTimer = window.setTimeout(() => fitTerminal(sessionId), 180);
+      fitTimer = window.setTimeout(() => {
+        fitTerminal(sessionId);
+        scheduleBlockOverlaySync(sessionId);
+      }, 180);
     });
     observer.observe(container);
+
+    const terminal = getTerminalInstance(sessionId);
+    if (terminal && overlay) {
+      setBlockOverlayHost(sessionId, overlay, terminal);
+    }
 
     return () => {
       observer.disconnect();
       window.clearTimeout(fitTimer);
+      setBlockOverlayHost(sessionId, null, null);
     };
-  }, [sessionId, visible]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const overlay = overlayRef.current;
+    const terminal = getTerminalInstance(sessionId);
+    if (terminal && overlay) {
+      setBlockOverlayHost(sessionId, overlay, terminal);
+      scheduleBlockOverlaySync(sessionId);
+    }
+    requestAnimationFrame(() => {
+      fitTerminal(sessionId);
+      try {
+        terminal?.refresh(0, (terminal.rows || 1) - 1);
+      } catch {
+        // ignore
+      }
+      scheduleBlockOverlaySync(sessionId);
+    });
+  }, [visible, sessionId]);
 
   useEffect(() => {
     if (active && visible) {
@@ -149,7 +189,8 @@ export function TerminalView({
       )}
       data-terminal-surface
       style={{
-        boxShadow: `inset 0 3px 0 0 ${color}`,
+        boxShadow:
+          chrome === "session" ? undefined : `inset 0 3px 0 0 ${color}`,
         backgroundColor: "var(--terminal-bg, #0d0d0d)",
       }}
       onContextMenu={(event) => {
@@ -162,10 +203,21 @@ export function TerminalView({
         });
       }}
     >
+      {/* Padding lives on .xterm (styles.css), NOT here: FitAddon reads this
+          div's border-box height but only subtracts the xterm element's own
+          padding — padding here made it propose rows that overflow the box
+          (clipped bottom status row + phantom viewport scrollbar). */}
       <div
         ref={containerRef}
         aria-label="SSH terminal"
-        className="size-full overflow-hidden px-3 py-2"
+        className="size-full overflow-hidden"
+      />
+      {/* Unpadded: overlay math uses live cell metrics against this root.
+          overflow visible so a waiting banner below the last row can paint
+          into the prompt strip instead of being clipped to a hairline. */}
+      <div
+        ref={overlayRef}
+        className="tethra-block-overlay-root pointer-events-none absolute inset-0 overflow-visible"
       />
 
       <TerminalFindBar

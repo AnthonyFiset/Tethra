@@ -84,6 +84,7 @@ export interface HostMutation {
   shellIntegration?: boolean;
   tunnels?: TunnelDefinitionDto[];
   forwardAgent?: boolean;
+  useDefaultKeys?: boolean;
 }
 
 export interface ProjectMutation {
@@ -197,36 +198,112 @@ const state: {
   idleLockSecs: 900,
   hosts: [
     {
-      id: "host-password",
-      label: "Staging web",
-      hostname: "staging.example.com",
+      id: "host-vm",
+      label: "tethra-vm",
+      hostname: "52.150.38.5",
       port: 22,
-      username: "deploy",
-      hasPassword: true,
-      identityId: "id-password",
-      authKind: "password",
-      syncSecret: false,
-      color: "#3b82f6",
-      tags: ["staging", "web"],
-      shellIntegration: true,
-      tunnels: [TUNNEL_DB],
-      forwardAgent: false,
-    },
-    {
-      id: "host-key",
-      label: "Prod bastion",
-      hostname: "bastion.example.com",
-      port: 22,
-      username: "ops",
+      username: "anthony",
       hasPassword: false,
       identityId: "id-key",
       authKind: "sshKey",
       syncSecret: true,
-      color: "#10b981",
-      tags: ["prod"],
+      color: "#3fb950",
+      tags: ["azure", "prod"],
+      shellIntegration: true,
+      tunnels: [TUNNEL_DB],
+      forwardAgent: true,
+      useDefaultKeys: false,
+      lastConnectedAt: "2026-08-20T18:00:00Z",
+    },
+    {
+      id: "host-mini",
+      label: "Mac mini",
+      hostname: "100.80.50.90",
+      port: 22,
+      username: "anthony",
+      hasPassword: false,
+      identityId: "id-key",
+      authKind: "sshKey",
+      syncSecret: false,
+      color: "#8bb8ff",
+      tags: ["azure", "staging"],
       shellIntegration: true,
       tunnels: [TUNNEL_REMOTE],
-      forwardAgent: true,
+      forwardAgent: false,
+      useDefaultKeys: false,
+      lastConnectedAt: "2026-08-22T12:00:00Z",
+    },
+    {
+      id: "host-vps",
+      label: "VPS NLD",
+      hostname: "216.250.118.11",
+      port: 22,
+      username: "root",
+      hasPassword: true,
+      identityId: "id-password",
+      authKind: "password",
+      syncSecret: false,
+      color: "#ff8a80",
+      tags: ["trading"],
+      shellIntegration: false,
+      tunnels: [],
+      forwardAgent: false,
+      useDefaultKeys: false,
+      lastConnectedAt: null,
+    },
+    {
+      id: "host-win",
+      label: "tethra-win",
+      hostname: "20.114.7.32",
+      port: 22,
+      username: "anthony",
+      hasPassword: false,
+      identityId: "id-key",
+      authKind: "sshKey",
+      syncSecret: false,
+      color: "#c9a6f5",
+      tags: ["azure", "rdp"],
+      shellIntegration: true,
+      tunnels: [],
+      forwardAgent: false,
+      useDefaultKeys: false,
+      lastConnectedAt: "2026-08-10T09:00:00Z",
+    },
+    {
+      id: "host-pi",
+      label: "Pi cluster",
+      hostname: "10.0.0.12",
+      port: 22,
+      username: "pi",
+      hasPassword: false,
+      identityId: "id-key",
+      authKind: "sshKey",
+      syncSecret: false,
+      color: "#4dd0e1",
+      tags: ["staging"],
+      shellIntegration: true,
+      tunnels: [],
+      forwardAgent: false,
+      useDefaultKeys: false,
+      lastConnectedAt: "2026-08-23T08:00:00Z",
+    },
+    {
+      id: "host-lab",
+      label: "Home lab",
+      hostname: "10.0.1.50",
+      port: 22,
+      username: "anthony",
+      hasPassword: false,
+      identityId: "id-key",
+      authKind: "sshKey",
+      syncSecret: false,
+      color: "#3fb950",
+      tags: ["staging"],
+      shellIntegration: true,
+      tunnels: [],
+      forwardAgent: false,
+      useDefaultKeys: false,
+      lastConnectedAt: "2026-08-01T12:00:00Z",
     },
   ] as HostSummaryDto[],
   identities: [
@@ -252,11 +329,27 @@ const state: {
   projects: [
     {
       id: "proj-1",
-      name: "tethra-web",
-      location: { kind: "remote", hostId: "host-password", path: "/srv/tethra" },
+      name: "api-refactor",
+      location: { kind: "remote", hostId: "host-vm", path: "/srv/tethra" },
       defaultAgent: "claude",
       assistKeyId: "key-1",
-      lastOpened: "2026-08-20T18:00:00Z",
+      lastOpened: "2026-08-23T08:05:00Z",
+    },
+    {
+      id: "proj-2",
+      name: "deploy-watch",
+      location: { kind: "remote", hostId: "host-mini", path: "/opt/app" },
+      defaultAgent: "claude",
+      assistKeyId: "key-1",
+      lastOpened: "2026-08-22T14:00:00Z",
+    },
+    {
+      id: "proj-3",
+      name: "logs",
+      location: { kind: "remote", hostId: "host-pi", path: "/var/log" },
+      defaultAgent: "shell",
+      assistKeyId: null,
+      lastOpened: "2026-08-21T10:00:00Z",
     },
   ] as ProjectSummaryDto[],
   agents: [
@@ -297,13 +390,37 @@ const state: {
     {
       id: "run-1",
       projectId: "proj-1",
-      projectName: "tethra-web",
-      hostId: "host-password",
-      hostLabel: "Staging web",
+      projectName: "api-refactor",
+      hostId: "host-vm",
+      hostLabel: "tethra-vm",
       agentId: "claude",
       muxSession: "tethra-proj-1",
       startedAt: "2026-08-23T08:00:00Z",
       lastAttachedAt: "2026-08-23T08:05:00Z",
+      startedOnDevice: "mock-device",
+    },
+    {
+      id: "run-2",
+      projectId: "proj-2",
+      projectName: "deploy-watch",
+      hostId: "host-mini",
+      hostLabel: "Mac mini",
+      agentId: "claude",
+      muxSession: "tethra-proj-2",
+      startedAt: "2026-08-23T06:00:00Z",
+      lastAttachedAt: "2026-08-23T07:00:00Z",
+      startedOnDevice: "mock-device",
+    },
+    {
+      id: "run-3",
+      projectId: "proj-3",
+      projectName: "mini · logs",
+      hostId: "host-pi",
+      hostLabel: "Pi cluster",
+      agentId: "shell",
+      muxSession: "tethra-proj-3",
+      startedAt: "2026-08-23T04:00:00Z",
+      lastAttachedAt: "2026-08-23T04:30:00Z",
       startedOnDevice: "mock-device",
     },
   ] as RunningSessionSummaryDto[],
@@ -356,6 +473,83 @@ function emitVault(): void {
 
 function emitTerminal(sessionId: string, event: TerminalEvent): void {
   for (const listener of terminalListeners) listener(sessionId, event);
+}
+
+// --- QA replay hooks (mock harness only) -------------------------------
+// Lets the Playwright harness stream REAL captured terminal bytes (from
+// crates/core/tests/terminal_qa.rs) into the live renderer.
+let lastTerminalSession = "";
+let feedBuf = "";
+let feedIdx = 0;
+if (typeof window !== "undefined") {
+  const w = window as unknown as Record<string, unknown>;
+  w.__tethraFeedB64 = (b64: string) => {
+    if (!lastTerminalSession) return false;
+    // Mirror the Rust backend (output_pump.rs) EXACTLY: split the byte
+    // stream at each OSC 133 mark — emit the data segment up to the mark,
+    // then the block event, then continue. A carry buffer handles marks
+    // split across chunks.
+    feedBuf += atob(b64);
+    const re = /\x1b\]133;([A-Za-z])((?:;[^\x07\x1b]*)?)(?:\x07|\x1b\\)/g;
+    const phases: Record<string, string> = {
+      A: "promptStart",
+      B: "commandStart",
+      C: "outputStart",
+      D: "commandEnd",
+    };
+    const pending = feedBuf.slice(feedIdx);
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(pending)) !== null) {
+      const segment = pending.slice(cursor, re.lastIndex);
+      if (segment) {
+        emitTerminal(lastTerminalSession, {
+          kind: "data",
+          data: btoa(segment),
+          dropped: false,
+        });
+      }
+      cursor = re.lastIndex;
+      const phase = phases[match[1].toUpperCase()];
+      if (phase) {
+        const w = window as unknown as Record<string, unknown>;
+        const stats = (w.__tethraFeedStats ??= {}) as Record<string, number>;
+        stats[phase] = (stats[phase] ?? 0) + 1;
+        const exit =
+          phase === "commandEnd" && match[2]
+            ? Number.parseInt(match[2].slice(1), 10)
+            : null;
+        emitTerminal(lastTerminalSession, {
+          kind: "block",
+          phase: phase as
+            | "promptStart"
+            | "commandStart"
+            | "outputStart"
+            | "commandEnd",
+          exit_code: exit != null && Number.isNaN(exit) ? null : exit,
+        });
+      }
+    }
+    // Emit the tail unless it could be a split mark (keep up to 24 bytes).
+    const tail = pending.slice(cursor);
+    const escIdx = tail.lastIndexOf("\x1b");
+    const maybeSplitMark =
+      escIdx >= 0 &&
+      tail.length - escIdx <= 24 &&
+      /^\x1b(?:\](?:1(?:3(?:3(?:;.*)?)?)?)?)?$/.test(tail.slice(escIdx));
+    const holdFrom = maybeSplitMark ? escIdx : tail.length;
+    const flushable = tail.slice(0, holdFrom);
+    if (flushable) {
+      emitTerminal(lastTerminalSession, {
+        kind: "data",
+        data: btoa(flushable),
+        dropped: false,
+      });
+    }
+    feedIdx += cursor + flushable.length;
+    return true;
+  };
+  w.__tethraLastSession = () => lastTerminalSession;
 }
 
 function tunnelStatusFromDef(
@@ -463,8 +657,107 @@ const MUX_OK: MuxEnsureResultDto = {
   message: null,
 };
 
-const CANNED_OUTPUT =
-  "\r\n\x1b[32mdeploy@staging\x1b[0m:\x1b[34m~/app\x1b[0m$ ls\r\nREADME.md  package.json  src\r\n\x1b[32mdeploy@staging\x1b[0m:\x1b[34m~/app\x1b[0m$ ";
+function b64Terminal(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function emitMockSessionFixture(sessionId: string): void {
+  const cwdOsc = "\x1b]7;file://tethra-vm/home/anthony/srv/tethra\x07";
+  const branchOsc = "\x1b]133;G;main\x07";
+  // No leading \r\n — promptStart binds to this same line before the command.
+  const prompt =
+    "\x1b[32manthony@tethra-vm\x1b[0m:\x1b[34m~/srv/tethra\x1b[0m$ ";
+
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const data = (text: string) => {
+    emitTerminal(sessionId, {
+      kind: "data",
+      data: b64Terminal(text),
+      dropped: false,
+    });
+  };
+  const block = (
+    phase: "promptStart" | "commandStart" | "outputStart" | "commandEnd",
+    exit_code: number | null = null,
+  ) => {
+    emitTerminal(sessionId, { kind: "block", phase, exit_code });
+  };
+
+  void (async () => {
+    await sleep(80);
+    data(`${cwdOsc}${branchOsc}`);
+    await sleep(40);
+
+    // Finished ok — A+B at prompt (matches bash integration), then command, then C/D.
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("git status\r\n");
+    await sleep(80);
+    block("outputStart");
+    data("On branch main\r\nnothing to commit, working tree clean\r\n");
+    await sleep(80);
+    block("commandEnd", 0);
+
+    // Finished failed
+    await sleep(60);
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("npm test\r\n");
+    await sleep(80);
+    block("outputStart");
+    data("FAIL src/app.test.ts\r\nTests: 0 passed, 1 failed\r\n");
+    await sleep(80);
+    block("commandEnd", 1);
+
+    // Long finished block (full output visible — no collapse in v0.5)
+    await sleep(60);
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("npm install\r\n");
+    await sleep(80);
+    block("outputStart");
+    data(
+      Array.from(
+        { length: 85 },
+        (_, i) => `added package-${i + 1}@1.0.0\r\n`,
+      ).join(""),
+    );
+    await sleep(150);
+    block("commandEnd", 0);
+
+    // Active block + agent waiting
+    await sleep(60);
+    data(`\r\n${prompt}`);
+    await sleep(120);
+    block("promptStart");
+    block("commandStart");
+    await sleep(50);
+    data("claude\r\n");
+    await sleep(80);
+    block("outputStart");
+    // Keep buffer free of the banner copy — chrome owns that string.
+    data("Agent running — waiting for approval…\r\n");
+    await sleep(100);
+    emitTerminal(sessionId, {
+      kind: "attention",
+      state: "waiting",
+      message: "Approve file edit in src/lib.rs",
+      source: "osc",
+    });
+  })();
+}
 
 // --- Vault ---
 
@@ -559,6 +852,8 @@ export function importSshConfig(aliases: string[]): Promise<HostSummaryDto[]> {
     shellIntegration: true,
     tunnels: [],
     forwardAgent: false,
+    useDefaultKeys: false,
+    lastConnectedAt: null,
   }));
   state.hosts.push(...created);
   return Promise.resolve(created);
@@ -584,6 +879,8 @@ export function createHost(host: HostMutation): Promise<HostSummaryDto> {
     shellIntegration: host.shellIntegration ?? true,
     tunnels: host.tunnels ?? [],
     forwardAgent: host.forwardAgent ?? false,
+    useDefaultKeys: host.useDefaultKeys ?? false,
+    lastConnectedAt: null,
   };
   state.hosts.push(created);
   return Promise.resolve({ ...created });
@@ -609,6 +906,7 @@ export function updateHost(
     shellIntegration: host.shellIntegration ?? prev.shellIntegration,
     tunnels: host.tunnels ?? prev.tunnels,
     forwardAgent: host.forwardAgent ?? prev.forwardAgent,
+    useDefaultKeys: host.useDefaultKeys ?? prev.useDefaultKeys,
     authKind: host.password
       ? "password"
       : host.identityId
@@ -622,6 +920,18 @@ export function updateHost(
 export function deleteHost(id: string): Promise<void> {
   state.hosts = state.hosts.filter((h) => h.id !== id);
   return Promise.resolve();
+}
+
+export function setHostTags(
+  id: string,
+  tags: string[],
+): Promise<HostSummaryDto> {
+  const idx = state.hosts.findIndex((h) => h.id === id);
+  if (idx < 0) return Promise.reject(new Error("Host not found"));
+  const cleaned = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+  const next = { ...state.hosts[idx]!, tags: cleaned };
+  state.hosts[idx] = next;
+  return Promise.resolve({ ...next, tunnels: [...next.tunnels] });
 }
 
 // --- Identities ---
@@ -962,13 +1272,23 @@ export function openTerminal(
   hostId: string,
   _cols: number,
   _rows: number,
+  _muxSession?: string,
 ): Promise<OpenTerminalResultDto> {
   const sessionId = uid("term");
+  lastTerminalSession = sessionId;
+  feedBuf = "";
+  feedIdx = 0;
   ensureSessionTunnels(sessionId, hostId);
-  queueMicrotask(() => {
-    emitTerminal(sessionId, { kind: "data", data: CANNED_OUTPUT, dropped: false });
-  });
+  const skipFixture =
+    typeof window !== "undefined" &&
+    (window as unknown as Record<string, unknown>).__tethraSkipFixture === true;
+  if (!skipFixture) {
+    queueMicrotask(() => emitMockSessionFixture(sessionId));
+  }
   const host = state.hosts.find((h) => h.id === hostId);
+  if (host) {
+    host.lastConnectedAt = new Date().toISOString();
+  }
   return Promise.resolve({
     sessionId,
     agentForward: host?.forwardAgent ? "active" : "off",
@@ -1066,11 +1386,16 @@ export function sendTerminalInput(
   _options?: { force?: boolean },
 ): Promise<void> {
   const text = new TextDecoder().decode(data);
-  emitTerminal(sessionId, { kind: "data", data: text, dropped: false });
+  // Terminal data events carry base64 (matches the Tauri backend).
+  emitTerminal(sessionId, {
+    kind: "data",
+    data: b64Terminal(text),
+    dropped: false,
+  });
   if (text.includes("\r") || text.includes("\n")) {
     emitTerminal(sessionId, {
       kind: "data",
-      data: "\r\nok\r\n$ ",
+      data: b64Terminal("\r\nok\r\n$ "),
       dropped: false,
     });
   }
@@ -1116,6 +1441,18 @@ export function onVaultStatus(
   return Promise.resolve(() => {
     vaultListeners.delete(handler);
   });
+}
+
+export type OsFileDropEvent =
+  | { type: "enter" | "over" }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
+/** Browser harness: no OS drags. */
+export async function onOsFileDrop(
+  _handler: (event: OsFileDropEvent) => void,
+): Promise<UnlistenFn> {
+  return () => undefined;
 }
 
 export function onVaultLocked(handler: () => void): Promise<UnlistenFn> {

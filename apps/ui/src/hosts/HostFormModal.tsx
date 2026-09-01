@@ -28,7 +28,7 @@ const SWATCHES = [
   "#8B8B8B",
 ];
 
-type AuthMode = "password" | "sshKey";
+type AuthMode = "password" | "sshKey" | "none";
 
 interface HostFormModalProps {
   initial?: HostSummaryDto;
@@ -81,7 +81,11 @@ export function HostFormModal({
     () => initial?.tunnels ?? [],
   );
   const [authMode, setAuthMode] = useState<AuthMode>(
-    initial?.authKind === "sshKey" ? "sshKey" : "password",
+    initial?.authKind === "sshKey"
+      ? "sshKey"
+      : initial?.useDefaultKeys && !initial?.identityId
+        ? "none"
+        : "password",
   );
   const [identities, setIdentities] = useState<IdentitySummaryDto[]>([]);
   const [identityId, setIdentityId] = useState(initial?.identityId ?? "");
@@ -177,6 +181,7 @@ export function HostFormModal({
         shellIntegration,
         forwardAgent,
         tunnels,
+        useDefaultKeys: authMode === "none",
       };
 
       if (authMode === "sshKey") {
@@ -184,6 +189,8 @@ export function HostFormModal({
           throw new Error("Select or import an SSH key.");
         }
         mutation.identityId = identityId;
+      } else if (authMode === "none") {
+        // Server already trusts this machine — nothing stored, nothing sent.
       } else if (password) {
         mutation.password = password;
       } else if (!initial) {
@@ -352,6 +359,7 @@ export function HostFormModal({
               [
                 ["password", "Password"],
                 ["sshKey", "SSH key"],
+                ["none", "None"],
               ] as const
             ).map(([mode, title]) => (
               <button
@@ -372,6 +380,18 @@ export function HostFormModal({
             ))}
           </div>
         </div>
+
+        {authMode === "none" && (
+          <p className="m-0 rounded-md border border-line bg-surface px-3 py-2.5 text-micro text-fg-muted">
+            Connects with your local SSH keys (
+            <code className="font-mono">~/.ssh/id_ed25519</code>,{" "}
+            <code className="font-mono">id_ecdsa</code>,{" "}
+            <code className="font-mono">id_rsa</code>) — for servers that
+            already trust this machine. Nothing is stored in the vault.
+            Passphrase-protected keys aren't tried; import those as an SSH key
+            identity instead.
+          </p>
+        )}
 
         {authMode === "password" ? (
           <>
@@ -408,7 +428,7 @@ export function HostFormModal({
               </span>
             </label>
           </>
-        ) : (
+        ) : authMode === "sshKey" ? (
           <div className="flex flex-col gap-2">
             <label className="flex flex-col gap-1.5">
               <span className="text-micro font-medium text-fg-muted">
@@ -522,7 +542,7 @@ export function HostFormModal({
               </div>
             )}
           </div>
-        )}
+        ) : null}
 
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line bg-base px-3 py-2.5">
           <input

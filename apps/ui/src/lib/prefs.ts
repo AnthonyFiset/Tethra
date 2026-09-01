@@ -31,9 +31,16 @@ export type CursorStylePref = "block" | "underline" | "bar";
 
 export const DEFAULTS = {
   landing: "launcher" as LandingPref,
-  fontSize: 13,
-  fontFamily: "JetBrains Mono",
-  lineHeight: 1.25,
+  fontSize: 12.5,
+  /** Must match @fontsource-variable/jetbrains-mono registered family. */
+  fontFamily: "JetBrains Mono Variable",
+  /**
+   * 1.0: xterm 6's core renderer draws block/box glyphs from the font, whose
+   * ink covers the em — not the lineHeight-padded cell. Any value above 1
+   * slices TUI art (agent logos, btop bars) with background stripes, and the
+   * WebGL addon's full-cell custom glyphs never paint reliably in WKWebView.
+   */
+  lineHeight: 1,
   ligatures: false,
   cursorBlink: true,
   cursorStyle: "bar" as CursorStylePref,
@@ -88,12 +95,15 @@ export function setLandingPref(value: LandingPref): void {
 
 export function getTerminalFontSize(): number {
   const raw = Number(readString(KEYS.fontSize));
+  // Migrate pre-v0.5 default (13) to the session-reference size (12.5).
+  if (raw === 13) return DEFAULTS.fontSize;
   if (!Number.isFinite(raw) || raw < 10 || raw > 24) return DEFAULTS.fontSize;
-  return Math.round(raw);
+  return raw;
 }
 
 export function setTerminalFontSize(size: number): void {
-  writeString(KEYS.fontSize, String(Math.min(24, Math.max(10, Math.round(size)))));
+  const clamped = Math.min(24, Math.max(10, size));
+  writeString(KEYS.fontSize, String(clamped));
 }
 
 export function getTerminalLigatures(): boolean {
@@ -136,6 +146,8 @@ export function setTerminalFontFamily(value: string): void {
 
 export function getTerminalLineHeight(): number {
   const raw = Number(readString(KEYS.lineHeight));
+  // Migrate the pre-v0.5 default (1.25) — it banded block glyphs.
+  if (raw === 1.25) return DEFAULTS.lineHeight;
   if (!Number.isFinite(raw) || raw < 1 || raw > 2) return DEFAULTS.lineHeight;
   return Math.round(raw * 100) / 100;
 }

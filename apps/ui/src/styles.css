@@ -1,23 +1,38 @@
 @import "tailwindcss";
 
 /*
+ * Generated block-element face (scripts/gen-blocks-font.py) — leads the
+ * terminal font stack so U+2580–259F fill the whole cell; every other glyph
+ * falls through to the user's font. See terminalFontStack() in registry.ts.
+ */
+@font-face {
+  font-family: "Tethra Blocks";
+  src: url("./assets/fonts/TethraBlocks.ttf") format("truetype");
+  font-display: block;
+}
+
+/*
  * Neutral, opaque dark surface ramp. Depth is expressed with 1px borders and
  * small surface steps rather than shadows, which is what keeps a dense tool
  * UI legible instead of looking like a stack of floating web cards.
  */
 @theme {
+  /* Contrast pass (Anthony, Aug 2026): surfaces lifted a step and text
+     brightened so cards/labels read clearly on #0d0d0d without losing the
+     dark modern look. */
   --color-base: #0d0d0d;
-  --color-surface: #141414;
-  --color-elevated: #1b1b1b;
-  --color-hover: #222222;
-  --color-active: #2a2a2a;
+  --color-rail: #111113;
+  --color-surface: #17181a;
+  --color-elevated: #1f2023;
+  --color-hover: #26272b;
+  --color-active: #2e2f34;
 
-  --color-line: #262626;
-  --color-line-strong: #363636;
+  --color-line: #2c2d31;
+  --color-line-strong: #3f4046;
 
-  --color-fg: #e8e8e8;
-  --color-fg-muted: #a1a1a1;
-  --color-fg-subtle: #6b6b6b;
+  --color-fg: #ededee;
+  --color-fg-muted: #b4b6bb;
+  --color-fg-subtle: #8b8d93;
 
   --color-accent: #3d8ef0;
   --color-accent-hover: #5aa0f5;
@@ -40,12 +55,25 @@
   --text-micro--line-height: 1.4;
 
   --breakpoint-surface-nav: 1000px;
+
+  --width-rail: 224px;
+  --width-rail-collapsed: 52px;
 }
 
 @layer base {
   :root {
     color-scheme: dark;
     --terminal-bg: #0d0d0d;
+  }
+
+  /* Native controls (checkboxes, radios, selects, progress) carry the brand
+     accent instead of the platform default blue — the only native chrome
+     that survives our styling pass must still look like Tethra. */
+  input[type="checkbox"],
+  input[type="radio"],
+  select,
+  progress {
+    accent-color: var(--color-accent);
   }
 
   html,
@@ -70,6 +98,53 @@
   /* Terminal viewport stays opaque under materials (WebGL-safe). */
   [data-terminal-surface] {
     background-color: var(--terminal-bg, #0d0d0d) !important;
+  }
+
+  [data-terminal-surface] .xterm {
+    height: 100%;
+    /* Padding sits HERE so FitAddon subtracts it when proposing rows/cols
+       (on the parent it overcounted and the last row/col overflowed). */
+    padding: 8px 14px;
+    /* Reinforce Terminal options so CharSizeService / helper textarea match
+       the JetBrains Mono face (xterm 6 WebGL otherwise inherits body sans). */
+    font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1;
+  }
+
+  [data-terminal-surface] .xterm-helper-textarea {
+    font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace !important;
+    font-size: 12.5px !important;
+  }
+
+  [data-terminal-surface] .xterm-viewport {
+    overflow-y: auto;
+    /* Stock xterm.css paints the viewport #000; the DOM renderer never
+       applies the ITheme background to it, so keep it on the app ramp. */
+    background-color: var(--terminal-bg, #0d0d0d) !important;
+  }
+
+  /* xterm 6 draws its own overlay scrollbar (VS Code's scrollable element),
+     so the ::-webkit-scrollbar rules below never reach it: a 14px slab
+     painted over the terminal's last columns. Narrow it to the app thumb. */
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.vertical {
+    width: 10px !important;
+  }
+
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+    width: 4px !important;
+    left: 3px !important;
+    border-radius: 99px;
+  }
+
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.horizontal {
+    height: 10px !important;
+  }
+
+  [data-terminal-surface] .xterm .xterm-scrollable-element > .scrollbar.horizontal > .slider {
+    height: 4px !important;
+    top: 3px !important;
+    border-radius: 99px;
   }
 
   /* The whole surface is a tool, not a document. */
@@ -175,9 +250,206 @@
   }
 }
 
-/* M12 — OSC 133 failed-block gutter + hover actions */
-.tethra-block-failed {
+/* M12 — OSC 133 block chrome via viewport overlay (Warp anatomy) */
+.tethra-block-overlay-root {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.tethra-block-overlay-header,
+.tethra-block-overlay-waiting,
+.tethra-block-overlay-tint,
+.tethra-block-actions-cluster,
+.tethra-block-chrome-group {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.tethra-block-chrome-group {
+  pointer-events: auto;
+  z-index: 2;
+}
+
+.tethra-block-chrome-group:hover .tethra-block-actions-cluster,
+.tethra-block-actions-cluster:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Opaque blank over raw PS1 rows (live prompt while composing in the input
+   box, and bash completion prompt-redraw rows). No content, just paint. */
+.tethra-block-overlay-blank {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--color-base, #0d0d0d);
+  pointer-events: none;
   z-index: 1;
+}
+
+/* Active block: elevated tint only — no border / outline. */
+.tethra-block-overlay-tint {
+  pointer-events: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  z-index: 0;
+}
+
+.tethra-block-overlay-waiting {
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.tethra-block-overlay-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 0 108px 0 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-fg-subtle);
+  pointer-events: none;
+  overflow: hidden;
+  /* Opaque so buffer glyphs on the prompt row do not bleed through. */
+  background: #0d0d0d;
+  z-index: 1;
+}
+
+.tethra-block-header-meta-line {
+  flex-shrink: 0;
+  color: var(--color-fg-subtle);
+  font-size: 10.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42%;
+}
+
+.tethra-block-header-cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tethra-block-header-prompt {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.tethra-block-header-prompt.is-ok {
+  color: #3fb950;
+}
+
+.tethra-block-header-prompt.is-failed {
+  color: var(--color-danger);
+}
+
+.tethra-block-header-prompt.is-active {
+  color: #3d8ef0;
+}
+
+.tethra-block-header-cmd-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-fg);
+  font-size: 12.5px;
+}
+
+.tethra-block-overlay-spacer {
+  flex: 0 0 0;
+  min-width: 0;
+}
+
+/* Warp-style hover action cluster — top-right of block header. */
+.tethra-block-actions-cluster {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border-radius: 6px;
+  background: #0d0d0d;
+  opacity: 0;
+  pointer-events: auto;
+  z-index: 4;
+  transition: opacity 120ms ease;
+}
+
+.tethra-block-actions-cluster.is-active {
+  opacity: 0.55;
+}
+
+.tethra-block-chrome-group:hover .tethra-block-actions-cluster,
+.tethra-block-actions-cluster.is-active:hover,
+.tethra-block-actions-cluster:focus-within {
+  opacity: 1;
+}
+
+.tethra-block-action-btn {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-fg-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tethra-block-action-btn:hover {
+  color: var(--color-fg);
+  background: var(--color-hover);
+}
+
+.tethra-block-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  /* Fully opaque — translucent fill let buffer glyphs show through. */
+  background: #0d0d0d;
+  border: 1px solid rgba(210, 153, 34, 0.45);
+  box-shadow: inset 0 0 0 999px rgba(210, 153, 34, 0.12);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-warning);
+}
+
+.tethra-block-waiting-compact {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+.tethra-block-waiting-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  flex-shrink: 0;
+}
+
+.tethra-block-review-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 12px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-base);
+  background: var(--color-warning);
+  cursor: pointer;
 }
 
 .tethra-block-actions {
@@ -225,6 +497,15 @@
   box-shadow: 0 12px 40px rgb(0 0 0 / 50%);
 }
 
+.tethra-block-menu-panel {
+  width: 190px;
+  padding: 5px;
+  border-radius: 10px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 55%);
+}
+
 .tethra-block-menu button {
   appearance: none;
   display: flex;
@@ -250,6 +531,11 @@
 
 .tethra-block-menu button:hover:not(:disabled) {
   background: var(--color-hover);
+}
+
+.tethra-block-menu button.is-active {
+  background: var(--color-hover);
+  color: var(--color-fg);
 }
 
 .tethra-menu-shortcut {

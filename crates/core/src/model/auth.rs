@@ -63,11 +63,14 @@ pub enum AuthMaterial {
         key: SecretBytes,
         passphrase: Option<SecretString>,
     },
+    /// Try the machine's default SSH keys (~/.ssh/id_*) — no stored secret.
+    DefaultKeys,
 }
 
 impl std::fmt::Debug for AuthMaterial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DefaultKeys => f.write_str("AuthMaterial::DefaultKeys"),
             Self::Password { .. } => f.write_str("AuthMaterial::Password([REDACTED])"),
             Self::PrivateKey {
                 passphrase: Some(_),

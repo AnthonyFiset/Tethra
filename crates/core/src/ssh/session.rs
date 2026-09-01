@@ -204,12 +204,22 @@ impl PtyHandle {
 }
 
 /// Owns host/auth/policy/gate and opens SSH sessions.
+///
+/// Authenticated connections are pooled per host so a second tab / split
+/// reuses the TCP+auth handshake (channel-open only).
 pub struct SessionManager {
     hosts: Arc<dyn HostStore>,
     auth: Arc<dyn AuthProvider>,
     policy: Arc<dyn HostKeyPolicy>,
     gate: Arc<dyn ApprovalGate>,
+    /// Idle authenticated sessions available for a new channel.
+    pool: SessionPool,
 }
+
+/// Idle authenticated sessions per host, ready for a new channel.
+type SessionPool = Arc<Mutex<HashMap<Uuid, Vec<Arc<Handle<ClientHandler>>>>>>;
+
+const POOL_MAX_PER_HOST: usize = 2;
 
 impl SessionManager {
     pub fn new(
@@ -223,6 +233,7 @@ impl SessionManager {
             auth,
             policy,
             gate,
+            pool: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -244,6 +255,19 @@ impl SessionManager {
     /// usable PTY only when the remote accepts the command — exotic hosts can
     /// set `shell_integration: Disabled`).
     pub async fn open_pty(&self, host_id: Uuid, size: PtySize) -> Result<PtyOpenResult> {
+        self.open_pty_named(host_id, size, None).await
+    }
+
+    /// Open a PTY whose remote shell runs inside a named tmux session
+    /// (`tmux -L tethra new-session -A -s <name>`) so it survives app
+    /// restarts and disconnects. Falls back to a plain shell when tmux is
+    /// missing on the host.
+    pub async fn open_pty_named(
+        &self,
+        host_id: Uuid,
+        size: PtySize,
+        mux_session: Option<&str>,
+    ) -> Result<PtyOpenResult> {
         self.gate.approve(&Action::OpenPty { host_id }).await?;
 
         let host = self.hosts.get(host_id).await?;
@@ -263,14 +287,55 @@ impl SessionManager {
             (None, AgentForwardStatus::Off)
         };
 
-        let session = self.connect(host_id, agent_endpoint.clone()).await?;
-        let channel = session.channel_open_session().await?;
-
-        if agent_endpoint.is_some() {
-            // Request before PTY/shell so the remote can publish SSH_AUTH_SOCK.
-            if let Err(err) = channel.agent_forward(true).await {
-                tracing::warn!(%err, "auth-agent-req@openssh.com failed");
+        let session = self.checkout(host_id, agent_endpoint.clone()).await?;
+        let channel = match session.channel_open_session().await {
+            Ok(ch) => ch,
+            Err(err) => {
+                tracing::warn!(%err, "pooled SSH channel_open failed; reconnecting");
+                let session = Arc::new(self.connect(host_id, agent_endpoint.clone()).await?);
+                let ch = session.channel_open_session().await?;
+                return self
+                    .finish_pty(
+                        host_id,
+                        session,
+                        ch,
+                        size,
+                        integrate,
+                        agent_endpoint.is_some(),
+                        agent_status,
+                        mux_session,
+                    )
+                    .await;
             }
+        };
+
+        self.finish_pty(
+            host_id,
+            session,
+            channel,
+            size,
+            integrate,
+            agent_endpoint.is_some(),
+            agent_status,
+            mux_session,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_pty(
+        &self,
+        host_id: Uuid,
+        session: Arc<Handle<ClientHandler>>,
+        channel: Channel<russh::client::Msg>,
+        size: PtySize,
+        integrate: bool,
+        want_agent: bool,
+        agent_status: AgentForwardStatus,
+        mux_session: Option<&str>,
+    ) -> Result<PtyOpenResult> {
+        if want_agent && let Err(err) = channel.agent_forward(true).await {
+            tracing::warn!(%err, "auth-agent-req@openssh.com failed");
         }
 
         channel
@@ -286,17 +351,30 @@ impl SessionManager {
             .await?;
 
         if integrate {
-            let wrapper = crate::terminal::ssh_default_wrapper_command();
+            let wrapper = match mux_session {
+                Some(name) => crate::terminal::ssh_persistent_wrapper_command(name),
+                None => crate::terminal::ssh_default_wrapper_command(),
+            };
             channel.exec(true, wrapper.as_str()).await?;
+        } else if let Some(name) = mux_session {
+            let cmd = format!(
+                "if command -v tmux >/dev/null 2>&1; then exec tmux -L tethra new-session -A -s '{name}'; fi; exec \"${{SHELL:-/bin/sh}}\" -l -i"
+            );
+            channel.exec(true, cmd.as_str()).await?;
         } else {
             channel.request_shell(true).await?;
         }
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<PtyCommand>(32);
         let (out_tx, out_rx) = mpsc::channel::<Bytes>(256);
+        let pool = Arc::clone(&self.pool);
 
         let reader = tokio::spawn(async move {
-            run_pty_loop(session, channel, &mut cmd_rx, out_tx).await;
+            // Handle stays alive (Arc) while the channel runs — do not disconnect
+            // on PTY end so the next tab can open another channel (warm reuse).
+            run_pty_loop(channel, &mut cmd_rx, out_tx).await;
+            tracing::info!(%host_id, closed = session.is_closed(), "PTY channel ended — pool checkin");
+            SessionManager::checkin(pool.as_ref(), host_id, session).await;
         });
 
         Ok(PtyOpenResult {
@@ -307,6 +385,64 @@ impl SessionManager {
             output: out_rx,
             agent_forward: agent_status,
         })
+    }
+
+    /// Take an idle pooled connection or open a new one.
+    async fn checkout(
+        &self,
+        host_id: Uuid,
+        agent: Option<LocalAgentEndpoint>,
+    ) -> Result<Arc<Handle<ClientHandler>>> {
+        {
+            let mut guard = self.pool.lock().await;
+            if let Some(list) = guard.get_mut(&host_id) {
+                while let Some(handle) = list.pop() {
+                    if !handle.is_closed() {
+                        tracing::info!(%host_id, "SSH pool hit (warm channel)");
+                        return Ok(handle);
+                    }
+                }
+            }
+        }
+        tracing::info!(%host_id, "SSH pool miss — fresh connect");
+        Ok(Arc::new(self.connect(host_id, agent).await?))
+    }
+
+    async fn checkin(
+        pool: &Mutex<HashMap<Uuid, Vec<Arc<Handle<ClientHandler>>>>>,
+        host_id: Uuid,
+        session: Arc<Handle<ClientHandler>>,
+    ) {
+        if session.is_closed() {
+            tracing::info!(%host_id, "SSH pool checkin skipped (session closed)");
+            return;
+        }
+        let mut guard = pool.lock().await;
+        let list = guard.entry(host_id).or_default();
+        if list.len() >= POOL_MAX_PER_HOST {
+            // Dropping the Arc may disconnect when last ref goes away.
+            return;
+        }
+        tracing::info!(%host_id, "SSH pool checkin");
+        list.push(session);
+    }
+
+    /// Drop pooled connections for a host (vault lock / host delete).
+    pub async fn drain_pool(&self, host_id: Option<Uuid>) {
+        let mut guard = self.pool.lock().await;
+        let drain: Vec<(Uuid, Vec<Arc<Handle<ClientHandler>>>)> = if let Some(id) = host_id {
+            guard.remove(&id).map(|v| vec![(id, v)]).unwrap_or_default()
+        } else {
+            guard.drain().collect()
+        };
+        drop(guard);
+        for (_, handles) in drain {
+            for session in handles {
+                let _ = session
+                    .disconnect(Disconnect::ByApplication, "", "en")
+                    .await;
+            }
+        }
     }
 
     /// Structured path. No PTY, parseable stdout/stderr/exit.
@@ -411,6 +547,9 @@ impl SessionManager {
                     .await?
                     .success()
             }
+            AuthMaterial::DefaultKeys => {
+                authenticate_with_default_keys(&mut session, &host.username).await?
+            }
         };
 
         if !ok {
@@ -419,6 +558,54 @@ impl SessionManager {
 
         Ok(session)
     }
+}
+
+/// Try the machine's default SSH keys (~/.ssh/id_*) in order — for servers
+/// that already trust this machine. Encrypted keys are skipped (import those
+/// as vault identities instead). Returns whether any key authenticated.
+pub(crate) async fn authenticate_with_default_keys<H>(
+    session: &mut russh::client::Handle<H>,
+    username: &str,
+) -> Result<bool>
+where
+    H: russh::client::Handler,
+    crate::Error: From<<H as russh::client::Handler>::Error>,
+{
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| {
+            Error::InvalidKey("no home directory to look for default SSH keys".into())
+        })?;
+    let mut tried_any = false;
+    for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
+        let path = home.join(".ssh").join(name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(key_pair) = load_private_key(&SecretBytes::new(bytes), None) else {
+            continue;
+        };
+        tried_any = true;
+        let hash = session.best_supported_rsa_hash().await?.flatten();
+        let ok = session
+            .authenticate_publickey(
+                username.to_string(),
+                PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash),
+            )
+            .await?
+            .success();
+        if ok {
+            return Ok(true);
+        }
+    }
+    if !tried_any {
+        return Err(Error::InvalidKey(
+            "no usable default key in ~/.ssh (id_ed25519 / id_ecdsa / id_rsa) — \
+add one, or attach a key or password to this host"
+                .into(),
+        ));
+    }
+    Ok(false)
 }
 
 fn pty_modes() -> [(Pty, u32); 7] {
@@ -434,7 +621,6 @@ fn pty_modes() -> [(Pty, u32); 7] {
 }
 
 async fn run_pty_loop(
-    session: Handle<ClientHandler>,
     mut channel: Channel<russh::client::Msg>,
     cmd_rx: &mut mpsc::Receiver<PtyCommand>,
     out_tx: mpsc::Sender<Bytes>,
@@ -481,9 +667,6 @@ async fn run_pty_loop(
             }
         }
     }
-    let _ = session
-        .disconnect(Disconnect::ByApplication, "", "en")
-        .await;
 }
 
 pub(crate) fn load_private_key(

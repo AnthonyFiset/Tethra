@@ -10,33 +10,86 @@ pub const BASH_INTEGRATION: &str = r#"
 # Tethra shell integration (bash) — OSC 133 + OSC 7
 export COLORTERM="${COLORTERM:-truecolor}"
 __tethra_has_cmd=0
-__tethra_prompt_start() {
-  printf '\033]133;A\007'
-  printf '\033]133;B\007'
-  local _host="${HOSTNAME:-}"
-  printf '\033]7;file://%s%s\007' "$_host" "$PWD"
+# Inside tmux, wrap OSC in the passthrough envelope so marks reach the
+# outer terminal (needs tmux allow-passthrough on — our conf sets it).
+__tethra_osc() {
+  if [ -n "${TMUX:-}" ]; then
+    printf '\033Ptmux;\033\033]%s\007\033\\' "$1"
+  else
+    printf '\033]%s\007' "$1"
+  fi
 }
+__tethra_prompt_start() {
+  __tethra_osc '133;A'
+  __tethra_osc '133;B'
+  local _host="${HOSTNAME:-}"
+  __tethra_osc "7;file://${_host}${PWD}"
+  local _branch
+  _branch=$(command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null)
+  if [ -n "$_branch" ]; then
+    __tethra_osc "133;G;${_branch}"
+  fi
+}
+__tethra_at_prompt=0
+__tethra_ready=0
 __tethra_preexec() {
+  # bash fires DEBUG for EVERY simple command — including our own precmd,
+  # other PROMPT_COMMAND parts, completion, and shell startup. Only the
+  # FIRST command of a line the user actually ran may emit 133;C; anything
+  # else produces phantom blocks and flickering covers.
+  [ "$__tethra_ready" = 1 ] || return 0
+  [ -n "${COMP_LINE:-}" ] && return 0
+  [ "$__tethra_at_prompt" = 1 ] || return 0
+  case "$BASH_COMMAND" in
+    __tethra_precmd*) return 0 ;;
+  esac
+  case ";${__tethra_prompt_chain:-};" in
+    *";${BASH_COMMAND};"*) return 0 ;;
+  esac
+  __tethra_at_prompt=0
   __tethra_has_cmd=1
-  printf '\033]133;C\007'
+  __tethra_osc '133;C'
 }
 __tethra_precmd() {
   local __ec=$?
   if [ "$__tethra_has_cmd" -eq 1 ]; then
-    printf '\033]133;D;%s\007' "$__ec"
+    __tethra_osc "133;D;${__ec}"
     __tethra_has_cmd=0
   fi
   __tethra_prompt_start
+  __tethra_at_prompt=1
+  __tethra_ready=1
+}
+# Idempotent hook install — callable again after user rc files run, in case
+# one of them replaced PROMPT_COMMAND or the DEBUG trap.
+__tethra_hook() {
+  case ";${PROMPT_COMMAND:-};" in
+    *";__tethra_precmd;"*) ;;
+    *)
+      __tethra_prompt_chain="${PROMPT_COMMAND:-}"
+      PROMPT_COMMAND="__tethra_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+      ;;
+  esac
+  trap '__tethra_preexec' DEBUG
 }
 if [ -z "${TETHRA_SHELL_INTEGRATION:-}" ]; then
   export TETHRA_SHELL_INTEGRATION=1
-  if [[ -n "${PROMPT_COMMAND:-}" ]]; then
-    PROMPT_COMMAND="__tethra_precmd;${PROMPT_COMMAND}"
-  else
-    PROMPT_COMMAND="__tethra_precmd"
+  __tethra_hook
+  # Warp-style Tab: cycle candidates inline (zsh menu-select feel) instead of
+  # bash's default bell + reprint-the-list-on-every-press.
+  if [ -n "${BASH_VERSION:-}" ]; then
+    bind 'set show-all-if-ambiguous on' 2>/dev/null
+    bind 'set menu-complete-display-prefix on' 2>/dev/null
+    bind '"\t": menu-complete' 2>/dev/null
+    bind '"\e[Z": menu-complete-backward' 2>/dev/null
+    # Match the local zsh feel: colored candidate lists (dirs/types) and a
+    # colored completion prefix. Readline has no moving highlight bar.
+    bind 'set colored-stats on' 2>/dev/null
+    bind 'set colored-completion-prefix on' 2>/dev/null
+    bind 'set visible-stats on' 2>/dev/null
   fi
-  trap '__tethra_preexec' DEBUG
-  __tethra_prompt_start
+  # No initial __tethra_prompt_start: PROMPT_COMMAND runs before the first
+  # prompt already — an extra call here double-emits A/B.
 fi
 "#;
 
@@ -45,19 +98,31 @@ pub const ZSH_INTEGRATION: &str = r#"
 # Tethra shell integration (zsh) — OSC 133 + OSC 7
 export COLORTERM="${COLORTERM:-truecolor}"
 typeset -g __tethra_has_cmd=0
+__tethra_osc() {
+  if [[ -n "${TMUX:-}" ]]; then
+    printf '\033Ptmux;\033\033]%s\007\033\\' "$1"
+  else
+    printf '\033]%s\007' "$1"
+  fi
+}
 __tethra_prompt_start() {
-  printf '\033]133;A\007'
-  printf '\033]133;B\007'
-  printf '\033]7;file://%s%s\007' "${HOST:-}" "${PWD}"
+  __tethra_osc '133;A'
+  __tethra_osc '133;B'
+  __tethra_osc "7;file://${HOST:-}${PWD}"
+  local _branch
+  _branch=$(command -v git >/dev/null 2>&1 && git branch --show-current 2>/dev/null)
+  if [[ -n "$_branch" ]]; then
+    __tethra_osc "133;G;${_branch}"
+  fi
 }
 __tethra_preexec() {
   __tethra_has_cmd=1
-  printf '\033]133;C\007'
+  __tethra_osc '133;C'
 }
 __tethra_precmd() {
   local __ec=$?
   if (( __tethra_has_cmd )); then
-    printf '\033]133;D;%s\007' "$__ec"
+    __tethra_osc "133;D;${__ec}"
     __tethra_has_cmd=0
   fi
   __tethra_prompt_start
@@ -67,7 +132,7 @@ if [[ -z "${TETHRA_SHELL_INTEGRATION:-}" ]]; then
   autoload -Uz add-zsh-hook 2>/dev/null || true
   add-zsh-hook precmd __tethra_precmd 2>/dev/null || precmd_functions+=(__tethra_precmd)
   add-zsh-hook preexec __tethra_preexec 2>/dev/null || preexec_functions+=(__tethra_preexec)
-  __tethra_prompt_start
+  # No initial __tethra_prompt_start: precmd runs before the first prompt.
 fi
 "#;
 
@@ -144,6 +209,9 @@ case "$_base" in
     if [ -f "$HOME/.bashrc" ]; then
       printf '\n[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' >> "$_t"
     fi
+    # A user rc file may have replaced PROMPT_COMMAND or the DEBUG trap —
+    # re-install our hooks last (idempotent).
+    printf '\ntype __tethra_hook >/dev/null 2>&1 && __tethra_hook\n' >> "$_t"
     exec "$_shell" --rcfile "$_t" -i
     ;;
   *)
@@ -155,6 +223,79 @@ esac"#,
         zsh_escaped = shell_single_quote_escape(ZSH_INTEGRATION),
         bash_b64 = bash_b64,
         bash_escaped = shell_single_quote_escape(BASH_INTEGRATION),
+    )
+}
+
+/// Persistent variant: run the default wrapper INSIDE a named tmux session
+/// (`tmux -L tethra new-session -A`), so the shell — and everything running
+/// in it — survives app restarts and disconnects. Falls back to the plain
+/// wrapper when tmux is missing. Shell integration still applies because the
+/// tmux session's initial command is the wrapper itself.
+/// Integration generation stamped on every tmux session we create (via the
+/// `session-created` hook). Attaching to a session whose stamp is older —
+/// or missing entirely — replaces it: the shell inside predates the OSC
+/// passthrough emitter and can never produce block marks again.
+pub const TMUX_INTEGRATION_VERSION: &str = "3";
+
+pub fn ssh_persistent_wrapper_command(mux_session: &str) -> String {
+    let inner = ssh_default_wrapper_command();
+    let inner_b64 = base64_encode(inner.as_bytes());
+    let inner_escaped = shell_single_quote_escape(&inner);
+    format!(
+        r#"{path_bootstrap}
+_tw=$(mktemp "${{TMPDIR:-/tmp}}/tethra-wrap.XXXXXX") || exit 1
+if command -v base64 >/dev/null 2>&1; then
+  echo '{inner_b64}' | base64 -d > "$_tw"
+else
+  printf '%s' '{inner_escaped}' > "$_tw"
+fi
+if command -v tmux >/dev/null 2>&1; then
+  _tc=$(mktemp "${{TMPDIR:-/tmp}}/tethra-tmux.XXXXXX") || exit 1
+  cat > "$_tc" <<'TETHRA_TMUX_EOF'
+set -g status off
+set -g allow-passthrough on
+set -sg escape-time 0
+set -g focus-events on
+set -g default-terminal "tmux-256color"
+set -ga terminal-overrides ",*256col*:Tc"
+set -ga terminal-overrides ",*:smcup@:rmcup@"
+set -g history-limit 100000
+setw -g monitor-bell on
+set -g visual-bell off
+set -g bell-action any
+TETHRA_TMUX_EOF
+  # Session boot script: stamp the integration version from INSIDE the first
+  # pane (deterministic on every tmux version — no hooks), then start the
+  # integrated shell.
+  _ts=$(mktemp "${{TMPDIR:-/tmp}}/tethra-boot.XXXXXX") || exit 1
+  {{
+    printf '%s\n' 'tmux -L tethra set @tethra_iv {iv} 2>/dev/null || true'
+    printf 'exec sh "%s"\n' "$_tw"
+  }} > "$_ts"
+  # Server may predate this conf (agent sessions share the socket) — apply
+  # the invisibility settings idempotently on every attach: no status bar, no
+  # alternate screen (tmux draws inline like a plain shell), passthrough on
+  # so OSC 133/7 marks reach the app. Fails harmlessly when no server runs —
+  # then `new-session -f` below boots the server WITH this conf.
+  tmux -L tethra set -g status off \; set -g allow-passthrough on \; set -sg escape-time 0 \; set -g focus-events on \; set -ga terminal-overrides ',*:smcup@:rmcup@' \; set -g history-limit 100000 2>/dev/null || true
+  # Sessions from builds that predate the OSC passthrough emitter can never
+  # show block chrome again — replace them once; stamped sessions are kept.
+  if tmux -L tethra has-session -t '{name}' 2>/dev/null; then
+    _iv=$(tmux -L tethra show-options -qv -t '{name}' @tethra_iv 2>/dev/null)
+    case "$_iv" in
+      {iv}) ;;
+      *) tmux -L tethra kill-session -t '{name}' 2>/dev/null || true ;;
+    esac
+  fi
+  exec tmux -L tethra -f "$_tc" new-session -A -s '{name}' -- sh "$_ts"
+fi
+exec sh "$_tw"
+"#,
+        path_bootstrap = PATH_BOOTSTRAP,
+        inner_b64 = inner_b64,
+        inner_escaped = inner_escaped,
+        name = mux_session,
+        iv = TMUX_INTEGRATION_VERSION,
     )
 }
 
@@ -230,6 +371,32 @@ mod tests {
         assert!(BASH_INTEGRATION.contains("133;A"));
         assert!(BASH_INTEGRATION.contains("133;D"));
         assert!(ZSH_INTEGRATION.contains("133;C"));
-        assert!(ZSH_INTEGRATION.contains("]7;file://"));
+        // OSC 7 cwd now goes through the tmux-passthrough emitter.
+        assert!(ZSH_INTEGRATION.contains("7;file://"));
+        assert!(BASH_INTEGRATION.contains("133;G;"));
+        assert!(ZSH_INTEGRATION.contains("133;G;"));
+        // Marks must survive tmux (passthrough envelope + emitter).
+        assert!(BASH_INTEGRATION.contains("Ptmux;"));
+        assert!(ZSH_INTEGRATION.contains("Ptmux;"));
+    }
+
+    #[test]
+    fn persistent_wrapper_is_invisible_and_versioned() {
+        let cmd = ssh_persistent_wrapper_command("tethra-test1");
+        // Invisible tmux: no status bar, no alt screen, passthrough on —
+        // applied both via conf and idempotently on every attach.
+        assert!(cmd.contains("set -g status off"));
+        assert!(cmd.contains("allow-passthrough on"));
+        assert!(cmd.contains("smcup@:rmcup@"));
+        // Every created session stamps itself from inside its first pane.
+        assert!(cmd.contains(&format!("@tethra_iv {TMUX_INTEGRATION_VERSION}")));
+        // Attaching to a pre-passthrough session replaces it.
+        assert!(cmd.contains("kill-session -t 'tethra-test1'"));
+        assert!(cmd.contains(&format!("{TMUX_INTEGRATION_VERSION}) ;;")));
+        // Client attached from shell birth so first-prompt marks arrive, and
+        // the conf boots the server when none is running (fresh host).
+        assert!(cmd.contains("-f \"$_tc\" new-session -A -s 'tethra-test1'"));
+        // No tmux on host → plain wrapper fallback.
+        assert!(cmd.contains("exec sh \"$_tw\""));
     }
 }

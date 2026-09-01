@@ -18,16 +18,16 @@ interface TunnelsPanelProps {
   className?: string;
 }
 
-function stateClass(state: string): string {
+function stateDotClass(state: string): string {
   switch (state) {
     case "active":
-      return "bg-success/15 text-success";
+      return "bg-success";
     case "error":
-      return "bg-danger/15 text-danger";
+      return "bg-danger";
     case "starting":
-      return "bg-warning/15 text-warning";
+      return "bg-warning";
     default:
-      return "bg-hover text-fg-muted";
+      return "bg-fg-subtle";
   }
 }
 
@@ -131,29 +131,22 @@ export function TunnelsPanel({
         <span className="font-medium text-fg">
           {tunnels.length > 0 ? "Tunnels" : "Forwards"}
         </span>
-        {tunnels.length > 0 && (
-          <span
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
-              activeCount > 0
-                ? "bg-success/15 text-success"
-                : "bg-hover text-fg-subtle",
+        {(tunnels.length > 0 || showAgent) && (
+          <span className="text-[11px] text-fg-muted">
+            {tunnels.length > 0 && (
+              <>
+                <span
+                  className={cn(
+                    "mr-1 inline-block size-1.5 rounded-full align-middle",
+                    activeCount > 0 ? "bg-success" : "bg-fg-subtle",
+                  )}
+                />
+                {activeCount} active
+              </>
             )}
-          >
-            {activeCount} active
-          </span>
-        )}
-        {showAgent && (
-          <span
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
-              agentForward === "active"
-                ? "bg-success/15 text-success"
-                : "bg-warning/15 text-warning",
-            )}
-            title={agentForwardHint}
-          >
-            {agentForward === "active" ? "Agent on" : "Agent unavailable"}
+            {tunnels.length > 0 && showAgent ? " · " : null}
+            {showAgent &&
+              (agentForward === "active" ? "agent on" : "agent unavailable")}
           </span>
         )}
         <span className="ml-auto text-fg-subtle">{open ? "Hide" : "Show"}</span>
@@ -188,10 +181,12 @@ export function TunnelsPanel({
               >
                 <span
                   className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
-                    stateClass(tunnel.state),
+                    "size-1.5 shrink-0 rounded-full",
+                    stateDotClass(tunnel.state),
                   )}
-                >
+                  title={tunnel.state}
+                />
+                <span className="shrink-0 text-[11px] text-fg-muted capitalize">
                   {tunnel.state}
                 </span>
                 <div className="min-w-0 flex-1">

@@ -89,6 +89,10 @@ struct HostSummaryDto {
     tunnels: Vec<tunnel::TunnelDefinitionDto>,
     /// Opt-in SSH agent forwarding (`ssh -A`).
     forward_agent: bool,
+    /// Authenticate with the machine's default SSH keys (~/.ssh/id_*).
+    use_default_keys: bool,
+    /// ISO-8601 UTC of last successful terminal open, when known.
+    last_connected_at: Option<String>,
 }
 
 impl From<&CoreHostSummary> for HostSummaryDto {
@@ -113,6 +117,8 @@ impl From<&CoreHostSummary> for HostSummaryDto {
                 .map(tunnel::TunnelDefinitionDto::from)
                 .collect(),
             forward_agent: host.forward_agent,
+            use_default_keys: host.use_default_keys,
+            last_connected_at: host.last_connected_at.map(|ts| ts.to_rfc3339()),
         }
     }
 }
@@ -476,6 +482,9 @@ struct HostMutation {
     tunnels: Option<Vec<tunnel::TunnelDefinitionDto>>,
     #[serde(default)]
     forward_agent: Option<bool>,
+    /// Authenticate with the machine's default SSH keys (no stored secret).
+    #[serde(default)]
+    use_default_keys: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -955,6 +964,7 @@ async fn create_host(
     let created = state
         .repo
         .create_host(CreateHostRequest {
+            use_default_keys: host.use_default_keys.unwrap_or(false),
             label: host.label,
             hostname: host.hostname,
             port: host.port,
@@ -1005,6 +1015,7 @@ async fn update_host(
         .update_host(
             host_id,
             CreateHostRequest {
+                use_default_keys: host.use_default_keys.unwrap_or(false),
                 label: host.label,
                 hostname: host.hostname,
                 port: host.port,
@@ -1157,6 +1168,23 @@ async fn identity_delete(
 }
 
 #[tauri::command]
+async fn set_host_tags(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    tags: Vec<String>,
+) -> Result<HostSummaryDto, String> {
+    let host_id = parse_uuid(&id, "host")?;
+    let summary = state
+        .repo
+        .set_host_tags(host_id, tags)
+        .await
+        .map_err(redacted_error)?;
+    sync::schedule_background_sync(app, &state);
+    Ok(HostSummaryDto::from(&summary))
+}
+
+#[tauri::command]
 async fn delete_host(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let host_id = parse_uuid(&id, "host")?;
     state
@@ -1205,7 +1233,21 @@ async fn open_terminal(
     host_id: String,
     cols: u32,
     rows: u32,
+    mux_session: Option<String>,
 ) -> Result<OpenTerminalResultDto, String> {
+    let mux_session = match mux_session.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => {
+            if name.len() > 64
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+            {
+                return Err("invalid session name".into());
+            }
+            Some(name.to_string())
+        }
+        _ => None,
+    };
     if !state
         .repo
         .vault()
@@ -1219,16 +1261,28 @@ async fn open_terminal(
     let session_id = Uuid::now_v7();
     let opened = state
         .manager
-        .open_pty(host_id, PtySize::new(cols, rows))
+        .open_pty_named(host_id, PtySize::new(cols, rows), mux_session.as_deref())
         .await
         .map_err(redacted_error)?;
+
+    // Best-effort: stamp recency for Arrange-by Recent (ignore vault write errors).
+    let _ = state.repo.touch_host_connected(host_id).await;
 
     state
         .sessions
         .lock()
         .await
         .insert(session_id, opened.handle);
-    tunnel::auto_start_for_session(&app, &state, session_id, host_id).await;
+    // Tunnels must not block first paint — spawn beside the live PTY.
+    {
+        let app2 = app.clone();
+        let host_id2 = host_id;
+        tauri::async_runtime::spawn(async move {
+            // Re-borrow AppState via app — use the same helper with cloned handles.
+            // auto_start_for_session needs State; call through a thin wrapper.
+            tunnel::auto_start_for_session_spawned(app2, session_id, host_id2).await;
+        });
+    }
     tauri::async_runtime::spawn(output_pump::forward_output(session_id, opened.output, app));
     Ok(OpenTerminalResultDto {
         session_id: session_id.to_string(),
@@ -1715,6 +1769,15 @@ pub fn run() {
             {
                 webview_chrome::harden_webview(&webview);
             }
+            // macOS convention: the red close button hides the window; the app
+            // (and its SSH sessions) keeps running until Quit (⌘Q / menu).
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             vault_status,
@@ -1753,6 +1816,7 @@ pub fn run() {
             import_ssh_config,
             create_host,
             update_host,
+            set_host_tags,
             delete_host,
             identity_list,
             identity_pick_key_file,
@@ -1805,8 +1869,20 @@ pub fn run() {
             updater::update_check,
             updater::update_install,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Tauri application");
+        .build(tauri::generate_context!())
+        .expect("failed to build Tauri application")
+        .run(|app, event| {
+            // Dock icon click (macOS) re-shows the hidden main window.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
@@ -1879,6 +1955,7 @@ mod tests {
     #[test]
     fn host_dto_never_embeds_password() {
         let dto = HostSummaryDto {
+            use_default_keys: false,
             id: "id".into(),
             label: "lab".into(),
             hostname: "127.0.0.1".into(),
@@ -1893,6 +1970,7 @@ mod tests {
             shell_integration: true,
             tunnels: vec![],
             forward_agent: false,
+            last_connected_at: None,
         };
         assert!(dto.has_password);
         let debug = format!("{dto:?}");

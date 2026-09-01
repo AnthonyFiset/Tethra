@@ -17,7 +17,20 @@ import {
   getTerminalLineHeight,
   getTerminalScrollback,
 } from "../lib/prefs";
-import { disposeBlockTracker, flushBlockPhases } from "./blocks";
+import {
+  debugBlockState,
+  disposeBlockTracker,
+  getPhaseLog,
+  noteSubmittedCommand,
+  recordOpLog,
+  flushBlockPhases,
+  forgetFinishedBlocks,
+  readActiveShellInputLine,
+  refreshActiveBlock,
+  notifyTuiChange,
+  sessionScreenApp,
+} from "./blocks";
+import { scheduleBlockOverlaySync } from "./blockOverlay";
 import {
   SCROLLBACK_LINE_CAP,
   loadScrollbackSnapshot,
@@ -42,12 +55,138 @@ interface TerminalRecord {
   resizeTimer?: number;
   /** Last OSC 7 working directory, when the shell reports one. */
   cwd?: string;
+  /** Last git branch from shell integration (OSC 133;G), when reported. */
+  gitBranch?: string;
   /** Strips ED2/ED3 inside DEC 2026 sync blocks (agent TUI scroll-jump). */
   syncFilter: SyncClearFilter;
+  /** Full-screen-app signals parsed from the output stream. */
+  tui: TuiState;
+  /** One-shot post-attach scrollback sweep (see writeTerminal). */
+  attachSweepTimer?: number;
+  attachSwept?: boolean;
   disposables: { dispose(): void }[];
 }
 
+/**
+ * Signals that a full-screen program owns the session. None of them are
+ * produced by a shell prompt; all are reset when the shell reports a new
+ * prompt (OSC 133 A/D) so a finished TUI hands the screen back.
+ *
+ * - `sync`: DEC 2026 synchronized output (Claude Code flicker-free, Codex,
+ *   ratatui apps). tmux passes it through even with the alt screen disabled.
+ * - `mouse`: any xterm mouse-tracking mode (1000–1006).
+ * - `cursorHidden`: DECTCEM off. Tracked for diagnostics only — build
+ *   tools hide the cursor for progress bars, so it is not a TUI signal.
+ * - `agentLaunched`: the app itself started an agent CLI as the session's
+ *   command (project launch) — there is no shell and never an OSC 133 mark.
+ */
+export interface TuiState {
+  sync: boolean;
+  mouse: boolean;
+  cursorHidden: boolean;
+  agentLaunched: boolean;
+  /**
+   * The launch script's screen+scrollback wipe (ED3) has run — the mux is
+   * starting. Bash runs the typed script line by line (`for…done`,
+   * `export PATH`, `if…fi` each get their own OSC 133 C/D), so only a
+   * command end AFTER the wipe means the agent itself has exited.
+   */
+  launchWiped: boolean;
+}
+
+function freshTuiState(): TuiState {
+  return {
+    sync: false,
+    mouse: false,
+    cursorHidden: false,
+    agentLaunched: false,
+    launchWiped: false,
+  };
+}
+
+/** Call-time import (registry ↔ blocks are circular; no init-time use). */
+function tuiChangeListener(sessionId: string): void {
+  notifyTuiChange(sessionId);
+}
+
+export function getTuiState(sessionId: string): TuiState | undefined {
+  return terminals.get(sessionId)?.tui;
+}
+
+/**
+ * Shell prompt reported — whatever ran before has given the screen back.
+ * `agentLaunched` is NOT cleared here: the host shell's first prompt can
+ * land after the launch script was sent (slow SSH shell start), which
+ * would drop the flag while the agent is still running. The launch
+ * compound's OSC 133;D (block tracker `commandEnd`) is the exit signal.
+ */
+export function resetTuiState(sessionId: string): void {
+  const record = terminals.get(sessionId);
+  if (!record) return;
+  const t = record.tui;
+  if (!t.sync && !t.mouse && !t.cursorHidden) return;
+  t.sync = false;
+  t.mouse = false;
+  t.cursorHidden = false;
+  tuiChangeListener(sessionId);
+}
+
+/** Project launch started an agent CLI directly (no shell in the session). */
+export function markAgentLaunched(sessionId: string, on = true): void {
+  const record = terminals.get(sessionId);
+  if (!record || record.tui.agentLaunched === on) return;
+  record.tui.agentLaunched = on;
+  if (!on) record.tui.launchWiped = false;
+  tuiChangeListener(sessionId);
+}
+
+const MOUSE_MODES = new Set([1000, 1001, 1002, 1003, 1005, 1006, 1015]);
+
+function flattenModes(params: (number | number[])[]): number[] {
+  const out: number[] = [];
+  for (const p of params) {
+    if (Array.isArray(p)) out.push(...p);
+    else out.push(p);
+  }
+  return out;
+}
+
 const terminals = new Map<string, TerminalRecord>();
+
+// QA harness hook: read the live buffer state so Playwright can assert what
+// the renderer actually shows (viewport rows, cursor, scroll position).
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__tethraTermDebug = (
+    sessionId: string,
+  ) => {
+    const rec = terminals.get(sessionId);
+    if (!rec) return null;
+    const t = rec.terminal;
+    const buf = t.buffer.active;
+    const lines: string[] = [];
+    for (let y = buf.viewportY; y < buf.viewportY + t.rows; y++) {
+      lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+    }
+    return {
+      viewportY: buf.viewportY,
+      baseY: buf.baseY,
+      cursorY: buf.cursorY,
+      cursorX: buf.cursorX,
+      rows: t.rows,
+      cols: t.cols,
+      length: buf.length,
+      lines,
+      mirror: readActiveShellInputLine(sessionId),
+      blockState: debugBlockState(sessionId),
+      tui: terminals.get(sessionId)?.tui,
+      phaseLog: getPhaseLog(),
+    };
+  };
+  (window as unknown as Record<string, unknown>).__tethraNoteCmd = (
+    sessionId: string,
+    cmd: string,
+  ) => noteSubmittedCommand(sessionId, cmd);
+}
 const encoder = new TextEncoder();
 /** Last non-empty selection per session (survives menu-bar focus/selection clear). */
 const lastSelections = new Map<string, string>();
@@ -63,6 +202,8 @@ export interface TerminalCallbacks {
   onResize: (cols: number, rows: number) => void;
   /** Fired when OSC 7 reports a working directory. */
   onCwd?: (cwd: string) => void;
+  /** Fired when shell integration reports the current git branch. */
+  onGitBranch?: (branch: string) => void;
 }
 
 function inputIsSuppressed(sessionId: string): boolean {
@@ -137,6 +278,14 @@ export function createTerminal(
   const existing = terminals.get(sessionId);
   if (existing) return existing;
 
+  // Font metrics must come from Terminal options (not CSS). lineHeight stays
+  // 1.0 — above that, block/box glyphs band (see prefs DEFAULTS.lineHeight).
+  // Re-assert after open/fit — xterm 6's TextMetrics path can measure a
+  // fallback face before JetBrains loads.
+  const fontSize = getTerminalFontSize();
+  const fontFamily = terminalFontStack();
+  const lineHeight = getTerminalLineHeight();
+
   const terminal = new Terminal({
     allowProposedApi: true,
     cursorBlink: getTerminalCursorBlink(),
@@ -146,9 +295,9 @@ export function createTerminal(
     ignoreBracketedPasteMode: false,
     // macOS Option sends meta for readline / agent keybindings.
     macOptionIsMeta: true,
-    fontFamily: `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace`,
-    fontSize: getTerminalFontSize(),
-    lineHeight: getTerminalLineHeight(),
+    fontFamily,
+    fontSize,
+    lineHeight,
     letterSpacing: 0,
     scrollback: getTerminalScrollback(),
     // iTerm/Terminal.app–like ED2: push cleared viewport into scrollback instead
@@ -157,7 +306,11 @@ export function createTerminal(
     scrollOnUserInput: true,
     theme: themeFromAppTokens(),
   });
-  applyFontFeatures(terminal);
+  applyTerminalFont(terminal, fontSize, fontFamily, lineHeight);
+  // Dev harness: expose for overlay/font debugging in the browser console.
+  if (import.meta.env.VITE_TETHRA_MOCK === "1") {
+    (window as unknown as { __tethraTerm?: Terminal }).__tethraTerm = terminal;
+  }
   const fit = new FitAddon();
   terminal.loadAddon(fit);
 
@@ -182,7 +335,75 @@ export function createTerminal(
       const record = terminals.get(sessionId);
       if (record) record.cwd = cwd;
       inputHandlers.get(sessionId)?.onCwd?.(cwd);
-      return false; // let xterm keep its own handling if any
+      return false;
+    }),
+  );
+  disposables.push(
+    terminal.parser.registerOscHandler(133, (data) => {
+      if (!data.startsWith("G;")) return false;
+      const branch = data.slice(2).trim();
+      if (!branch) return true;
+      const record = terminals.get(sessionId);
+      if (record) record.gitBranch = branch;
+      inputHandlers.get(sessionId)?.onGitBranch?.(branch);
+      return true;
+    }),
+  );
+
+  // DECSET / DECRST: full-screen-app signals. Handlers return false so
+  // xterm still applies the mode itself.
+  const onDecMode = (set: boolean) => (params: (number | number[])[]) => {
+    const record = terminals.get(sessionId);
+    if (!record) return false;
+    const t = record.tui;
+    let changed = false;
+    for (const mode of flattenModes(params)) {
+      if (mode === 2026) {
+        // Begin OR end of a synchronized frame — either proves a TUI.
+        if (!t.sync) {
+          t.sync = true;
+          changed = true;
+        }
+      } else if (MOUSE_MODES.has(mode)) {
+        if (t.mouse !== set) {
+          t.mouse = set;
+          changed = true;
+        }
+      } else if (mode === 25) {
+        const hidden = !set;
+        if (t.cursorHidden !== hidden) {
+          t.cursorHidden = hidden;
+          changed = true;
+        }
+      }
+    }
+    if (changed) tuiChangeListener(sessionId);
+    return false;
+  };
+  disposables.push(
+    terminal.parser.registerCsiHandler(
+      { prefix: "?", final: "h" },
+      onDecMode(true),
+    ),
+  );
+  disposables.push(
+    terminal.parser.registerCsiHandler(
+      { prefix: "?", final: "l" },
+      onDecMode(false),
+    ),
+  );
+
+  // ED3 outside the alternate screen: scrollback wiped on purpose (project
+  // launch wipe, `clear`). Finished blocks have no rows left to anchor to.
+  disposables.push(
+    terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+      const ps = params.length > 0 ? params[0] : 0;
+      if (ps === 3 && terminal.buffer.active.type === "normal") {
+        forgetFinishedBlocks(sessionId);
+        const record = terminals.get(sessionId);
+        if (record?.tui.agentLaunched) record.tui.launchWiped = true;
+      }
+      return false;
     }),
   );
 
@@ -228,6 +449,7 @@ export function createTerminal(
     clipboard,
     unicode11,
     syncFilter: new SyncClearFilter(),
+    tui: freshTuiState(),
     disposables,
   };
   terminals.set(sessionId, record);
@@ -254,18 +476,75 @@ export function attachTerminal(
     container.replaceChildren();
     record.terminal.open(container);
     applyFontFeatures(record.terminal);
-    try {
-      record.webgl = new WebglAddon();
-      record.terminal.loadAddon(record.webgl);
-      record.webgl.onContextLoss(() => {
-        record.webgl?.dispose();
+    // WKWebView (Tauri on macOS) often returns a WebGL context that never
+    // paints — black terminal with chrome still drawing. Prefer DOM there;
+    // Chromium keeps WebGL when the probe succeeds.
+    if (shouldTryWebgl()) {
+      try {
+        const addon = new WebglAddon();
+        record.terminal.loadAddon(addon);
+        addon.onContextLoss(() => {
+          try {
+            addon.dispose();
+          } catch {
+            // ignore
+          }
+          record.webgl = undefined;
+          fitTerminal(sessionId);
+          try {
+            record.terminal.refresh(0, record.terminal.rows - 1);
+          } catch {
+            // ignore
+          }
+        });
+        record.webgl = addon;
+      } catch {
         record.webgl = undefined;
-      });
-    } catch {
-      // xterm's DOM/canvas renderer remains active as the required fallback.
+      }
     }
   }
+  // Wait for JetBrains Mono — but never block paint forever (WKWebView can
+  // leave document.fonts.ready pending if a face never resolves).
+  void (async () => {
+    const size = getTerminalFontSize();
+    const family = terminalFontStack();
+    const lineHeight = getTerminalLineHeight();
+    await waitForTerminalFonts(size, family);
+    if (!terminals.has(sessionId)) return;
+    // If WebGL left zero-size cells, drop it and let the DOM renderer paint.
+    if (record.webgl && !hasUsableCellMetrics(record.terminal)) {
+      try {
+        record.webgl.dispose();
+      } catch {
+        // ignore
+      }
+      record.webgl = undefined;
+    }
+    applyTerminalFont(record.terminal, size, family, lineHeight);
+    // Nudge CharSizeService: option change is the only public remasure trigger.
+    record.terminal.options.fontSize = size + 0.001;
+    record.terminal.options.fontSize = size;
+    fitTerminal(sessionId);
+    try {
+      record.terminal.refresh(0, record.terminal.rows - 1);
+    } catch {
+      // ignore
+    }
+    logTerminalMetrics(sessionId, record.terminal);
+    scheduleBlockOverlaySync(sessionId);
+  })();
+  applyTerminalFont(
+    record.terminal,
+    getTerminalFontSize(),
+    terminalFontStack(),
+    getTerminalLineHeight(),
+  );
   fitTerminal(sessionId);
+  try {
+    record.terminal.refresh(0, record.terminal.rows - 1);
+  } catch {
+    // ignore
+  }
   record.terminal.focus();
 }
 
@@ -277,6 +556,56 @@ export function fitTerminal(sessionId: string): void {
   } catch {
     // The tab may be hidden or between layout passes.
   }
+  scheduleBlockOverlaySync(sessionId);
+}
+
+/** Serialize PTY writes + OSC 133 marker flushes per session.
+ * Block events must apply only after preceding `terminal.write` bytes land;
+ * flushing markers while a write is in flight parked them on the wrong row
+ * (raw PS1 leaks, ls-output mistaken for commandText). */
+const terminalOpTail = new Map<string, Promise<void>>();
+
+function enqueueTerminalOp(sessionId: string, op: () => Promise<void>): void {
+  const prev = terminalOpTail.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(op, op);
+  terminalOpTail.set(sessionId, next);
+  void next.finally(() => {
+    if (terminalOpTail.get(sessionId) === next) {
+      terminalOpTail.delete(sessionId);
+    }
+  });
+}
+
+/**
+ * Attaching to a live tmux replays the mux screen; when a full-screen agent
+ * (Claude Code etc.) owns it, the cursor churn scrolls banner fragments and
+ * blank rows into xterm scrollback — a phantom scrollbar over junk. The real
+ * history lives in tmux (PgUp), so once the replay settles, wipe whatever
+ * scrollback it produced. One-shot per attach; skipped when the session is a
+ * plain shell (its replayed prompt rows are legitimate history) or the user
+ * has already scrolled up.
+ */
+const ATTACH_SWEEP_MS = 1500;
+
+function scheduleAttachSweep(sessionId: string, record: TerminalRecord): void {
+  if (record.attachSwept || record.attachSweepTimer !== undefined) return;
+  record.attachSweepTimer = window.setTimeout(() => {
+    const rec = terminals.get(sessionId);
+    if (!rec) return;
+    rec.attachSweepTimer = undefined;
+    rec.attachSwept = true;
+    const buf = rec.terminal.buffer.active;
+    if (
+      sessionScreenApp(sessionId) &&
+      buf.type === "normal" &&
+      buf.baseY > 0 &&
+      buf.viewportY === buf.baseY
+    ) {
+      // ED3 wipes scrollback only — the replayed screen stays put.
+      rec.terminal.write("\x1b[3J");
+      rec.terminal.scrollToBottom();
+    }
+  }, ATTACH_SWEEP_MS);
 }
 
 export function writeTerminal(
@@ -285,40 +614,135 @@ export function writeTerminal(
 ): void {
   const record = terminals.get(sessionId);
   if (!record) return;
+  scheduleAttachSweep(sessionId, record);
   const raw = data instanceof Uint8Array ? data : Uint8Array.from(data);
-  const bytes = record.syncFilter.push(raw);
-  if (bytes.length === 0) {
-    flushBlockPhases(sessionId, record.terminal);
-    return;
-  }
-  record.terminal.write(bytes, () => {
-    flushBlockPhases(sessionId, record.terminal);
+  enqueueTerminalOp(sessionId, () => {
+    const current = terminals.get(sessionId);
+    if (!current) return Promise.resolve();
+    const bytes = current.syncFilter.push(raw);
+    if (bytes.length === 0) {
+      refreshActiveBlock(sessionId, current.terminal);
+      scheduleBlockOverlaySync(sessionId);
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (import.meta.env.DEV) {
+          const tail = new TextDecoder()
+            .decode(bytes.slice(-40))
+            .replace(/\u001b/g, "~");
+          recordOpLog("W", `${bytes.length}b tail=${JSON.stringify(tail)}`);
+        }
+        refreshActiveBlock(sessionId, current.terminal);
+        scheduleBlockOverlaySync(sessionId);
+        resolve();
+      };
+      current.terminal.write(bytes, done);
+      // Safety: never stall the OSC marker queue if xterm skips the callback.
+      window.setTimeout(done, 500);
+    });
+  });
+}
+
+/** Apply queued OSC 133 phases after all prior writes for this session. */
+export function scheduleFlushBlockPhases(sessionId: string): void {
+  enqueueTerminalOp(sessionId, async () => {
+    const term = getTerminalInstance(sessionId);
+    if (!term) return;
+    flushBlockPhases(sessionId, term);
+    refreshActiveBlock(sessionId, term);
+    scheduleBlockOverlaySync(sessionId);
   });
 }
 
 /** Re-apply prefs from localStorage to every live terminal. */
 export function applyTerminalPrefs(): void {
   const fontSize = getTerminalFontSize();
-  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace`;
+  const fontFamily = terminalFontStack();
   const lineHeight = getTerminalLineHeight();
   const cursorBlink = getTerminalCursorBlink();
   const cursorStyle = getTerminalCursorStyle();
   const scrollback = getTerminalScrollback();
-  for (const record of terminals.values()) {
-    record.terminal.options.fontSize = fontSize;
-    record.terminal.options.fontFamily = fontFamily;
-    record.terminal.options.lineHeight = lineHeight;
+  for (const [sessionId, record] of terminals) {
+    applyTerminalFont(record.terminal, fontSize, fontFamily, lineHeight);
     record.terminal.options.cursorBlink = cursorBlink;
     record.terminal.options.cursorStyle = cursorStyle;
     record.terminal.options.scrollback = scrollback;
-    applyFontFeatures(record.terminal);
     if (record.terminal.element) {
       try {
         record.fit.fit();
       } catch {
         // hidden
       }
+      logTerminalMetrics(sessionId, record.terminal);
     }
+  }
+}
+
+function applyTerminalFont(
+  terminal: Terminal,
+  fontSize: number,
+  fontFamily: string,
+  lineHeight: number,
+): void {
+  terminal.options.fontSize = fontSize;
+  terminal.options.fontFamily = fontFamily;
+  terminal.options.lineHeight = lineHeight;
+  applyFontFeatures(terminal);
+  const el = terminal.element;
+  if (el) {
+    // Keep the host + helper textarea in lockstep with Terminal options so
+    // CharSizeService / WebGL don't inherit a smaller cascade font-size.
+    el.style.fontSize = `${fontSize}px`;
+    el.style.fontFamily = fontFamily;
+    el.style.lineHeight = String(lineHeight);
+    const helper = el.querySelector(
+      ".xterm-helper-textarea",
+    ) as HTMLElement | null;
+    if (helper) {
+      helper.style.fontSize = `${fontSize}px`;
+      helper.style.fontFamily = fontFamily;
+      helper.style.lineHeight = `${fontSize * lineHeight}px`;
+    }
+  }
+}
+
+function logTerminalMetrics(sessionId: string, terminal: Terminal): void {
+  if (import.meta.env.VITE_TETHRA_MOCK !== "1") return;
+  try {
+    const core = (
+      terminal as unknown as {
+        _core?: {
+          _renderService?: {
+            dimensions?: {
+              css?: { cell?: { height?: number; width?: number } };
+              device?: { cell?: { height?: number } };
+            };
+          };
+          _charSizeService?: { width?: number; height?: number };
+        };
+      }
+    )._core;
+    const dims = core?._renderService?.dimensions;
+    const helper = terminal.element?.querySelector(
+      ".xterm-helper-textarea",
+    ) as HTMLElement | null;
+    const helperH = helper?.getBoundingClientRect().height;
+    // eslint-disable-next-line no-console
+    console.info("[tethra:term-metrics]", {
+      sessionId,
+      fontSize: terminal.options.fontSize,
+      lineHeight: terminal.options.lineHeight,
+      charServiceH: core?._charSizeService?.height,
+      cssCellH: dims?.css?.cell?.height,
+      deviceCellH: dims?.device?.cell?.height,
+      helperH,
+    });
+  } catch {
+    // ignore
   }
 }
 
@@ -329,6 +753,80 @@ function applyFontFeatures(terminal: Terminal): void {
   if (el) {
     el.style.fontVariantLigatures = ligatures ? "common-ligatures" : "none";
   }
+}
+
+/** Safari / WKWebView (Tauri macOS) — WebGL often initializes then paints black. */
+function shouldTryWebgl(): boolean {
+  if (typeof window === "undefined") return false;
+  // Tauri injects this; prefer DOM renderer on the real app shell.
+  if ("__TAURI_INTERNALS__" in window || "__TAURI__" in window) return false;
+  const ua = navigator.userAgent;
+  // Apple WebKit without Chromium → WKWebView / Safari.
+  if (/AppleWebKit/i.test(ua) && !/Chrome|Chromium|Edg\//i.test(ua)) {
+    return false;
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    const gl =
+      canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true }) ||
+      canvas.getContext("webgl", { failIfMajorPerformanceCaveat: true });
+    return Boolean(gl);
+  } catch {
+    return false;
+  }
+}
+
+function hasUsableCellMetrics(terminal: Terminal): boolean {
+  const core = (
+    terminal as unknown as {
+      _core?: {
+        _charSizeService?: { height?: number; width?: number };
+        _renderService?: {
+          dimensions?: { css?: { cell?: { height?: number } } };
+        };
+      };
+    }
+  )._core;
+  const charH = core?._charSizeService?.height ?? 0;
+  const cellH = core?._renderService?.dimensions?.css?.cell?.height ?? 0;
+  return charH > 1 && cellH > 1;
+}
+
+/**
+ * "Tethra Blocks" leads the stack: a generated face (scripts/
+ * gen-blocks-font.py) mapping ONLY block elements U+2580–259F, inked across
+ * the full ascent..descent cell. The renderer takes those 32 glyphs from it
+ * and everything else from the user's font — without it, block glyphs cover
+ * only the em and TUI art gets background stripes between rows (xterm 6's
+ * core renderer has no custom-glyph drawing; the WebGL addon that does never
+ * paints reliably in WKWebView).
+ */
+function terminalFontStack(): string {
+  return `"Tethra Blocks", "${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+}
+
+const FONT_WAIT_MS = 900;
+
+async function waitForTerminalFonts(
+  size: number,
+  family: string,
+): Promise<void> {
+  const load = async () => {
+    try {
+      await document.fonts.load(`${size}px "Tethra Blocks"`, "█");
+      await document.fonts.load(`${size}px "JetBrains Mono Variable"`);
+      await document.fonts.load(`${size}px ${family}`);
+      await document.fonts.ready;
+    } catch {
+      // ignore — paint with whatever face is available
+    }
+  };
+  await Promise.race([
+    load(),
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, FONT_WAIT_MS);
+    }),
+  ]);
 }
 
 /** Re-apply the app token theme (e.g. after future theme switches). */
@@ -348,6 +846,17 @@ export function writeTerminalMessage(sessionId: string, message: string): void {
   terminals.get(sessionId)?.terminal.write(`\r\n${message}\r\n`);
 }
 
+/** /clear: wipe viewport AND scrollback (shell `clear` keeps scrollback). */
+export function clearTerminalViewport(sessionId: string): void {
+  const record = terminals.get(sessionId);
+  if (!record) return;
+  enqueueTerminalOp(sessionId, () => {
+    record.terminal.clear();
+    scheduleBlockOverlaySync(sessionId);
+    return Promise.resolve();
+  });
+}
+
 export function focusTerminal(sessionId: string): void {
   terminals.get(sessionId)?.terminal.focus();
 }
@@ -361,6 +870,14 @@ bindInjectGates({
 
 export function getTerminalCwd(sessionId: string): string | undefined {
   return terminals.get(sessionId)?.cwd;
+}
+
+export function getTerminalGitBranch(sessionId: string): string | undefined {
+  return terminals.get(sessionId)?.gitBranch;
+}
+
+export function getTerminalInstance(sessionId: string): Terminal | undefined {
+  return terminals.get(sessionId)?.terminal;
 }
 
 export function clearTerminal(sessionId: string): void {
@@ -382,7 +899,9 @@ export function getTerminalSelectionForCopy(sessionId: string): string {
   return lastSelections.get(sessionId) ?? "";
 }
 
-export async function copyTerminalSelection(sessionId: string): Promise<boolean> {
+export async function copyTerminalSelection(
+  sessionId: string,
+): Promise<boolean> {
   const text = getTerminalSelectionForCopy(sessionId);
   if (!text) return false;
   return writeClipboardText(text);
@@ -392,9 +911,11 @@ export function disposeTerminal(sessionId: string): void {
   const record = terminals.get(sessionId);
   if (!record) return;
   window.clearTimeout(record.resizeTimer);
+  window.clearTimeout(record.attachSweepTimer);
   inputSuppressedUntil.delete(sessionId);
   inputHandlers.delete(sessionId);
   lastSelections.delete(sessionId);
+  terminalOpTail.delete(sessionId);
   disposeBlockTracker(sessionId);
   record.syncFilter.reset();
   for (const disposable of record.disposables) {
@@ -456,6 +977,11 @@ export function disposeAllTerminals(): void {
   for (const sessionId of [...terminals.keys()]) {
     disposeTerminal(sessionId);
   }
+}
+
+/** Dev bridge: every live session id (mounted or hidden). */
+export function listTerminalSessionIds(): string[] {
+  return Array.from(terminals.keys());
 }
 
 export function hasTerminal(sessionId: string): boolean {

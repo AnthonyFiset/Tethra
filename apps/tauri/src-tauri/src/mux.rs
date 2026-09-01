@@ -856,7 +856,9 @@ fn parse_watch(stdout: &str, want: &[String]) -> Vec<SessionWatchDto> {
     want.iter()
         .map(|name| {
             let alert = found.get(name).cloned().unwrap_or_else(|| "none".into());
-            let waiting = alert == "bell" || alert == "silence";
+            // Match attached PTY: only BEL (and OSC notify, which surfaces as
+            // bell/alert hooks) — never silence alone.
+            let waiting = alert == "bell";
             SessionWatchDto {
                 mux_session: name.clone(),
                 alert: if waiting {

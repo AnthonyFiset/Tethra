@@ -561,6 +561,7 @@ mod tests {
             false,
             false,
             &HostRecord {
+                use_default_keys: false,
                 id: item_id,
                 label: "lab".into(),
                 hostname: "127.0.0.1".into(),
@@ -575,6 +576,7 @@ mod tests {
                 shell_integration: Default::default(),
                 tunnels: Vec::new(),
                 forward_agent: false,
+                last_connected_at: None,
             },
         )
         .await

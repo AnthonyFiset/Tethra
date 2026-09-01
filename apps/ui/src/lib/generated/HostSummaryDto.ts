@@ -13,4 +13,12 @@ shellIntegration: boolean, tunnels: Array<TunnelDefinitionDto>,
 /**
  * Opt-in SSH agent forwarding (`ssh -A`).
  */
-forwardAgent: boolean, };
+forwardAgent: boolean, 
+/**
+ * Authenticate with the machine's default SSH keys (~/.ssh/id_*).
+ */
+useDefaultKeys: boolean, 
+/**
+ * ISO-8601 UTC of last successful terminal open, when known.
+ */
+lastConnectedAt: string | null, };

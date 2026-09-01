@@ -31,6 +31,10 @@ pub struct HostRecord {
     pub tunnels: Vec<TunnelDefinition>,
     #[serde(default)]
     pub forward_agent: bool,
+    #[serde(default)]
+    pub use_default_keys: bool,
+    #[serde(default)]
+    pub last_connected_at: Option<DateTime<Utc>>,
 }
 
 impl From<&Host> for HostRecord {
@@ -50,6 +54,8 @@ impl From<&Host> for HostRecord {
             shell_integration: host.shell_integration,
             tunnels: host.tunnels.clone(),
             forward_agent: host.forward_agent,
+            use_default_keys: host.use_default_keys,
+            last_connected_at: host.last_connected_at,
         }
     }
 }
@@ -71,6 +77,8 @@ impl From<HostRecord> for Host {
             shell_integration: record.shell_integration,
             tunnels: record.tunnels,
             forward_agent: record.forward_agent,
+            use_default_keys: record.use_default_keys,
+            last_connected_at: record.last_connected_at,
         }
     }
 }

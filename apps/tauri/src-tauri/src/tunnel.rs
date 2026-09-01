@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use ssh_client_core::model::{TunnelDefinition, TunnelDirection};
 use ssh_client_core::ssh::{TunnelHandle, TunnelOpener};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -212,6 +212,12 @@ pub async fn auto_start_for_session(
             }
         }
     }
+}
+
+/// Fire-and-forget entry used from `open_terminal` so tunnels never delay first paint.
+pub async fn auto_start_for_session_spawned(app: AppHandle, session_id: Uuid, host_id: Uuid) {
+    let state = app.state::<AppState>();
+    auto_start_for_session(&app, &state, session_id, host_id).await;
 }
 
 async fn start_tunnel_inner(
