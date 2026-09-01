@@ -148,7 +148,16 @@ def main():
     pen = TTGlyphPen(None)
     all_glyphs = {".notdef": pen.glyph(), **glyphs}
     fb.setupGlyf(all_glyphs)
-    fb.setupHorizontalMetrics({n: (ADVANCE, 0) for n in glyph_order})
+    # LSB must equal each glyph's xMin: TrueType rasterizers (WebKit/CoreText
+    # included) place outlines by hmtx LSB, so an LSB of 0 under a right-half
+    # glyph whose outline starts at x=300 shifts its ink into the LEFT half.
+    glyf = fb.font["glyf"]
+    metrics = {}
+    for name in glyph_order:
+        g = glyf[name]
+        g.recalcBounds(glyf)
+        metrics[name] = (ADVANCE, getattr(g, "xMin", 0) or 0)
+    fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=ASCENT, descent=-DESCENT)
     fb.setupOS2(
         sTypoAscender=ASCENT,
