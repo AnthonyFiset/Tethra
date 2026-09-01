@@ -102,11 +102,14 @@
 
   [data-terminal-surface] .xterm {
     height: 100%;
+    /* Padding sits HERE so FitAddon subtracts it when proposing rows/cols
+       (on the parent it overcounted and the last row/col overflowed). */
+    padding: 8px 14px;
     /* Reinforce Terminal options so CharSizeService / helper textarea match
        the JetBrains Mono face (xterm 6 WebGL otherwise inherits body sans). */
     font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
     font-size: 12.5px;
-    line-height: 1.25;
+    line-height: 1;
   }
 
   [data-terminal-surface] .xterm-helper-textarea {

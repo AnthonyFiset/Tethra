@@ -28,6 +28,7 @@ import {
   readActiveShellInputLine,
   refreshActiveBlock,
   notifyTuiChange,
+  sessionScreenApp,
 } from "./blocks";
 import { scheduleBlockOverlaySync } from "./blockOverlay";
 import {
@@ -60,6 +61,9 @@ interface TerminalRecord {
   syncFilter: SyncClearFilter;
   /** Full-screen-app signals parsed from the output stream. */
   tui: TuiState;
+  /** One-shot post-attach scrollback sweep (see writeTerminal). */
+  attachSweepTimer?: number;
+  attachSwept?: boolean;
   disposables: { dispose(): void }[];
 }
 
@@ -572,12 +576,45 @@ function enqueueTerminalOp(sessionId: string, op: () => Promise<void>): void {
   });
 }
 
+/**
+ * Attaching to a live tmux replays the mux screen; when a full-screen agent
+ * (Claude Code etc.) owns it, the cursor churn scrolls banner fragments and
+ * blank rows into xterm scrollback — a phantom scrollbar over junk. The real
+ * history lives in tmux (PgUp), so once the replay settles, wipe whatever
+ * scrollback it produced. One-shot per attach; skipped when the session is a
+ * plain shell (its replayed prompt rows are legitimate history) or the user
+ * has already scrolled up.
+ */
+const ATTACH_SWEEP_MS = 1500;
+
+function scheduleAttachSweep(sessionId: string, record: TerminalRecord): void {
+  if (record.attachSwept || record.attachSweepTimer !== undefined) return;
+  record.attachSweepTimer = window.setTimeout(() => {
+    const rec = terminals.get(sessionId);
+    if (!rec) return;
+    rec.attachSweepTimer = undefined;
+    rec.attachSwept = true;
+    const buf = rec.terminal.buffer.active;
+    if (
+      sessionScreenApp(sessionId) &&
+      buf.type === "normal" &&
+      buf.baseY > 0 &&
+      buf.viewportY === buf.baseY
+    ) {
+      // ED3 wipes scrollback only — the replayed screen stays put.
+      rec.terminal.write("\x1b[3J");
+      rec.terminal.scrollToBottom();
+    }
+  }, ATTACH_SWEEP_MS);
+}
+
 export function writeTerminal(
   sessionId: string,
   data: number[] | Uint8Array,
 ): void {
   const record = terminals.get(sessionId);
   if (!record) return;
+  scheduleAttachSweep(sessionId, record);
   const raw = data instanceof Uint8Array ? data : Uint8Array.from(data);
   enqueueTerminalOp(sessionId, () => {
     const current = terminals.get(sessionId);
@@ -874,6 +911,7 @@ export function disposeTerminal(sessionId: string): void {
   const record = terminals.get(sessionId);
   if (!record) return;
   window.clearTimeout(record.resizeTimer);
+  window.clearTimeout(record.attachSweepTimer);
   inputSuppressedUntil.delete(sessionId);
   inputHandlers.delete(sessionId);
   lastSelections.delete(sessionId);

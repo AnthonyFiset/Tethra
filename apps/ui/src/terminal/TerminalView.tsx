@@ -203,10 +203,14 @@ export function TerminalView({
         });
       }}
     >
+      {/* Padding lives on .xterm (styles.css), NOT here: FitAddon reads this
+          div's border-box height but only subtracts the xterm element's own
+          padding — padding here made it propose rows that overflow the box
+          (clipped bottom status row + phantom viewport scrollbar). */}
       <div
         ref={containerRef}
         aria-label="SSH terminal"
-        className="size-full overflow-hidden px-3.5 py-2"
+        className="size-full overflow-hidden"
       />
       {/* Unpadded: overlay math uses live cell metrics against this root.
           overflow visible so a waiting banner below the last row can paint
