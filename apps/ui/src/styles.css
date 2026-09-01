@@ -1,6 +1,17 @@
 @import "tailwindcss";
 
 /*
+ * Generated block-element face (scripts/gen-blocks-font.py) — leads the
+ * terminal font stack so U+2580–259F fill the whole cell; every other glyph
+ * falls through to the user's font. See terminalFontStack() in registry.ts.
+ */
+@font-face {
+  font-family: "Tethra Blocks";
+  src: url("./assets/fonts/TethraBlocks.ttf") format("truetype");
+  font-display: block;
+}
+
+/*
  * Neutral, opaque dark surface ramp. Depth is expressed with 1px borders and
  * small surface steps rather than shadows, which is what keeps a dense tool
  * UI legible instead of looking like a stack of floating web cards.

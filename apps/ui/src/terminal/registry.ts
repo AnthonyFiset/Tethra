@@ -279,7 +279,7 @@ export function createTerminal(
   // Re-assert after open/fit — xterm 6's TextMetrics path can measure a
   // fallback face before JetBrains loads.
   const fontSize = getTerminalFontSize();
-  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+  const fontFamily = terminalFontStack();
   const lineHeight = getTerminalLineHeight();
 
   const terminal = new Terminal({
@@ -503,7 +503,7 @@ export function attachTerminal(
   // leave document.fonts.ready pending if a face never resolves).
   void (async () => {
     const size = getTerminalFontSize();
-    const family = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+    const family = terminalFontStack();
     const lineHeight = getTerminalLineHeight();
     await waitForTerminalFonts(size, family);
     if (!terminals.has(sessionId)) return;
@@ -532,7 +532,7 @@ export function attachTerminal(
   applyTerminalFont(
     record.terminal,
     getTerminalFontSize(),
-    `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`,
+    terminalFontStack(),
     getTerminalLineHeight(),
   );
   fitTerminal(sessionId);
@@ -624,7 +624,7 @@ export function scheduleFlushBlockPhases(sessionId: string): void {
 /** Re-apply prefs from localStorage to every live terminal. */
 export function applyTerminalPrefs(): void {
   const fontSize = getTerminalFontSize();
-  const fontFamily = `"${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+  const fontFamily = terminalFontStack();
   const lineHeight = getTerminalLineHeight();
   const cursorBlink = getTerminalCursorBlink();
   const cursorStyle = getTerminalCursorStyle();
@@ -755,6 +755,19 @@ function hasUsableCellMetrics(terminal: Terminal): boolean {
   return charH > 1 && cellH > 1;
 }
 
+/**
+ * "Tethra Blocks" leads the stack: a generated face (scripts/
+ * gen-blocks-font.py) mapping ONLY block elements U+2580–259F, inked across
+ * the full ascent..descent cell. The renderer takes those 32 glyphs from it
+ * and everything else from the user's font — without it, block glyphs cover
+ * only the em and TUI art gets background stripes between rows (xterm 6's
+ * core renderer has no custom-glyph drawing; the WebGL addon that does never
+ * paints reliably in WKWebView).
+ */
+function terminalFontStack(): string {
+  return `"Tethra Blocks", "${getTerminalFontFamily()}", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace`;
+}
+
 const FONT_WAIT_MS = 900;
 
 async function waitForTerminalFonts(
@@ -763,6 +776,7 @@ async function waitForTerminalFonts(
 ): Promise<void> {
   const load = async () => {
     try {
+      await document.fonts.load(`${size}px "Tethra Blocks"`, "█");
       await document.fonts.load(`${size}px "JetBrains Mono Variable"`);
       await document.fonts.load(`${size}px ${family}`);
       await document.fonts.ready;
