@@ -119,6 +119,9 @@
 
   [data-terminal-surface] .xterm-viewport {
     overflow-y: auto;
+    /* Stock xterm.css paints the viewport #000; the DOM renderer never
+       applies the ITheme background to it, so keep it on the app ramp. */
+    background-color: var(--terminal-bg, #0d0d0d) !important;
   }
 
   /* xterm 6 draws its own overlay scrollbar (VS Code's scrollable element),
